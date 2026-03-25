@@ -145,7 +145,7 @@ def _init_postgres(serial, bool_t):
             CREATE TABLE IF NOT EXISTS conversation_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 state TEXT NOT NULL DEFAULT 'idle',
-                current_date TEXT,
+                entry_date TEXT,
                 pending_dates TEXT DEFAULT '[]',
                 later_item_draft TEXT,
                 temp_data TEXT DEFAULT '{{}}',
@@ -238,7 +238,7 @@ def _init_sqlite(bool_t):
             CREATE TABLE IF NOT EXISTS conversation_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 state TEXT NOT NULL DEFAULT 'idle',
-                current_date TEXT, pending_dates TEXT DEFAULT '[]',
+                entry_date TEXT, pending_dates TEXT DEFAULT '[]',
                 later_item_draft TEXT, temp_data TEXT DEFAULT '{}',
                 bot_start_date TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -278,7 +278,7 @@ def set_state(state: str, current_date: str = None, pending_dates: list = None,
     with _cursor(write=True) as c:
         c.execute(
             f"""UPDATE conversation_state
-               SET state={p}, current_date={p}, pending_dates={p},
+               SET state={p}, entry_date={p}, pending_dates={p},
                    later_item_draft={p}, temp_data={p}, updated_at=CURRENT_TIMESTAMP
                WHERE id=1""",
             (state, current_date, pending_json, later_item_draft, temp_json),

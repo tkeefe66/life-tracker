@@ -244,7 +244,7 @@ async def skip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Nothing to skip right now. Use /update to start logging!")
         return
 
-    current_date = state_data.get("current_date")
+    current_date = state_data.get("entry_date")
     pending = json.loads(state_data.get("pending_dates", "[]"))
 
     if state == "collecting_work":
@@ -589,7 +589,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    current_date = state_data.get("current_date")
+    current_date = state_data.get("entry_date")
     pending = json.loads(state_data.get("pending_dates", "[]"))
 
     if state == "collecting_work_only":
