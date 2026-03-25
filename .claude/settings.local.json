@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m venv venv)",
+      "Bash(venv/bin/pip install:*)",
+      "Bash(venv/bin/python main.py)",
+      "Bash(curl:*)",
+      "Bash(pkill -f \"venv/bin/python main.py\")",
+      "Bash(pkill -9 -f \"main.py\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d[''''result''''][''''message_id'''']\\)\")"
+    ]
+  }
+}

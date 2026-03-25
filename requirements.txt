@@ -1,0 +1,6 @@
+python-telegram-bot[job-queue]==21.9
+gspread==6.1.2
+google-auth==2.29.0
+python-dotenv==1.0.1
+pytz==2024.1
+anthropic>=0.40.0
