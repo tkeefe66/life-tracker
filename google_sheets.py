@@ -30,9 +30,34 @@ SHEET_HABITS = "Habits"
 
 # ── Client ────────────────────────────────────────────────────────────────────
 
+def _fix_json_newlines(s: str) -> str:
+    """Escape actual newlines inside JSON string values (Railway expands \\n in env vars)."""
+    result = []
+    in_string = False
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == '\\' and in_string and i + 1 < len(s):
+            result.append(c)
+            result.append(s[i + 1])
+            i += 2
+            continue
+        if c == '"':
+            in_string = not in_string
+        if c == '\n' and in_string:
+            result.append('\\n')
+        else:
+            result.append(c)
+        i += 1
+    return ''.join(result)
+
+
 def _get_spreadsheet() -> gspread.Spreadsheet:
     if GOOGLE_SERVICE_ACCOUNT_JSON:
-        info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+        try:
+            info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+        except json.JSONDecodeError:
+            info = json.loads(_fix_json_newlines(GOOGLE_SERVICE_ACCOUNT_JSON))
         creds = Credentials.from_service_account_info(info, scopes=SCOPES)
     else:
         creds = Credentials.from_service_account_file(GOOGLE_SERVICE_ACCOUNT_FILE, scopes=SCOPES)
