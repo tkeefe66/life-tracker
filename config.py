@@ -21,7 +21,10 @@ TIMEZONE = os.getenv("TIMEZONE", "America/Denver")
 
 GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json")
-GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GSHEETS_CREDS", "")
+_gsheets_creds_b64 = os.getenv("GSHEETS_CREDS", "")
+GOOGLE_SERVICE_ACCOUNT_JSON = (
+    __import__("base64").b64decode(_gsheets_creds_b64).decode() if _gsheets_creds_b64 else ""
+)
 
 # Database: PostgreSQL if DATABASE_URL is set, otherwise SQLite (local dev fallback)
 _raw_db_url = os.getenv("DATABASE_URL", "")
