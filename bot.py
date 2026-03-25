@@ -18,6 +18,7 @@ from telegram.ext import (
 )
 
 import database as db
+from config import TIMEZONE as _TIMEZONE_NAME
 from config import (
     DAILY_PROMPT_HOUR,
     DAILY_PROMPT_MINUTE,
@@ -34,6 +35,14 @@ logger = logging.getLogger(__name__)
 DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
+# ── Timezone-aware today ──────────────────────────────────────────────────────
+
+def _today() -> date:
+    """Return today's date in the configured local timezone (not UTC)."""
+    tz = pytz.timezone(_TIMEZONE_NAME)
+    return datetime.datetime.now(tz).date()
+
+
 # ── Formatting helpers ────────────────────────────────────────────────────────
 
 def _fmt_date(date_str: str) -> str:
@@ -47,12 +56,12 @@ def _week_label(week_start: str) -> str:
 
 
 def _monday_of_week(d: date = None) -> str:
-    d = d or date.today()
+    d = d or _today()
     return (d - timedelta(days=d.weekday())).isoformat()
 
 
 def _next_monday() -> str:
-    today = date.today()
+    today = _today()
     if today.weekday() == 6:  # Sunday — skip to the Monday of next week, not tomorrow
         return (today + timedelta(days=7)).isoformat()
     days_ahead = (7 - today.weekday()) % 7 or 7
@@ -114,7 +123,7 @@ async def _start_collection(bot, dates: list[str]):
 async def daily_prompt_job(context: ContextTypes.DEFAULT_TYPE):
     """Fires every day at the configured time."""
     bot = context.bot
-    today = date.today().isoformat()
+    today = _today().isoformat()
 
     missed = db.get_missed_dates()
     dates_to_collect = missed + [today]
@@ -140,7 +149,7 @@ async def daily_prompt_job(context: ContextTypes.DEFAULT_TYPE):
 async def weekly_summary_job(context: ContextTypes.DEFAULT_TYPE):
     """Fires every Sunday at the configured time."""
     bot = context.bot
-    today = date.today()
+    today = _today()
     week_start = _monday_of_week(today)
 
     accomplishments = db.get_accomplishments_for_week(week_start)
@@ -222,7 +231,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    today = date.today().isoformat()
+    today = _today().isoformat()
     missed = db.get_missed_dates()
     dates_to_collect = missed + [today]
 
@@ -305,7 +314,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg += "*Days logged:*\n"
     for i in range(7):
         day = start + timedelta(days=i)
-        if day > date.today():
+        if day > _today():
             break
         symbol = "✅" if day.isoformat() in dates_logged else "❌"
         msg += f"{symbol} {day.strftime('%A, %b %d')}\n"
@@ -410,14 +419,14 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def work_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quick-log work accomplishments for today only, then return to idle."""
-    today = date.today().isoformat()
+    today = _today().isoformat()
     db.set_state("collecting_work_only", current_date=today, pending_dates=[])
     await _prompt_work(context.bot, today)
 
 
 async def personal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quick-log personal accomplishments for today only, then return to idle."""
-    today = date.today().isoformat()
+    today = _today().isoformat()
     db.set_state("collecting_personal_only", current_date=today, pending_dates=[])
     await _prompt_personal(context.bot, today)
 
@@ -439,7 +448,7 @@ async def _prompt_habit_check(bot, habit: dict):
 
 async def _start_habit_checkins_or_done(bot, update):
     """After focus is collected, check for unlogged habits. If none, go idle."""
-    today_str = date.today().isoformat()
+    today_str = _today().isoformat()
     unlogged = db.get_unlogged_habits_for_date(today_str)
 
     if unlogged:
@@ -479,7 +488,7 @@ async def _next_habit_or_done(bot, update, pending_habit_ids: list):
 async def morning_habit_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     """Fires every morning. Sends nudges for any habits scheduled today."""
     bot = context.bot
-    today = date.today()
+    today = _today()
     habits = db.get_active_habits_for_weekday(today.weekday())
     if not habits:
         return
@@ -663,7 +672,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         temp = json.loads(state_data.get("temp_data") or "{}")
         habit_id = temp.get("current_habit_id")
         pending = temp.get("pending_habit_ids", [])
-        today_str = date.today().isoformat()
+        today_str = _today().isoformat()
 
         if text.lower() in ["yes", "y", "yep", "yeah", "did it", "done", "✅"]:
             db.log_habit(habit_id, today_str, completed=True)
@@ -685,7 +694,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         temp = json.loads(state_data.get("temp_data") or "{}")
         habit_id = temp.get("current_habit_id")
         pending = temp.get("pending_habit_ids", [])
-        db.log_habit(habit_id, date.today().isoformat(), completed=False, miss_reason=text)
+        db.log_habit(habit_id, _today().isoformat(), completed=False, miss_reason=text)
         await update.message.reply_text("📝 Got it, noted.")
         await _next_habit_or_done(context.bot, update, pending)
 

@@ -3,12 +3,19 @@ Database layer — supports PostgreSQL (Railway) and SQLite (local dev).
 Set DATABASE_URL to use PostgreSQL. Leave it blank to fall back to SQLite.
 """
 
+import datetime
 import json
 import logging
 from contextlib import contextmanager
 from datetime import date, timedelta
 
-from config import DATABASE_URL, DATABASE_PATH
+import pytz
+
+from config import DATABASE_URL, DATABASE_PATH, TIMEZONE
+
+
+def _today() -> date:
+    return datetime.datetime.now(pytz.timezone(TIMEZONE)).date()
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +171,7 @@ def _init_postgres(serial, bool_t):
         c.execute(
             f"INSERT INTO conversation_state (id, state, bot_start_date) VALUES (1, 'idle', {p}) "
             f"ON CONFLICT(id) DO NOTHING",
-            (date.today().isoformat(),),
+            (_today().isoformat(),),
         )
 
 
@@ -249,7 +256,7 @@ def _init_sqlite(bool_t):
 
         c.execute(
             "INSERT OR IGNORE INTO conversation_state (id, state, bot_start_date) VALUES (1, 'idle', ?)",
-            (date.today().isoformat(),),
+            (_today().isoformat(),),
         )
 
 
@@ -325,10 +332,10 @@ def get_all_accomplishments() -> list:
 
 def get_missed_dates() -> list:
     state = get_state()
-    bot_start = date.fromisoformat(state.get("bot_start_date") or date.today().isoformat())
-    cutoff = date.today() - timedelta(days=MAX_MISSED_DAYS)
+    bot_start = date.fromisoformat(state.get("bot_start_date") or _today().isoformat())
+    cutoff = _today() - timedelta(days=MAX_MISSED_DAYS)
     start = max(bot_start, cutoff)
-    yesterday = date.today() - timedelta(days=1)
+    yesterday = _today() - timedelta(days=1)
     missed = []
     current = start
     while current <= yesterday:

@@ -4,9 +4,10 @@ import os
 from datetime import date, timedelta
 
 import gspread
+import pytz
 from google.oauth2.service_account import Credentials
 
-from config import GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SHEETS_ID
+from config import GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SHEETS_ID, TIMEZONE
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,11 @@ SCOPES = [
 ]
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _today() -> date:
+    import datetime
+    return datetime.datetime.now(pytz.timezone(TIMEZONE)).date()
 
 SHEET_WEEKLY = "Weekly Reviews"
 SHEET_LATER = "Later"
@@ -74,7 +80,7 @@ def _accomplishment_rows(entries_by_date: dict, week_start: str) -> list:
     start_date = date.fromisoformat(week_start)
     for offset in range(7):
         day_date = start_date + timedelta(days=offset)
-        if day_date > date.today():
+        if day_date > _today():
             break
         day_str = day_date.isoformat()
         if day_str in entries_by_date:
@@ -99,7 +105,7 @@ def _habit_week_rows(habit: dict, week_start: str, week_logs: list) -> list:
         day_str = day_date.isoformat()
         if offset not in days_scheduled:
             day_cells.append("—")
-        elif day_date > date.today():
+        elif day_date > _today():
             day_cells.append("·")
         elif day_str in logs_by_date:
             log = logs_by_date[day_str]
@@ -113,7 +119,7 @@ def _habit_week_rows(habit: dict, week_start: str, week_logs: list) -> list:
 
     scheduled_past = sum(
         1 for i, d in enumerate((start_date + timedelta(days=o) for o in range(7)))
-        if i in days_scheduled and d <= date.today()
+        if i in days_scheduled and d <= _today()
     )
     completed = sum(1 for d in day_cells if d == "✅")
     pct = f"{completed}/{scheduled_past}" if scheduled_past else "—"
@@ -234,7 +240,7 @@ def _build_habits_grid_rows(all_habits: list, all_logs: list) -> list:
     weeks = set()
     for log in all_logs:
         weeks.add(_monday_of(date.fromisoformat(log["date"])))
-    weeks.add(_monday_of(date.today()))
+    weeks.add(_monday_of(_today()))
 
     logs_by_week = {}
     for log in all_logs:
@@ -264,7 +270,7 @@ def _build_habits_grid_rows(all_habits: list, all_logs: list) -> list:
 
                 if offset not in days_sched:
                     cells.append("—")
-                elif day_date > date.today():
+                elif day_date > _today():
                     cells.append("·")
                 else:
                     scheduled_past += 1
