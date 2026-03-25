@@ -1,10 +1,12 @@
+import json
 import logging
+import os
 from datetime import date, timedelta
 
 import gspread
 from google.oauth2.service_account import Credentials
 
-from config import GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_SHEETS_ID
+from config import GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SHEETS_ID
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,11 @@ SHEET_HABITS = "Habits"
 # ── Client ────────────────────────────────────────────────────────────────────
 
 def _get_spreadsheet() -> gspread.Spreadsheet:
-    creds = Credentials.from_service_account_file(GOOGLE_SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    if GOOGLE_SERVICE_ACCOUNT_JSON:
+        info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+        creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+    else:
+        creds = Credentials.from_service_account_file(GOOGLE_SERVICE_ACCOUNT_FILE, scopes=SCOPES)
     client = gspread.authorize(creds)
     return client.open_by_key(GOOGLE_SHEETS_ID)
 
