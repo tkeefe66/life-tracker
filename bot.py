@@ -409,7 +409,8 @@ async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
         )
     except Exception as e:
-        logger.error("Sync failed: %s", e)
+        import traceback
+        logger.error("Sync failed: %s\n%s", e, traceback.format_exc())
         await update.message.reply_text(f"❌ Sync failed: {e}")
 
 
