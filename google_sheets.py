@@ -251,6 +251,17 @@ def _build_weekly_review_rows(all_accomplishments: list, focus_summaries: dict,
 
 # ── Tab 2: Later ──────────────────────────────────────────────────────────────
 
+def _fmt_later_date(val: str) -> str:
+    """Convert YYYY-MM-DD to M/D/YY; pass through anything that isn't that format."""
+    if not val:
+        return "—"
+    try:
+        d = date.fromisoformat(val)
+        return d.strftime("%-m/%-d/%y")
+    except ValueError:
+        return val
+
+
 def _build_later_rows(organized_groups: list) -> list:
     """
     organized_groups: [{"theme": str, "items": [{"content": str, "target_date": str,
@@ -265,9 +276,12 @@ def _build_later_rows(organized_groups: list) -> list:
     for group in organized_groups:
         rows.append([f"── {group['theme'].upper()} ──", "", "", "", ""])
         for item in group.get("items", []):
+            start = _fmt_later_date(item.get("target_date", "") or "")
+            end = _fmt_later_date(item.get("end_date", "") or "")
+            date_label = f"{start} – {end}" if end and end != "—" and end != start else start
             rows.append([
                 item.get("content", ""),
-                item.get("target_date", "—") or "—",
+                date_label,
                 item.get("status", "pending") or "pending",
                 item.get("ai_status", "") or "",
                 item.get("ai_notes", "") or "",
