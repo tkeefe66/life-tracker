@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import anthropic
 from config import ANTHROPIC_API_KEY
 
@@ -125,13 +126,16 @@ Examples:
 - "meditate every morning" → days: [0, 1, 2, 3, 4, 5, 6]
 - "call mom every sunday" → days: [6]"""
 
+    raw = ""
     try:
         raw = _call(prompt, max_tokens=200)
         logger.info("Habit parse raw response: %r", raw)
-        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        return json.loads(raw)
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if not match:
+            raise ValueError("No JSON object found in response")
+        return json.loads(match.group())
     except Exception as e:
-        logger.error("Habit parsing failed: %s | raw: %r", e, raw if 'raw' in dir() else 'N/A')
+        logger.error("Habit parsing failed: %s | raw: %r", e, raw)
         return None
 
 
