@@ -635,6 +635,29 @@ def get_later_items_pending_ai() -> list:
         return _rows(c.fetchall())
 
 
+def delete_later_items_matching(keywords: list) -> int:
+    """Delete later items whose content matches any of the given keywords (case-insensitive).
+    Returns the number of rows deleted."""
+    if not keywords:
+        return 0
+    p = _p()
+    with _cursor(write=True) as c:
+        deleted = 0
+        for kw in keywords:
+            if USE_POSTGRES:
+                c.execute(
+                    f"DELETE FROM later_items WHERE LOWER(content) LIKE {p}",
+                    (f"%{kw.lower()}%",),
+                )
+            else:
+                c.execute(
+                    "DELETE FROM later_items WHERE LOWER(content) LIKE ?",
+                    (f"%{kw.lower()}%",),
+                )
+            deleted += c.rowcount
+        return deleted
+
+
 # ── Calendar sync log ─────────────────────────────────────────────────────────
 
 def is_event_synced(event_id: str) -> bool:

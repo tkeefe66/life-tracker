@@ -36,8 +36,16 @@ def _test_calendar():
         logger.error("Google Calendar health check failed: %s", e)
 
 
+def _purge_blocked_items():
+    """Remove any birthday/holiday items that slipped in before filtering was added."""
+    count = db.delete_later_items_matching(["birthday", "bday", "holiday"])
+    if count:
+        logger.info("Purged %d birthday/holiday item(s) from Later Items", count)
+
+
 def main():
     db.initialize_db()
+    _purge_blocked_items()
     _test_anthropic()
     _test_calendar()
 

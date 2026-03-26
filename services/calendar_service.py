@@ -79,7 +79,7 @@ def get_events_rolling_window(days: int = 2) -> list:
         if item.get("eventType") == "birthday":
             continue
         title_lower = (item.get("summary") or "").lower()
-        if "birthday" in title_lower or "holiday" in title_lower:
+        if any(kw in title_lower for kw in ("birthday", "bday", "holiday")):
             continue
 
         start = item.get("start", {})
