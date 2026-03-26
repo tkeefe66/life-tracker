@@ -166,12 +166,16 @@ def organize_later_items(items: list) -> list:
     prompt = f"""You are organizing someone's longer-term goals and focus areas.
 
 Below is a list of items with target dates or date ranges. Some may be duplicates or near-duplicates.
-Items that share an overlapping date range or are clearly part of the same trip/event should be grouped together.
 
 Your tasks:
 1. Remove exact and near-duplicate items (keep the most specific version)
-2. Group remaining items under short, intuitive theme headings — items that are part of the same trip or event should share a group
-3. Within each group, sort by target date (soonest first)
+2. Consolidate logistics/sub-components of the same trip or event into a SINGLE item.
+   For example: "Flight to London", "Hotel in London", "Dinner reservation London" → one item: "Trip to London"
+   Use the broadest date range across the merged items.
+3. Group remaining items under short, intuitive theme headings (e.g. "Travel", "Work Projects", "Personal Goals")
+4. Within each group, sort by target date (soonest first)
+
+Key rule: prefer fewer, higher-level items over many granular logistics. Details belong in weekly accomplishments, not here.
 
 Return ONLY a JSON array — no markdown fences, no explanation:
 [

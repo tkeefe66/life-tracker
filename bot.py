@@ -45,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
+# Bump this when the later-org AI prompt changes to invalidate stale caches
+_LATER_ORG_CACHE_VERSION = 2
+
 
 # ── Timezone-aware today ──────────────────────────────────────────────────────
 
@@ -388,17 +391,17 @@ async def _sync_to_sheets_with_ai(bot) -> str:
     organized_later = []
 
     if all_later:
+        import json as _json
+        cache_key = item_count * 1000 + _LATER_ORG_CACHE_VERSION
         cached_later = db.get_cached_later_org()
-        if cached_later and cached_later["item_count"] == item_count:
-            import json as _json
+        if cached_later and cached_later["item_count"] == cache_key:
             organized_later = _json.loads(cached_later["groups_json"])
         else:
             await _send(bot, "🗂 Organizing your later items…")
             organized_later = organize_later_items(all_later)
-            import json as _json
             db.save_cached_later_org(
                 _json.dumps(organized_later, default=str),
-                item_count,
+                cache_key,
             )
 
     # ── Step 3: Sync ──────────────────────────────────────────────────────────
