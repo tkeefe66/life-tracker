@@ -151,18 +151,26 @@ def organize_later_items(items: list) -> list:
     if not items:
         return []
 
+    def _date_label(item):
+        start = item.get("target_date") or ""
+        end = item.get("end_date") or ""
+        if end and end != start:
+            return f"{start} – {end}"
+        return start or "no date"
+
     items_text = "\n".join(
-        f"- {item['content']} | {item.get('target_date') or 'no date'}"
+        f"- {item['content']} | {_date_label(item)}"
         for item in items
     )
 
     prompt = f"""You are organizing someone's longer-term goals and focus areas.
 
-Below is a list of items with target dates. Some may be duplicates or near-duplicates.
+Below is a list of items with target dates or date ranges. Some may be duplicates or near-duplicates.
+Items that share an overlapping date range or are clearly part of the same trip/event should be grouped together.
 
 Your tasks:
 1. Remove exact and near-duplicate items (keep the most specific version)
-2. Group remaining items under short, intuitive theme headings
+2. Group remaining items under short, intuitive theme headings — items that are part of the same trip or event should share a group
 3. Within each group, sort by target date (soonest first)
 
 Return ONLY a JSON array — no markdown fences, no explanation:
@@ -170,7 +178,7 @@ Return ONLY a JSON array — no markdown fences, no explanation:
   {{
     "theme": "Theme Name",
     "items": [
-      {{"content": "clean item description", "target_date": "target timeframe"}},
+      {{"content": "clean item description", "target_date": "target timeframe", "end_date": "end date or empty string"}},
       ...
     ]
   }},
@@ -186,7 +194,7 @@ Items:
         item["content"]: {
             k: v.isoformat() if isinstance(v, datetime) else v
             for k, v in item.items()
-            if k not in ("content", "target_date")
+            if k not in ("content", "target_date", "end_date")
         }
         for item in items
     }

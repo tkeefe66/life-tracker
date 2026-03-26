@@ -53,13 +53,27 @@ async def _sync_calendar_window(bot: Bot, days: int) -> int:
             continue
 
         start = event["start_datetime"]
+        end = event["end_datetime"]
         target_date = start[:10] if start else ""
+        # For multi-day all-day events, end.date is exclusive (e.g. ends "2026-04-16"
+        # for a trip through Apr 15), so subtract one day.
+        end_date = None
+        if end:
+            end_d = end[:10]
+            if end_d != target_date:
+                from datetime import date, timedelta
+                parsed = date.fromisoformat(end_d)
+                # All-day end dates are exclusive; timed events are not
+                if "T" not in end:
+                    parsed -= timedelta(days=1)
+                end_date = parsed.isoformat() if parsed.isoformat() != target_date else None
 
         db.save_later_item_full(
             content=event["title"],
             target_date=target_date,
             source="calendar",
             event_id=event["event_id"],
+            end_date=end_date,
         )
         db.mark_event_synced(event["event_id"])
         new_events.append(event)

@@ -178,6 +178,7 @@ def _init_postgres(serial, bool_t):
             ("ai_status", "TEXT"),
             ("ai_notes", "TEXT"),
             ("event_id", "TEXT"),
+            ("end_date", "TEXT"),
         ]:
             c.execute(f"ALTER TABLE later_items ADD COLUMN IF NOT EXISTS {col} {defn}")
 
@@ -279,6 +280,7 @@ def _init_sqlite(bool_t):
             ("ai_status", "TEXT"),
             ("ai_notes", "TEXT"),
             ("event_id", "TEXT"),
+            ("end_date", "TEXT"),
         ]:
             _add_col(c, "later_items", col, defn)
 
@@ -597,20 +599,20 @@ def deactivate_habit(habit_id: int):
 # ── Later items (extended) ────────────────────────────────────────────────────
 
 def save_later_item_full(content: str, target_date: str, source: str = "manual",
-                          event_id: str = None) -> int:
+                          event_id: str = None, end_date: str = None) -> int:
     p = _p()
     with _cursor(write=True) as c:
         if USE_POSTGRES:
             c.execute(
-                f"""INSERT INTO later_items (content, target_date, source, event_id)
-                    VALUES ({p},{p},{p},{p}) RETURNING id""",
-                (content, target_date, source, event_id),
+                f"""INSERT INTO later_items (content, target_date, source, event_id, end_date)
+                    VALUES ({p},{p},{p},{p},{p}) RETURNING id""",
+                (content, target_date, source, event_id, end_date),
             )
             return c.fetchone()["id"]
         else:
             c.execute(
-                "INSERT INTO later_items (content, target_date, source, event_id) VALUES (?,?,?,?)",
-                (content, target_date, source, event_id),
+                "INSERT INTO later_items (content, target_date, source, event_id, end_date) VALUES (?,?,?,?,?)",
+                (content, target_date, source, event_id, end_date),
             )
             return c.lastrowid
 
