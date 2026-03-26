@@ -421,21 +421,41 @@ async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def work_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quick-log work accomplishments for today only, then return to idle."""
     today = _today().isoformat()
-    db.set_state("collecting_work_only", current_date=today, pending_dates=[])
-    await _prompt_work(context.bot, today)
+    if context.args:
+        text = " ".join(context.args)
+        db.save_accomplishment(today, "work", text)
+        db.set_state("idle")
+        await update.message.reply_text(f"💼 Work logged for {_fmt_date(today)}!")
+    else:
+        db.set_state("collecting_work_only", current_date=today, pending_dates=[])
+        await _prompt_work(context.bot, today)
 
 
 async def personal_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quick-log personal accomplishments for today only, then return to idle."""
     today = _today().isoformat()
-    db.set_state("collecting_personal_only", current_date=today, pending_dates=[])
-    await _prompt_personal(context.bot, today)
+    if context.args:
+        text = " ".join(context.args)
+        db.save_accomplishment(today, "personal", text)
+        db.set_state("idle")
+        await update.message.reply_text(f"🏆 Personal logged for {_fmt_date(today)}!")
+    else:
+        db.set_state("collecting_personal_only", current_date=today, pending_dates=[])
+        await _prompt_personal(context.bot, today)
 
 
 async def focus_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quick-log next week's focus, then return to idle."""
-    db.set_state("collecting_focus")
-    await _prompt_focus(context.bot)
+    if context.args:
+        text = " ".join(context.args)
+        week_start = _next_monday()
+        db.save_weekly_focus(week_start, text)
+        db.set_state("idle")
+        next_mon = date.fromisoformat(week_start).strftime("%B %d")
+        await update.message.reply_text(f"🎯 Focus logged for week of {next_mon}!")
+    else:
+        db.set_state("collecting_focus")
+        await _prompt_focus(context.bot)
 
 
 async def _prompt_habit_check(bot, habit: dict):
