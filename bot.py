@@ -396,7 +396,10 @@ async def _sync_to_sheets_with_ai(bot) -> str:
             await _send(bot, "🗂 Organizing your later items…")
             organized_later = organize_later_items(all_later)
             import json as _json
-            db.save_cached_later_org(_json.dumps(organized_later), item_count)
+            db.save_cached_later_org(
+                _json.dumps(organized_later, default=str),
+                item_count,
+            )
 
     # ── Step 3: Sync ──────────────────────────────────────────────────────────
     all_habits = db.get_all_active_habits()

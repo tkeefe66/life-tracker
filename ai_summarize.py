@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from datetime import datetime
 import anthropic
 from config import ANTHROPIC_API_KEY
 
@@ -182,7 +183,11 @@ Items:
     # Build a lookup of extra fields (status, ai_status, ai_notes) by content
     # so we can reattach them after the AI reorganizes
     extra_by_content = {
-        item["content"]: {k: v for k, v in item.items() if k not in ("content", "target_date")}
+        item["content"]: {
+            k: v.isoformat() if isinstance(v, datetime) else v
+            for k, v in item.items()
+            if k not in ("content", "target_date")
+        }
         for item in items
     }
 
