@@ -147,14 +147,14 @@ def _habit_week_rows(habit: dict, week_start: str, week_logs: list) -> list:
         if offset not in days_scheduled:
             day_cells.append("—")
         elif day_date > _today():
-            day_cells.append("·")
+            day_cells.append("?")
         elif day_str in logs_by_date:
             log = logs_by_date[day_str]
             if log["completed"]:
-                day_cells.append("✅")
+                day_cells.append("Yes")
             else:
                 reason = f" ({log['miss_reason']})" if log.get("miss_reason") else ""
-                day_cells.append(f"❌{reason}")
+                day_cells.append(f"No{reason}")
         else:
             day_cells.append("?")
 
@@ -314,7 +314,7 @@ def _build_habits_grid_rows(all_habits: list, all_logs: list) -> list:
                 if offset not in days_sched:
                     cells.append("—")
                 elif day_date > _today():
-                    cells.append("·")
+                    cells.append("?")
                 else:
                     scheduled_past += 1
                     log = logs_by_habit_date.get((habit["id"], day_str))
@@ -322,9 +322,9 @@ def _build_habits_grid_rows(all_habits: list, all_logs: list) -> list:
                         cells.append("?")
                     elif log["completed"]:
                         completed += 1
-                        cells.append("✅")
+                        cells.append("Yes")
                     else:
-                        cells.append("❌")
+                        cells.append("No")
 
             pct = f"{completed}/{scheduled_past}" if scheduled_past else "—"
             rows.append([habit["name"]] + cells + [pct])
