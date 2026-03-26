@@ -127,10 +127,11 @@ Examples:
 
     try:
         raw = _call(prompt, max_tokens=200)
+        logger.info("Habit parse raw response: %r", raw)
         raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         return json.loads(raw)
     except Exception as e:
-        logger.error("Habit parsing failed: %s", e)
+        logger.error("Habit parsing failed: %s | raw: %r", e, raw if 'raw' in dir() else 'N/A')
         return None
 
 
