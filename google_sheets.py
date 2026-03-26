@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from datetime import date, timedelta
 
 import gspread
@@ -101,7 +102,6 @@ def _group_by_week_and_date(entries: list, category: str) -> dict:
 
 def _format_content(content: str) -> str:
     """Format content as bullet points within a cell using newlines."""
-    import re
     # Split on existing newlines or bullet/dash patterns
     lines = re.split(r'\n+|(?<=[.!?])\s+(?=[A-Z])', content.strip())
     bullets = []
@@ -111,7 +111,7 @@ def _format_content(content: str) -> str:
             continue
         # Remove existing bullet prefixes to normalise
         line = re.sub(r'^[-•*]\s*', '', line)
-        bullets.append(f"- {line}")
+        bullets.append(f"• {line}")
     return "\n".join(bullets) if bullets else content
 
 
@@ -213,7 +213,9 @@ def _build_weekly_review_rows(all_accomplishments: list, focus_summaries: dict,
         rows.append(["🎯 NEXT WEEK'S FOCUS", "", ""])
         if focus_text:
             for line in focus_text.splitlines():
-                if line.strip():
+                line = line.strip()
+                if line:
+                    line = re.sub(r'^[-•*]\s*', '• ', line) if re.match(r'^[-•*]', line) else f"• {line}"
                     rows.append(["", "", line])
         else:
             rows.append(["", "", "—"])
