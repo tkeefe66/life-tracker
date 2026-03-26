@@ -160,12 +160,26 @@ def _init_postgres(serial, bool_t):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS calendar_sync_log (
+                id {serial} PRIMARY KEY,
+                event_id TEXT NOT NULL UNIQUE,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         # Add new columns safely
         for col, defn in [
             ("later_item_draft", "TEXT"),
             ("temp_data", "TEXT DEFAULT '{}'"),
         ]:
             c.execute(f"ALTER TABLE conversation_state ADD COLUMN IF NOT EXISTS {col} {defn}")
+        for col, defn in [
+            ("status", "TEXT DEFAULT 'pending'"),
+            ("ai_status", "TEXT"),
+            ("ai_notes", "TEXT"),
+            ("event_id", "TEXT"),
+        ]:
+            c.execute(f"ALTER TABLE later_items ADD COLUMN IF NOT EXISTS {col} {defn}")
 
         p = _p()
         c.execute(
@@ -251,8 +265,22 @@ def _init_sqlite(bool_t):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS calendar_sync_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL UNIQUE,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         for col, defn in [("later_item_draft", "TEXT"), ("temp_data", "TEXT DEFAULT '{}'")]:
             _add_col(c, "conversation_state", col, defn)
+        for col, defn in [
+            ("status", "TEXT DEFAULT 'pending'"),
+            ("ai_status", "TEXT"),
+            ("ai_notes", "TEXT"),
+            ("event_id", "TEXT"),
+        ]:
+            _add_col(c, "later_items", col, defn)
 
         c.execute(
             "INSERT OR IGNORE INTO conversation_state (id, state, bot_start_date) VALUES (1, 'idle', ?)",
@@ -564,3 +592,66 @@ def deactivate_habit(habit_id: int):
             f"UPDATE habits SET active={'FALSE' if USE_POSTGRES else '0'} WHERE id={p}",
             (habit_id,),
         )
+
+
+# ── Later items (extended) ────────────────────────────────────────────────────
+
+def save_later_item_full(content: str, target_date: str, source: str = "manual",
+                          event_id: str = None) -> int:
+    p = _p()
+    with _cursor(write=True) as c:
+        if USE_POSTGRES:
+            c.execute(
+                f"""INSERT INTO later_items (content, target_date, source, event_id)
+                    VALUES ({p},{p},{p},{p}) RETURNING id""",
+                (content, target_date, source, event_id),
+            )
+            return c.fetchone()["id"]
+        else:
+            c.execute(
+                "INSERT INTO later_items (content, target_date, source, event_id) VALUES (?,?,?,?)",
+                (content, target_date, source, event_id),
+            )
+            return c.lastrowid
+
+
+def update_later_item_ai(item_id: int, ai_status: str, ai_notes: str):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE later_items SET ai_status={p}, ai_notes={p} WHERE id={p}",
+            (ai_status, ai_notes, item_id),
+        )
+
+
+def get_later_items_pending_ai() -> list:
+    """Return later items that have no AI assessment yet."""
+    with _cursor() as c:
+        c.execute(
+            "SELECT * FROM later_items WHERE ai_status IS NULL ORDER BY created_at"
+        )
+        return _rows(c.fetchall())
+
+
+# ── Calendar sync log ─────────────────────────────────────────────────────────
+
+def is_event_synced(event_id: str) -> bool:
+    p = _p()
+    with _cursor() as c:
+        c.execute(f"SELECT 1 FROM calendar_sync_log WHERE event_id={p}", (event_id,))
+        return c.fetchone() is not None
+
+
+def mark_event_synced(event_id: str):
+    p = _p()
+    with _cursor(write=True) as c:
+        if USE_POSTGRES:
+            c.execute(
+                f"INSERT INTO calendar_sync_log (event_id) VALUES ({p}) ON CONFLICT DO NOTHING",
+                (event_id,),
+            )
+        else:
+            c.execute(
+                "INSERT OR IGNORE INTO calendar_sync_log (event_id) VALUES (?)",
+                (event_id,),
+            )

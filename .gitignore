@@ -1,6 +1,8 @@
 # Credentials & secrets
 .env
 service_account.json
+client_secret.json
+calendar_token.json
 
 # Database
 *.db

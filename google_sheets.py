@@ -253,19 +253,26 @@ def _build_weekly_review_rows(all_accomplishments: list, focus_summaries: dict,
 
 def _build_later_rows(organized_groups: list) -> list:
     """
-    organized_groups: [{"theme": str, "items": [{"content": str, "target_date": str}]}]
+    organized_groups: [{"theme": str, "items": [{"content": str, "target_date": str,
+                        "status": str, "ai_status": str, "ai_notes": str}]}]
     """
-    rows = [["Item", "Target Date"]]
+    rows = [["Item", "Target Date", "Status", "AI Status", "AI Notes"]]
 
     if not organized_groups:
-        rows.append(["No later items yet. Use /later to add long-term goals.", ""])
+        rows.append(["No later items yet. Use /later to add long-term goals.", "", "", "", ""])
         return rows
 
     for group in organized_groups:
-        rows.append([f"── {group['theme'].upper()} ──", ""])
+        rows.append([f"── {group['theme'].upper()} ──", "", "", "", ""])
         for item in group.get("items", []):
-            rows.append([item.get("content", ""), item.get("target_date", "—")])
-        rows.append(["", ""])  # spacer
+            rows.append([
+                item.get("content", ""),
+                item.get("target_date", "—") or "—",
+                item.get("status", "pending") or "pending",
+                item.get("ai_status", "") or "",
+                item.get("ai_notes", "") or "",
+            ])
+        rows.append(["", "", "", "", ""])  # spacer
 
     return rows
 

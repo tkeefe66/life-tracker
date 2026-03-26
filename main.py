@@ -22,9 +22,24 @@ def _test_anthropic():
         logger.error("Anthropic test failed: %s", e)
 
 
+def _test_calendar():
+    logger.info("Running calendar health check...")
+    from services.calendar_service import is_configured
+    if not is_configured():
+        logger.info("Google Calendar: not configured (set GOOGLE_CALENDAR_* env vars to enable)")
+        return
+    try:
+        from services.calendar_service import get_events_rolling_window
+        events = get_events_rolling_window(days=1)
+        logger.info("Google Calendar: connected — %d event(s) in next 24h", len(events))
+    except Exception as e:
+        logger.error("Google Calendar health check failed: %s", e)
+
+
 def main():
     db.initialize_db()
     _test_anthropic()
+    _test_calendar()
 
     app = create_application()
     logger.info("Weekly Updates Bot is starting.")

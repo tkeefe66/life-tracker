@@ -26,6 +26,12 @@ GOOGLE_SERVICE_ACCOUNT_JSON = (
     __import__("base64").b64decode(_gsheets_creds_b64).decode() if _gsheets_creds_b64 else ""
 )
 
+# Google Calendar OAuth2
+GOOGLE_CALENDAR_CLIENT_ID = os.getenv("GOOGLE_CALENDAR_CLIENT_ID", "")
+GOOGLE_CALENDAR_CLIENT_SECRET = os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET", "")
+GOOGLE_CALENDAR_REFRESH_TOKEN = os.getenv("GOOGLE_CALENDAR_REFRESH_TOKEN", "")
+GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+
 # Database: PostgreSQL if DATABASE_URL is set, otherwise SQLite (local dev fallback)
 _raw_db_url = os.getenv("DATABASE_URL", "")
 if _raw_db_url.startswith("postgres://"):

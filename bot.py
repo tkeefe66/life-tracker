@@ -29,6 +29,17 @@ from config import (
     TIMEZONE,
     WEEKLY_SUMMARY_HOUR,
 )
+try:
+    from jobs.daily_calendar import run_daily_calendar_sync
+    from jobs.daily_ai_status import run_daily_ai_status
+    from jobs.monthly_forward import run_monthly_forward
+    _CALENDAR_JOBS_AVAILABLE = True
+except Exception as _cal_import_err:
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "Calendar jobs unavailable (import failed: %s) — bot will start without them", _cal_import_err
+    )
+    _CALENDAR_JOBS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -739,6 +750,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# ── Calendar & AI jobs ────────────────────────────────────────────────────────
+
+if _CALENDAR_JOBS_AVAILABLE:
+    async def calendar_sync_job(context: ContextTypes.DEFAULT_TYPE):
+        """Runs at midnight — syncs new calendar events into Later items."""
+        await run_daily_calendar_sync(context.bot)
+
+    async def ai_status_job(context: ContextTypes.DEFAULT_TYPE):
+        """Runs after calendar sync — assesses any Later items missing AI status."""
+        run_daily_ai_status()
+
+    async def monthly_forward_job(context: ContextTypes.DEFAULT_TYPE):
+        """Runs on the 1st of each month — sends a forward-looking calendar summary."""
+        await run_monthly_forward(context.bot)
+
+
 # ── Application factory ───────────────────────────────────────────────────────
 
 def create_application() -> Application:
@@ -782,5 +809,30 @@ def create_application() -> Application:
         days=(6,),
         name="weekly_summary",
     )
+
+    # Calendar jobs — only if imports succeeded
+    if _CALENDAR_JOBS_AVAILABLE:
+        try:
+            app.job_queue.run_daily(
+                calendar_sync_job,
+                time=datetime.time(hour=0, minute=1, tzinfo=tz),
+                name="calendar_sync",
+            )
+            app.job_queue.run_daily(
+                ai_status_job,
+                time=datetime.time(hour=0, minute=15, tzinfo=tz),
+                name="ai_status",
+            )
+            app.job_queue.run_monthly(
+                monthly_forward_job,
+                when=datetime.time(hour=8, minute=0, tzinfo=tz),
+                day=1,
+                name="monthly_forward",
+            )
+            logger.info("Registered calendar_sync, ai_status, monthly_forward jobs")
+        except Exception as e:
+            logger.error("Failed to register calendar jobs: %s", e, exc_info=True)
+    else:
+        logger.warning("Calendar jobs not registered (import failed at startup)")
 
     return app

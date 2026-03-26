@@ -179,14 +179,33 @@ Return ONLY a JSON array — no markdown fences, no explanation:
 Items:
 {items_text}"""
 
+    # Build a lookup of extra fields (status, ai_status, ai_notes) by content
+    # so we can reattach them after the AI reorganizes
+    extra_by_content = {
+        item["content"]: {k: v for k, v in item.items() if k not in ("content", "target_date")}
+        for item in items
+    }
+
     try:
         raw = _call(prompt, max_tokens=600)
         raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        return json.loads(raw)
+        groups = json.loads(raw)
+        # Merge extra fields back onto each item
+        for group in groups:
+            for item in group.get("items", []):
+                extra = extra_by_content.get(item.get("content"), {})
+                item.update(extra)
+        return groups
     except Exception as e:
         logger.error("Later items organization failed: %s", e)
         # Fallback: one group with all items
         return [{"theme": "Goals", "items": [
-            {"content": item["content"], "target_date": item.get("target_date", "")}
+            {
+                "content": item["content"],
+                "target_date": item.get("target_date", ""),
+                "status": item.get("status", "pending"),
+                "ai_status": item.get("ai_status", ""),
+                "ai_notes": item.get("ai_notes", ""),
+            }
             for item in items
         ]}]
