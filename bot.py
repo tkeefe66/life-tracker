@@ -618,6 +618,9 @@ async def later_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Message handler (state machine) ──────────────────────────────────────────
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await _handle_cleardb_confirm(update, context):
+        return
+
     text = update.message.text.strip()
     state_data = db.get_state()
     state = state_data.get("state", "idle")
@@ -781,6 +784,53 @@ if _CALENDAR_JOBS_AVAILABLE:
         await run_bulk_calendar_sync(context.bot, days=days)
 
 
+# ── Clear DB command ──────────────────────────────────────────────────────────
+
+_CLEARDB_PENDING = False
+
+
+async def cleardb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global _CLEARDB_PENDING
+    if update.effective_chat.id != TELEGRAM_CHAT_ID:
+        return
+    _CLEARDB_PENDING = True
+    await update.message.reply_text(
+        "⚠️ *This will delete ALL data* (accomplishments, habits, later items, focus entries, etc.).\n\n"
+        "Reply with `CONFIRM` to proceed, or anything else to cancel.",
+        parse_mode="Markdown",
+    )
+
+
+async def _handle_cleardb_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Returns True if the message was consumed as a cleardb confirmation."""
+    global _CLEARDB_PENDING
+    if not _CLEARDB_PENDING:
+        return False
+    _CLEARDB_PENDING = False
+    text = (update.message.text or "").strip()
+    if text != "CONFIRM":
+        await update.message.reply_text("Cancelled.")
+        return True
+    tables = [
+        "habit_logs", "habits", "accomplishments", "weekly_focus",
+        "later_items", "focus_summary_cache", "later_org_cache",
+        "calendar_sync_log", "conversation_state",
+    ]
+    try:
+        import database as _db
+        with _db._cursor(write=True) as c:
+            for table in tables:
+                if _db.USE_POSTGRES:
+                    c.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+                else:
+                    c.execute(f"DROP TABLE IF EXISTS {table}")
+        _db.initialize_db()
+        await update.message.reply_text("✅ Database cleared and reinitialized.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+    return True
+
+
 # ── Application factory ───────────────────────────────────────────────────────
 
 def create_application() -> Application:
@@ -801,6 +851,7 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("sync", sync_command))
     app.add_handler(CommandHandler("summary", summary_command))
+    app.add_handler(CommandHandler("cleardb", cleardb_command))
     if _CALENDAR_JOBS_AVAILABLE:
         app.add_handler(CommandHandler("calendarsync", calendarsync_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
