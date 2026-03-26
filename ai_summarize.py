@@ -112,8 +112,15 @@ Return ONLY a JSON object — no markdown fences, no explanation:
   "confirmation_text": "human-friendly summary, e.g. 'Gym (1 hour) every Tuesday & Thursday'"
 }}
 
+If specific days are not mentioned, pick sensible defaults based on frequency:
+- "twice a week" or "two days a week" → pick Tuesday & Thursday [1, 3]
+- "three times a week" → pick Monday, Wednesday, Friday [0, 2, 4]
+- "once a week" → pick Monday [0]
+- "on weekends" → [5, 6]
+
 Examples:
 - "go to gym for an hour on tues and thurs" → days: [1, 3]
+- "go to the gym two days a week" → days: [1, 3]
 - "read for 30 minutes every weekday" → days: [0, 1, 2, 3, 4]
 - "meditate every morning" → days: [0, 1, 2, 3, 4, 5, 6]
 - "call mom every sunday" → days: [6]"""
