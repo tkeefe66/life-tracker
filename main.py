@@ -11,8 +11,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _test_anthropic():
+    try:
+        import anthropic
+        from config import ANTHROPIC_API_KEY
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        models = client.models.list()
+        logger.info("Anthropic models available: %s", [m.id for m in models.data])
+    except Exception as e:
+        logger.error("Anthropic test failed: %s", e)
+
+
 def main():
     db.initialize_db()
+    _test_anthropic()
 
     app = create_application()
     logger.info("Weekly Updates Bot is starting.")
