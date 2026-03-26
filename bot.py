@@ -412,11 +412,6 @@ async def _sync_to_sheets_with_ai(bot) -> str:
 async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Syncing to Google Sheets…")
     try:
-        all_accomplishments = db.get_all_accomplishments()
-        if not all_accomplishments:
-            await update.message.reply_text("No data to sync yet. Use /update to log accomplishments first.")
-            return
-
         url = await _sync_to_sheets_with_ai(context.bot)
         await update.message.reply_text(
             f"✅ Synced!\n\n📝 [View Google Sheet]({url})",
