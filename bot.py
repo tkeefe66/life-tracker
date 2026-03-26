@@ -30,7 +30,7 @@ from config import (
     WEEKLY_SUMMARY_HOUR,
 )
 try:
-    from jobs.daily_calendar import run_daily_calendar_sync
+    from jobs.daily_calendar import run_daily_calendar_sync, run_bulk_calendar_sync
     from jobs.daily_ai_status import run_daily_ai_status
     from jobs.monthly_forward import run_monthly_forward
     _CALENDAR_JOBS_AVAILABLE = True
@@ -768,6 +768,18 @@ if _CALENDAR_JOBS_AVAILABLE:
         """Runs on the 1st of each month — sends a forward-looking calendar summary."""
         await run_monthly_forward(context.bot)
 
+    async def calendarsync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Manual bulk calendar sync. Usage: /calendarsync [days] (default 180)."""
+        days = 180
+        if context.args:
+            try:
+                days = int(context.args[0])
+            except ValueError:
+                await update.message.reply_text("Usage: /calendarsync [days] — e.g. /calendarsync 180")
+                return
+        await update.message.reply_text(f"📅 Scanning the next {days} days of your calendar…")
+        await run_bulk_calendar_sync(context.bot, days=days)
+
 
 # ── Application factory ───────────────────────────────────────────────────────
 
@@ -789,6 +801,8 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("sync", sync_command))
     app.add_handler(CommandHandler("summary", summary_command))
+    if _CALENDAR_JOBS_AVAILABLE:
+        app.add_handler(CommandHandler("calendarsync", calendarsync_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Morning habit reminders

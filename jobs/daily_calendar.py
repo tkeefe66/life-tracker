@@ -30,21 +30,20 @@ def _format_event_line(event: dict) -> str:
     return f"• {title} — {label}{flag}"
 
 
-async def run_daily_calendar_sync(bot: Bot):
-    """Called by the job scheduler. Syncs calendar and notifies via Telegram."""
-    if not is_configured():
-        logger.info("Calendar not configured — skipping daily_calendar job")
-        return
-
+async def _sync_calendar_window(bot: Bot, days: int) -> int:
+    """
+    Fetch events for the given window, save new ones to Later Items, and
+    send a Telegram summary. Returns the count of newly synced events.
+    """
     try:
-        events = get_events_rolling_window(days=2)
+        events = get_events_rolling_window(days=days)
     except Exception as e:
         logger.error("Calendar fetch failed: %s", e)
         await bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
             text=f"⚠️ Calendar sync failed: {e}\n\nCheck your GOOGLE_CALENDAR_* env vars.",
         )
-        return
+        return 0
 
     new_events = []
     recurring_events = []
@@ -53,7 +52,6 @@ async def run_daily_calendar_sync(bot: Bot):
         if db.is_event_synced(event["event_id"]):
             continue
 
-        # Choose a target_date from the event start
         start = event["start_datetime"]
         target_date = start[:10] if start else ""
 
@@ -70,8 +68,8 @@ async def run_daily_calendar_sync(bot: Bot):
             recurring_events.append(event)
 
     if not new_events:
-        logger.info("daily_calendar: no new events to sync")
-        return
+        logger.info("calendar sync (%dd): no new events", days)
+        return 0
 
     lines = [f"📅 *{len(new_events)} new calendar event(s) added to Later:*\n"]
     for e in new_events:
@@ -88,4 +86,24 @@ async def run_daily_calendar_sync(bot: Bot):
         text="\n".join(lines),
         parse_mode="Markdown",
     )
-    logger.info("daily_calendar: synced %d new events", len(new_events))
+    logger.info("calendar sync (%dd): synced %d new events", days, len(new_events))
+    return len(new_events)
+
+
+async def run_daily_calendar_sync(bot: Bot):
+    """Called by the job scheduler. Syncs the next 2 days of calendar events."""
+    if not is_configured():
+        logger.info("Calendar not configured — skipping daily_calendar job")
+        return
+    await _sync_calendar_window(bot, days=2)
+
+
+async def run_bulk_calendar_sync(bot: Bot, days: int = 180):
+    """Manual bulk sync — looks ahead `days` days (default 6 months)."""
+    if not is_configured():
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text="⚠️ Calendar not configured. Check your GOOGLE_CALENDAR_* env vars.",
+        )
+        return
+    await _sync_calendar_window(bot, days=days)

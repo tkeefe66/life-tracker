@@ -55,18 +55,31 @@ def get_events_rolling_window(days: int = 2) -> list:
     time_max = (now + datetime.timedelta(days=days)).isoformat()
 
     service = _get_service()
-    result = service.events().list(
-        calendarId=GOOGLE_CALENDAR_ID,
-        timeMin=time_min,
-        timeMax=time_max,
-        singleEvents=True,
-        orderBy="startTime",
-        maxResults=50,
-    ).execute()
+    items = []
+    page_token = None
+    while True:
+        result = service.events().list(
+            calendarId=GOOGLE_CALENDAR_ID,
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=250,
+            pageToken=page_token,
+        ).execute()
+        items.extend(result.get("items", []))
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
 
     events = []
-    for item in result.get("items", []):
+    for item in items:
         if item.get("status") == "cancelled":
+            continue
+        if item.get("eventType") == "birthday":
+            continue
+        title_lower = (item.get("summary") or "").lower()
+        if "birthday" in title_lower or "holiday" in title_lower:
             continue
 
         start = item.get("start", {})
