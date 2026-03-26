@@ -99,6 +99,22 @@ def _group_by_week_and_date(entries: list, category: str) -> dict:
 
 # ── Tab 1: Weekly Reviews ─────────────────────────────────────────────────────
 
+def _format_content(content: str) -> str:
+    """Format content as bullet points within a cell using newlines."""
+    import re
+    # Split on existing newlines or bullet/dash patterns
+    lines = re.split(r'\n+|(?<=[.!?])\s+(?=[A-Z])', content.strip())
+    bullets = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Remove existing bullet prefixes to normalise
+        line = re.sub(r'^[-•*]\s*', '', line)
+        bullets.append(f"- {line}")
+    return "\n".join(bullets) if bullets else content
+
+
 def _accomplishment_rows(entries_by_date: dict, week_start: str) -> list:
     """Build day-by-day rows for one category within a week."""
     rows = []
@@ -110,8 +126,8 @@ def _accomplishment_rows(entries_by_date: dict, week_start: str) -> list:
         day_str = day_date.isoformat()
         if day_str in entries_by_date:
             label = day_date.strftime("%A %b %d")
-            for i, content in enumerate(entries_by_date[day_str]):
-                rows.append(["", label if i == 0 else "", content])
+            all_content = "\n".join(entries_by_date[day_str])
+            rows.append(["", label, _format_content(all_content)])
     if not rows:
         rows.append(["", "", "—"])
     return rows
@@ -346,7 +362,8 @@ def sync_to_sheets(
     )
     weekly_sheet.clear()
     if weekly_rows:
-        weekly_sheet.update("A1", weekly_rows)
+        weekly_sheet.update("A1", weekly_rows, value_input_option="RAW")
+        weekly_sheet.format("C:C", {"wrapStrategy": "WRAP"})
     logger.info("Rebuilt Weekly Reviews sheet")
 
     # Tab 2: Later
