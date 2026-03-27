@@ -244,6 +244,54 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def _parse_log_date(arg: str) -> date | None:
+    """Parse a date argument for /log. Accepts 'yesterday', mm-dd-yy, or mm-dd-yyyy."""
+    arg = arg.strip().lower()
+    if arg == "yesterday":
+        return _today() - timedelta(days=1)
+    for fmt in ("%m-%d-%y", "%m-%d-%Y"):
+        try:
+            return datetime.datetime.strptime(arg, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+async def log_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Log accomplishments for a specific past date. Usage: /log yesterday | mm-dd-yy | mm-dd-yyyy"""
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: `/log yesterday` or `/log mm-dd-yy` or `/log mm-dd-yyyy`",
+            parse_mode="Markdown",
+        )
+        return
+
+    target = _parse_log_date(" ".join(context.args))
+    if target is None:
+        await update.message.reply_text(
+            "Couldn't parse that date. Use `yesterday`, `mm-dd-yy`, or `mm-dd-yyyy` (e.g. `03-25-26` or `03-25-2026`).",
+            parse_mode="Markdown",
+        )
+        return
+
+    today = _today()
+    if target >= today:
+        await update.message.reply_text("You can only log entries for past dates with /log. Use /update for today.")
+        return
+
+    if target < today - timedelta(days=db.MAX_MISSED_DAYS):
+        await update.message.reply_text(
+            f"That date is more than {db.MAX_MISSED_DAYS} days ago — too far back to log.",
+        )
+        return
+
+    date_str = target.isoformat()
+    await update.message.reply_text(
+        f"Logging for *{_fmt_date(date_str)}*.", parse_mode="Markdown"
+    )
+    await _start_collection(context.bot, [date_str])
+
+
 async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = _today().isoformat()
     missed = db.get_missed_dates()
@@ -838,6 +886,7 @@ def create_application() -> Application:
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("update", update_command))
+    app.add_handler(CommandHandler("log", log_command))
     app.add_handler(CommandHandler("work", work_command))
     app.add_handler(CommandHandler("personal", personal_command))
     app.add_handler(CommandHandler("focus", focus_command))
