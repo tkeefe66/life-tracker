@@ -110,22 +110,29 @@ Return ONLY a JSON object — no markdown fences, no explanation:
 {{
   "name": "short habit name (2-4 words)",
   "description": "clear one-line description of what to do",
-  "days": [list of integers for scheduled days],
-  "confirmation_text": "human-friendly summary, e.g. 'Gym (1 hour) every Tuesday & Thursday'"
+  "recurrence_type": "weekly|monthly_date|monthly_weekday",
+  "recurrence_config": {{}},
+  "days": [integers for weekly habits; empty [] for monthly habits],
+  "confirmation_text": "human-friendly summary, e.g. 'Gym every Tue & Thu' or 'Archie Meds on the 1st of every month'"
 }}
 
-If specific days are not mentioned, pick sensible defaults based on frequency:
-- "twice a week" or "two days a week" → pick Tuesday & Thursday [1, 3]
-- "three times a week" → pick Monday, Wednesday, Friday [0, 2, 4]
-- "once a week" → pick Monday [0]
+Recurrence types:
+- "weekly": repeats on specific days each week → set "days", leave "recurrence_config" as {{}}
+- "monthly_date": repeats on a specific day-of-month (e.g. "1st of every month", "on the 15th") → "recurrence_config": {{"day": N}}, "days": []
+- "monthly_weekday": repeats on the Nth weekday of the month (e.g. "3rd Monday") → "recurrence_config": {{"week": N, "weekday": D}}, "days": []
+
+For weekly habits, if specific days are not mentioned pick sensible defaults:
+- "twice a week" → [1, 3] (Tue & Thu)
+- "three times a week" → [0, 2, 4] (Mon, Wed, Fri)
+- "once a week" → [0] (Mon)
 - "on weekends" → [5, 6]
+- "every day" / "daily" → [0, 1, 2, 3, 4, 5, 6]
 
 Examples:
-- "go to gym for an hour on tues and thurs" → days: [1, 3]
-- "go to the gym two days a week" → days: [1, 3]
-- "read for 30 minutes every weekday" → days: [0, 1, 2, 3, 4]
-- "meditate every morning" → days: [0, 1, 2, 3, 4, 5, 6]
-- "call mom every sunday" → days: [6]"""
+- "go to gym on tues and thurs" → weekly, days: [1, 3]
+- "read 30 min every weekday" → weekly, days: [0, 1, 2, 3, 4]
+- "take vitamins on the 1st of every month" → monthly_date, recurrence_config: {{"day": 1}}
+- "team standup on the 3rd Monday" → monthly_weekday, recurrence_config: {{"week": 3, "weekday": 0}}"""
 
     raw = ""
     try:

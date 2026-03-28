@@ -187,6 +187,17 @@ def _init_postgres(serial, bool_t):
         ]:
             c.execute(f"ALTER TABLE accomplishments ADD COLUMN IF NOT EXISTS {col} {defn}")
             c.execute(f"ALTER TABLE weekly_focus ADD COLUMN IF NOT EXISTS {col} {defn}")
+        for col, defn in [
+            ("recurrence_type", "TEXT DEFAULT 'weekly'"),
+            ("recurrence_config", "TEXT DEFAULT '{}'"),
+        ]:
+            c.execute(f"ALTER TABLE habits ADD COLUMN IF NOT EXISTS {col} {defn}")
+        # Migrate Archie Meds to monthly_date (1st of every month)
+        c.execute(
+            "UPDATE habits SET recurrence_type='monthly_date', "
+            "recurrence_config='{\"day\": 1}', days_of_week='[]' "
+            "WHERE LOWER(name)='archie meds' AND recurrence_type='weekly'"
+        )
 
         p = _p()
         c.execute(
@@ -292,6 +303,14 @@ def _init_sqlite(bool_t):
         for table in ["accomplishments", "weekly_focus"]:
             _add_col(c, table, "sheet_synced", "INTEGER DEFAULT 0")
             _add_col(c, table, "sheet_deleted", "INTEGER DEFAULT 0")
+        _add_col(c, "habits", "recurrence_type", "TEXT DEFAULT 'weekly'")
+        _add_col(c, "habits", "recurrence_config", "TEXT DEFAULT '{}'")
+        # Migrate Archie Meds to monthly_date (1st of every month)
+        c.execute(
+            "UPDATE habits SET recurrence_type='monthly_date', "
+            "recurrence_config='{\"day\": 1}', days_of_week='[]' "
+            "WHERE name LIKE 'Archie Meds' AND (recurrence_type IS NULL OR recurrence_type='weekly')"
+        )
 
         c.execute(
             "INSERT OR IGNORE INTO conversation_state (id, state, bot_start_date) VALUES (1, 'idle', ?)",
@@ -577,20 +596,46 @@ def save_cached_later_org(groups_json: str, item_count: int):
 # ── Habits ────────────────────────────────────────────────────────────────────
 
 def _unpack_habit(row: dict) -> dict:
-    if row and isinstance(row.get("days_of_week"), str):
-        row["days_of_week"] = json.loads(row["days_of_week"])
+    if row:
+        if isinstance(row.get("days_of_week"), str):
+            row["days_of_week"] = json.loads(row["days_of_week"])
+        if isinstance(row.get("recurrence_config"), str):
+            row["recurrence_config"] = json.loads(row["recurrence_config"] or "{}")
+        elif not row.get("recurrence_config"):
+            row["recurrence_config"] = {}
+        if not row.get("recurrence_type"):
+            row["recurrence_type"] = "weekly"
     return row
 
 
-def save_habit(name: str, description: str, days_of_week: list) -> int:
+def _habit_scheduled_for_date(habit: dict, d: date) -> bool:
+    """Return True if the habit is scheduled to occur on the given date."""
+    rtype = habit.get("recurrence_type") or "weekly"
+    config = habit.get("recurrence_config") or {}
+    if rtype == "weekly":
+        return d.weekday() in (habit.get("days_of_week") or [])
+    elif rtype == "monthly_date":
+        return d.day == config.get("day", 1)
+    elif rtype == "monthly_weekday":
+        if d.weekday() != config.get("weekday", 0):
+            return False
+        return (d.day - 1) // 7 + 1 == config.get("week", 1)
+    return False
+
+
+def save_habit(name: str, description: str, days_of_week: list,
+               recurrence_type: str = "weekly", recurrence_config: dict = None) -> int:
     p = _p()
+    recurrence_config = recurrence_config or {}
     with _cursor(write=True) as c:
         c.execute(
-            f"INSERT INTO habits (name, description, days_of_week) VALUES ({p},{p},{p}) RETURNING id",
-            (name, description, json.dumps(days_of_week)),
+            f"INSERT INTO habits (name, description, days_of_week, recurrence_type, recurrence_config) "
+            f"VALUES ({p},{p},{p},{p},{p}) RETURNING id",
+            (name, description, json.dumps(days_of_week), recurrence_type, json.dumps(recurrence_config)),
         ) if USE_POSTGRES else c.execute(
-            "INSERT INTO habits (name, description, days_of_week) VALUES (?,?,?)",
-            (name, description, json.dumps(days_of_week)),
+            "INSERT INTO habits (name, description, days_of_week, recurrence_type, recurrence_config) "
+            "VALUES (?,?,?,?,?)",
+            (name, description, json.dumps(days_of_week), recurrence_type, json.dumps(recurrence_config)),
         )
         if USE_POSTGRES:
             return c.fetchone()["id"]
@@ -614,12 +659,19 @@ def get_all_active_habits() -> list:
 
 
 def get_active_habits_for_weekday(weekday: int) -> list:
-    return [h for h in get_all_active_habits() if weekday in h["days_of_week"]]
+    """Legacy: filter by weekday only. Use get_habits_scheduled_for_date for full recurrence support."""
+    return [h for h in get_all_active_habits() if weekday in (h.get("days_of_week") or [])]
+
+
+def get_habits_scheduled_for_date(date_str: str) -> list:
+    """Return all active habits scheduled for the given date, supporting all recurrence types."""
+    d = date.fromisoformat(date_str)
+    return [h for h in get_all_active_habits() if _habit_scheduled_for_date(h, d)]
 
 
 def get_unlogged_habits_for_date(date_str: str) -> list:
     d = date.fromisoformat(date_str)
-    scheduled = get_active_habits_for_weekday(d.weekday())
+    scheduled = get_habits_scheduled_for_date(date_str)
     if not scheduled:
         return []
     p = _p()

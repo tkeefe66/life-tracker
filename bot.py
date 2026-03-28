@@ -63,6 +63,11 @@ def _fmt_date(date_str: str) -> str:
     return date.fromisoformat(date_str).strftime("%A, %B %d")
 
 
+def _ordinal(n: int) -> str:
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n if n < 20 else n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def _week_label(week_start: str) -> str:
     start = date.fromisoformat(week_start)
     end = start + timedelta(days=6)
@@ -641,7 +646,7 @@ async def morning_habit_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     """Fires every morning. Sends nudges for any habits scheduled today."""
     bot = context.bot
     today = _today()
-    habits = db.get_active_habits_for_weekday(today.weekday())
+    habits = db.get_habits_scheduled_for_date(today.isoformat())
     if not habits:
         return
     names = "\n".join(f"• {h['description']}" for h in habits)
@@ -677,11 +682,9 @@ async def habit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     db.set_state("confirming_habit", temp_data=parsed)
-    day_names = ", ".join(["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][d] for d in parsed["days"])
     await update.message.reply_text(
         f"Here's what I understood:\n\n"
-        f"*{parsed['confirmation_text']}*\n"
-        f"Days: {day_names}\n\n"
+        f"*{parsed['confirmation_text']}*\n\n"
         f"Does that look right? Reply *Yes* to save or *No* to cancel.",
         parse_mode="Markdown",
     )
@@ -700,8 +703,17 @@ async def habits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     day_abbr = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
     msg = "📌 *Your Active Habits:*\n\n"
     for h in habits:
-        days = ", ".join(day_abbr[d] for d in h["days_of_week"])
-        msg += f"• *{h['name']}* — {h['description']}\n  Days: {days}\n\n"
+        rtype = h.get("recurrence_type", "weekly")
+        config = h.get("recurrence_config") or {}
+        if rtype == "monthly_date":
+            schedule = f"Monthly on the {_ordinal(config.get('day', 1))}"
+        elif rtype == "monthly_weekday":
+            wk = config.get("week", 1)
+            wd = day_abbr[config.get("weekday", 0)]
+            schedule = f"Monthly ({_ordinal(wk)} {wd})"
+        else:
+            schedule = ", ".join(day_abbr[d] for d in (h.get("days_of_week") or []))
+        msg += f"• *{h['name']}* — {h['description']}\n  Schedule: {schedule}\n\n"
     msg += "Use `/habitstop [habit name]` to deactivate one."
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -882,14 +894,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 name=temp.get("name", "Habit"),
                 description=temp.get("description", ""),
                 days_of_week=temp.get("days", []),
+                recurrence_type=temp.get("recurrence_type", "weekly"),
+                recurrence_config=temp.get("recurrence_config", {}),
             )
             db.set_state("idle")
-            day_abbr = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-            days_str = ", ".join(day_abbr[d] for d in temp.get("days", []))
             await update.message.reply_text(
                 f"✅ *{temp.get('name')}* saved!\n\n"
-                f"I'll send you a morning nudge on {days_str} "
-                f"and check in during your daily update. 💪",
+                f"{temp.get('confirmation_text', '')}\n\n"
+                f"I'll remind you on schedule and check in during your daily update. 💪",
                 parse_mode="Markdown",
             )
         else:
