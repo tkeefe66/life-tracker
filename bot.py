@@ -234,7 +234,7 @@ _COMMANDS_TEXT = (
     "• /work \\[text\\] — Quick\\-log work \\(inline saves immediately\\)\n"
     "• /personal \\[text\\] — Quick\\-log personal\n"
     "• /focus \\[text\\] — Quick\\-log next week's focus\n"
-    "• /log yesterday|mm\\-dd\\-yy — Log for a specific past date\n"
+    "• /log yesterday\\|mm\\-dd\\-yy — Log for a specific past date\n"
     "• /skip — Skip the current prompt\n\n"
     "*📊 Viewing & Syncing*\n"
     "• /status — This week's logged days\n"
