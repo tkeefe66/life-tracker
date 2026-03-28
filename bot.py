@@ -378,6 +378,10 @@ async def skip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
         )
 
+    elif state == "confirming_freeform":
+        db.set_state("idle")
+        await update.message.reply_text("Cancelled — nothing was saved.")
+
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     week_start = _monday_of_week()
@@ -686,17 +690,58 @@ async def later_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Free-form message routing ─────────────────────────────────────────────────
 
-async def _handle_freeform_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+def _format_freeform_preview(entries: list) -> str:
+    """Format parsed entries into a human-readable preview string."""
+    lines = []
+    for entry in entries:
+        etype = entry.get("type")
+        content = entry.get("content", "").strip()
+        if not content:
+            continue
+        if etype == "work":
+            d = entry.get("date", "")
+            lines.append(f"💼 *Work* ({_fmt_date(d)}): {content}")
+        elif etype == "personal":
+            d = entry.get("date", "")
+            lines.append(f"🏆 *Personal* ({_fmt_date(d)}): {content}")
+        elif etype == "focus":
+            next_mon = date.fromisoformat(_next_monday()).strftime("%B %d")
+            lines.append(f"🎯 *Focus* (week of {next_mon}): {content}")
+        elif etype == "later":
+            target = entry.get("target_date") or "no date"
+            lines.append(f"🔭 *Later* ({target}): {content}")
+    return "\n".join(lines)
+
+
+def _save_freeform_entries(entries: list, today: str):
+    """Persist a list of parsed freeform entries to the DB."""
+    for entry in entries:
+        etype = entry.get("type")
+        content = entry.get("content", "").strip()
+        if not content:
+            continue
+        if etype == "work":
+            db.save_accomplishment(entry.get("date") or today, "work", content)
+        elif etype == "personal":
+            db.save_accomplishment(entry.get("date") or today, "personal", content)
+        elif etype == "focus":
+            db.save_weekly_focus(_next_monday(), content)
+        elif etype == "later":
+            db.save_later_item(content, entry.get("target_date", ""), source="manual")
+
+
+async def _handle_freeform_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, correction: str = None):
     """AI-powered routing for messages sent while bot is in idle state."""
     from ai_summarize import parse_freeform_message
 
     today = _today().isoformat()
-    await update.message.reply_text("Got it, figuring out what to log… 🤔")
+    await update.message.reply_text("Got it, reading your message… 🤔")
 
-    result = parse_freeform_message(text, today)
-    entries = result.get("entries", [])
+    result = parse_freeform_message(text, today, correction=correction)
+    entries = [e for e in result.get("entries", []) if e.get("content", "").strip()]
+    questions = result.get("questions", [])
 
-    if not entries:
+    if not entries and not questions:
         await update.message.reply_text(
             "Hmm, I couldn't figure out what to log from that.\n\n"
             "Quick log:\n"
@@ -707,45 +752,23 @@ async def _handle_freeform_message(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    saved = []
-    for entry in entries:
-        etype = entry.get("type")
-        content = entry.get("content", "").strip()
-        if not content:
-            continue
+    # Build confirmation message
+    msg = "Here's what I understood:\n\n"
+    if entries:
+        msg += _format_freeform_preview(entries) + "\n\n"
+    if questions:
+        msg += "❓ *I wasn't sure about:*\n"
+        for q in questions:
+            msg += f"• {q}\n"
+        msg += "\n"
 
-        if etype == "work":
-            entry_date = entry.get("date") or today
-            db.save_accomplishment(entry_date, "work", content)
-            saved.append(f"💼 *Work* ({_fmt_date(entry_date)}): {content}")
+    msg += "Reply *Yes* to save, or tell me what's wrong and I'll re-read it."
 
-        elif etype == "personal":
-            entry_date = entry.get("date") or today
-            db.save_accomplishment(entry_date, "personal", content)
-            saved.append(f"🏆 *Personal* ({_fmt_date(entry_date)}): {content}")
-
-        elif etype == "focus":
-            next_monday = _next_monday()
-            db.save_weekly_focus(next_monday, content)
-            next_mon = date.fromisoformat(next_monday).strftime("%B %d")
-            saved.append(f"🎯 *Focus* (week of {next_mon}): {content}")
-
-        elif etype == "later":
-            target_date = entry.get("target_date", "")
-            db.save_later_item(content, target_date, source="manual")
-            saved.append(f"🔭 *Later* ({target_date or 'no date'}): {content}")
-
-    if saved:
-        summary = "\n".join(saved)
-        await update.message.reply_text(
-            f"✅ Logged!\n\n{summary}",
-            parse_mode="Markdown",
-        )
-    else:
-        await update.message.reply_text(
-            "I parsed something but couldn't extract any content to save. "
-            "Try /work, /personal, or /update for the guided flow."
-        )
+    db.set_state("confirming_freeform", temp_data={
+        "original_text": text,
+        "entries": entries,
+    })
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 # ── Message handler (state machine) ──────────────────────────────────────────
@@ -880,6 +903,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Use /sync anytime to update your Google Sheet.",
             parse_mode="Markdown",
         )
+
+    elif state == "confirming_freeform":
+        temp = json.loads(state_data.get("temp_data") or "{}")
+        original_text = temp.get("original_text", "")
+        entries = temp.get("entries", [])
+        today = _today().isoformat()
+
+        if text.lower() in ("yes", "y", "yep", "yeah", "correct", "looks good", "save", "ok", "looks right"):
+            _save_freeform_entries(entries, today)
+            db.set_state("idle")
+            preview = _format_freeform_preview(entries)
+            await update.message.reply_text(
+                f"✅ Saved!\n\n{preview}",
+                parse_mode="Markdown",
+            )
+        elif text.lower() in ("no", "n", "cancel", "stop", "nevermind"):
+            db.set_state("idle")
+            await update.message.reply_text("Cancelled — nothing was saved.")
+        else:
+            # Treat as a correction — re-parse with the feedback
+            db.set_state("idle")
+            await _handle_freeform_message(update, context, original_text, correction=text)
 
 
 # ── Calendar & AI jobs ────────────────────────────────────────────────────────

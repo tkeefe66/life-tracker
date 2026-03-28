@@ -230,7 +230,7 @@ Items:
 
 # ── Free-form message routing ─────────────────────────────────────────────────
 
-def parse_freeform_message(text: str, today_str: str) -> dict:
+def parse_freeform_message(text: str, today_str: str, correction: str = None) -> dict:
     """
     Parse a free-form message and extract structured entries.
     Returns:
@@ -238,47 +238,56 @@ def parse_freeform_message(text: str, today_str: str) -> dict:
         "entries": [
             {"type": "work",     "content": str, "date": "YYYY-MM-DD"},
             {"type": "personal", "content": str, "date": "YYYY-MM-DD"},
-            {"type": "focus",    "content": str, "date": null},
+            {"type": "focus",    "content": str},
             {"type": "later",    "content": str, "target_date": str}
-        ]
+        ],
+        "questions": [str, ...]   -- things the AI is unsure about and wants to ask
     }
-    Returns {"entries": []} if the message can't be classified.
+    Returns {"entries": [], "questions": []} if the message can't be classified.
     """
-    prompt = f"""Today is {today_str}. Someone sent you a free-form message to log their day.
+    correction_block = f"\n\nThe user has provided a correction to your previous interpretation:\n\"{correction}\"\nRevise accordingly." if correction else ""
 
-Your job: extract any loggable entries from the message. Each entry is one of:
-- "work": work accomplishments (things they did at work, professional tasks, meetings, deliverables)
-- "personal": personal accomplishments (gym, health, family, personal projects, hobbies)
-- "focus": what they plan to focus on next week (priorities, goals)
-- "later": a longer-term goal or plan with a specific future timeframe (e.g. "by Q3", "in June", "next year")
+    prompt = f"""Today is {today_str}. Someone sent you a free-form voice/text dump to log their day.
+
+Your job: carefully read the message and split it into distinct loggable entries. Each piece of content belongs to EXACTLY ONE category — never duplicate the same text across categories:
+
+Categories:
+- "work": things accomplished AT WORK today (or yesterday if mentioned) — professional tasks, meetings, deliverables, client calls
+- "personal": personal accomplishments today (or yesterday if mentioned) — gym, health, family, hobbies, errands
+- "focus": priorities or goals for NEXT WEEK — phrases like "next week I want to...", "planning to focus on...", "going to work on..."
+- "later": a longer-term goal tied to a specific future timeframe beyond next week (e.g. "by Q3", "in June", "next year")
 
 Rules:
-- A single message may contain multiple types — extract all of them
-- For work/personal entries, the date is almost always today ({today_str}) unless the message says "yesterday" or a specific day
-- If the message mentions "yesterday", use the day before today
-- For focus entries, date is null (they apply to next week)
-- For later items, extract the target timeframe as a string (e.g. "Q3 2026", "June 2026")
-- If nothing is loggable (e.g. a greeting, a question), return an empty entries array
-- Keep content concise but complete — preserve the person's voice
+1. Every sentence or bullet belongs to exactly one category — do NOT copy the same text to multiple entries
+2. If a sentence mixes work and personal, pick the most fitting category
+3. "Next week" language always goes to "focus", even if vague (e.g. "next week I might focus on X or do Y with Chad")
+4. For work/personal: date is today ({today_str}) unless the message says "yesterday" → use the day before
+5. Strip filler words but preserve the person's voice and key details
+6. If something is genuinely ambiguous (could be two different things and you truly can't tell), add a question to the "questions" array instead of guessing
 
 Return ONLY a JSON object — no markdown fences, no explanation:
 {{
   "entries": [
-    {{"type": "work", "content": "...", "date": "{today_str}"}},
-    {{"type": "personal", "content": "...", "date": "{today_str}"}},
-    {{"type": "focus", "content": "...", "date": null}},
-    {{"type": "later", "content": "...", "target_date": "Q3 2026"}}
+    {{"type": "work", "content": "concise work entry", "date": "{today_str}"}},
+    {{"type": "personal", "content": "concise personal entry", "date": "{today_str}"}},
+    {{"type": "focus", "content": "next week priority"}},
+    {{"type": "later", "content": "longer-term goal", "target_date": "Q3 2026"}}
+  ],
+  "questions": [
+    "Should 'X' be logged as work or personal?"
   ]
 }}
 
-Message: "{text}"
+Message: "{text}"{correction_block}
 """
 
     try:
-        raw = _call(prompt, max_tokens=400)
+        raw = _call(prompt, max_tokens=600)
         raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         result = json.loads(raw)
+        if "questions" not in result:
+            result["questions"] = []
         return result
     except Exception as e:
         logger.error("Free-form message parsing failed: %s", e)
-        return {"entries": []}
+        return {"entries": [], "questions": []}
