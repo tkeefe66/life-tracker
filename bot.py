@@ -293,6 +293,29 @@ async def log_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    state_data = db.get_state()
+    state = state_data.get("state", "idle")
+
+    # If already mid-collection, re-prompt rather than restarting
+    if state == "collecting_work":
+        current_date = state_data.get("entry_date")
+        await update.message.reply_text(
+            f"Still waiting on your work accomplishments for {_fmt_date(current_date)} 👇"
+        )
+        await _prompt_work(context.bot, current_date)
+        return
+    elif state == "collecting_personal":
+        current_date = state_data.get("entry_date")
+        await update.message.reply_text(
+            f"Still waiting on your personal accomplishments for {_fmt_date(current_date)} 👇"
+        )
+        await _prompt_personal(context.bot, current_date)
+        return
+    elif state == "collecting_focus":
+        await update.message.reply_text("Still waiting on next week's focus 👇")
+        await _prompt_focus(context.bot)
+        return
+
     today = _today().isoformat()
     missed = db.get_missed_dates()
     dates_to_collect = missed + [today]
@@ -661,6 +684,70 @@ async def later_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── Free-form message routing ─────────────────────────────────────────────────
+
+async def _handle_freeform_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    """AI-powered routing for messages sent while bot is in idle state."""
+    from ai_summarize import parse_freeform_message
+
+    today = _today().isoformat()
+    await update.message.reply_text("Got it, figuring out what to log… 🤔")
+
+    result = parse_freeform_message(text, today)
+    entries = result.get("entries", [])
+
+    if not entries:
+        await update.message.reply_text(
+            "Hmm, I couldn't figure out what to log from that.\n\n"
+            "Quick log:\n"
+            "• /work — add work accomplishments\n"
+            "• /personal — add personal accomplishments\n"
+            "• /focus — update next week's focus\n"
+            "• /update — full daily check-in"
+        )
+        return
+
+    saved = []
+    for entry in entries:
+        etype = entry.get("type")
+        content = entry.get("content", "").strip()
+        if not content:
+            continue
+
+        if etype == "work":
+            entry_date = entry.get("date") or today
+            db.save_accomplishment(entry_date, "work", content)
+            saved.append(f"💼 *Work* ({_fmt_date(entry_date)}): {content}")
+
+        elif etype == "personal":
+            entry_date = entry.get("date") or today
+            db.save_accomplishment(entry_date, "personal", content)
+            saved.append(f"🏆 *Personal* ({_fmt_date(entry_date)}): {content}")
+
+        elif etype == "focus":
+            next_monday = _next_monday()
+            db.save_weekly_focus(next_monday, content)
+            next_mon = date.fromisoformat(next_monday).strftime("%B %d")
+            saved.append(f"🎯 *Focus* (week of {next_mon}): {content}")
+
+        elif etype == "later":
+            target_date = entry.get("target_date", "")
+            db.save_later_item(content, target_date, source="manual")
+            saved.append(f"🔭 *Later* ({target_date or 'no date'}): {content}")
+
+    if saved:
+        summary = "\n".join(saved)
+        await update.message.reply_text(
+            f"✅ Logged!\n\n{summary}",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            "I parsed something but couldn't extract any content to save. "
+            "Try /work, /personal, or /update for the guided flow."
+        )
+
+
 # ── Message handler (state machine) ──────────────────────────────────────────
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -672,14 +759,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = state_data.get("state", "idle")
 
     if state == "idle":
-        await update.message.reply_text(
-            "Not sure what to do with that!\n\n"
-            "Quick log:\n"
-            "• /work — add work accomplishments\n"
-            "• /personal — add personal accomplishments\n"
-            "• /focus — update next week's focus\n"
-            "• /update — full daily check-in"
-        )
+        await _handle_freeform_message(update, context, text)
         return
 
     current_date = state_data.get("entry_date")

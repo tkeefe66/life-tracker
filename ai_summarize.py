@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, date
 import anthropic
 from config import ANTHROPIC_API_KEY
 
@@ -226,3 +226,59 @@ Items:
             }
             for item in items
         ]}]
+
+
+# ── Free-form message routing ─────────────────────────────────────────────────
+
+def parse_freeform_message(text: str, today_str: str) -> dict:
+    """
+    Parse a free-form message and extract structured entries.
+    Returns:
+    {
+        "entries": [
+            {"type": "work",     "content": str, "date": "YYYY-MM-DD"},
+            {"type": "personal", "content": str, "date": "YYYY-MM-DD"},
+            {"type": "focus",    "content": str, "date": null},
+            {"type": "later",    "content": str, "target_date": str}
+        ]
+    }
+    Returns {"entries": []} if the message can't be classified.
+    """
+    prompt = f"""Today is {today_str}. Someone sent you a free-form message to log their day.
+
+Your job: extract any loggable entries from the message. Each entry is one of:
+- "work": work accomplishments (things they did at work, professional tasks, meetings, deliverables)
+- "personal": personal accomplishments (gym, health, family, personal projects, hobbies)
+- "focus": what they plan to focus on next week (priorities, goals)
+- "later": a longer-term goal or plan with a specific future timeframe (e.g. "by Q3", "in June", "next year")
+
+Rules:
+- A single message may contain multiple types — extract all of them
+- For work/personal entries, the date is almost always today ({today_str}) unless the message says "yesterday" or a specific day
+- If the message mentions "yesterday", use the day before today
+- For focus entries, date is null (they apply to next week)
+- For later items, extract the target timeframe as a string (e.g. "Q3 2026", "June 2026")
+- If nothing is loggable (e.g. a greeting, a question), return an empty entries array
+- Keep content concise but complete — preserve the person's voice
+
+Return ONLY a JSON object — no markdown fences, no explanation:
+{{
+  "entries": [
+    {{"type": "work", "content": "...", "date": "{today_str}"}},
+    {{"type": "personal", "content": "...", "date": "{today_str}"}},
+    {{"type": "focus", "content": "...", "date": null}},
+    {{"type": "later", "content": "...", "target_date": "Q3 2026"}}
+  ]
+}}
+
+Message: "{text}"
+"""
+
+    try:
+        raw = _call(prompt, max_tokens=400)
+        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        result = json.loads(raw)
+        return result
+    except Exception as e:
+        logger.error("Free-form message parsing failed: %s", e)
+        return {"entries": []}
