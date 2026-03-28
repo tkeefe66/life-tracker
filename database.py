@@ -181,6 +181,12 @@ def _init_postgres(serial, bool_t):
             ("end_date", "TEXT"),
         ]:
             c.execute(f"ALTER TABLE later_items ADD COLUMN IF NOT EXISTS {col} {defn}")
+        for col, defn in [
+            ("sheet_synced", "BOOLEAN DEFAULT FALSE"),
+            ("sheet_deleted", "BOOLEAN DEFAULT FALSE"),
+        ]:
+            c.execute(f"ALTER TABLE accomplishments ADD COLUMN IF NOT EXISTS {col} {defn}")
+            c.execute(f"ALTER TABLE weekly_focus ADD COLUMN IF NOT EXISTS {col} {defn}")
 
         p = _p()
         c.execute(
@@ -283,6 +289,9 @@ def _init_sqlite(bool_t):
             ("end_date", "TEXT"),
         ]:
             _add_col(c, "later_items", col, defn)
+        for table in ["accomplishments", "weekly_focus"]:
+            _add_col(c, table, "sheet_synced", "INTEGER DEFAULT 0")
+            _add_col(c, table, "sheet_deleted", "INTEGER DEFAULT 0")
 
         c.execute(
             "INSERT OR IGNORE INTO conversation_state (id, state, bot_start_date) VALUES (1, 'idle', ?)",
@@ -400,6 +409,60 @@ def get_all_focus_entries() -> list:
     with _cursor() as c:
         c.execute("SELECT * FROM weekly_focus ORDER BY week_start")
         return _rows(c.fetchall())
+
+
+# ── Sheet sync tracking ───────────────────────────────────────────────────────
+
+def get_all_accomplishments_for_sync() -> list:
+    """All accomplishments not deleted from Sheets, ordered for sync."""
+    with _cursor() as c:
+        if USE_POSTGRES:
+            c.execute("SELECT * FROM accomplishments WHERE sheet_deleted=FALSE ORDER BY date, category")
+        else:
+            c.execute("SELECT * FROM accomplishments WHERE sheet_deleted=0 ORDER BY date, category")
+        return _rows(c.fetchall())
+
+
+def get_all_focus_for_sync() -> list:
+    """All focus entries not deleted from Sheets, ordered for sync."""
+    with _cursor() as c:
+        if USE_POSTGRES:
+            c.execute("SELECT * FROM weekly_focus WHERE sheet_deleted=FALSE ORDER BY week_start, created_at")
+        else:
+            c.execute("SELECT * FROM weekly_focus WHERE sheet_deleted=0 ORDER BY week_start, created_at")
+        return _rows(c.fetchall())
+
+
+def _bulk_update(table: str, column: str, set_true: bool, ids: list):
+    if not ids:
+        return
+    with _cursor(write=True) as c:
+        if USE_POSTGRES:
+            pg_val = "TRUE" if set_true else "FALSE"
+            c.execute(f"UPDATE {table} SET {column}={pg_val} WHERE id = ANY(%s)", (ids,))
+        else:
+            sqlite_val = 1 if set_true else 0
+            placeholders = ",".join(["?"] * len(ids))
+            c.execute(
+                f"UPDATE {table} SET {column}={sqlite_val} WHERE id IN ({placeholders})",
+                list(ids),
+            )
+
+
+def mark_accomplishments_synced(ids: list):
+    _bulk_update("accomplishments", "sheet_synced", True, ids)
+
+
+def mark_accomplishments_sheet_deleted(ids: list):
+    _bulk_update("accomplishments", "sheet_deleted", True, ids)
+
+
+def mark_focus_synced(ids: list):
+    _bulk_update("weekly_focus", "sheet_synced", True, ids)
+
+
+def mark_focus_sheet_deleted(ids: list):
+    _bulk_update("weekly_focus", "sheet_deleted", True, ids)
 
 
 # ── Focus summary cache ───────────────────────────────────────────────────────

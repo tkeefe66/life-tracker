@@ -86,167 +86,114 @@ def _monday_of(d: date) -> str:
     return (d - timedelta(days=d.weekday())).isoformat()
 
 
-def _group_by_week_and_date(entries: list, category: str) -> dict:
-    """Returns {week_start: {date_str: [content, ...]}}"""
-    result = {}
-    for e in entries:
-        if e["category"] != category:
+# ── Tab 1: Weekly Reviews (append-only) ──────────────────────────────────────
+
+_WEEKLY_HEADER = ["Date", "Day", "Week", "Category", "Content", "ID"]
+_ID_COL = 6   # 1-indexed column F
+
+
+def _parse_sheet_ids(col_values: list) -> set:
+    """Extract non-empty ID strings from column F values (header already stripped)."""
+    return {str(v).strip() for v in col_values if str(v).strip()}
+
+
+def _is_old_format(col_f_row2: str) -> bool:
+    """Return True if column F row 2 doesn't look like an entry ID (a:N or f:N)."""
+    import re as _re
+    return not _re.match(r'^[af]:\d+$', str(col_f_row2).strip())
+
+
+def _weekly_entry_rows(all_accomplishments: list, all_focus: list, exclude_ids: set) -> list:
+    """
+    Build plain table rows for entries not already in the sheet.
+    Returns list of [date_sort_key, row] pairs sorted chronologically.
+    """
+    pairs = []
+
+    for acc in all_accomplishments:
+        sheet_id = f"a:{acc['id']}"
+        if sheet_id in exclude_ids or acc.get('sheet_deleted'):
             continue
-        d = date.fromisoformat(e["date"])
-        week = _monday_of(d)
-        result.setdefault(week, {}).setdefault(e["date"], []).append(e["content"])
-    return result
+        d = date.fromisoformat(acc['date'])
+        pairs.append((acc['date'], [
+            d.strftime('%-m/%-d/%y'),
+            d.strftime('%A'),
+            _week_label(_monday_of(d)),
+            acc['category'].title(),
+            acc['content'],
+            sheet_id,
+        ]))
 
-
-# ── Tab 1: Weekly Reviews ─────────────────────────────────────────────────────
-
-def _format_content(content: str) -> str:
-    """Format content as bullet points within a cell using newlines."""
-    # Split on existing newlines or bullet/dash patterns
-    lines = re.split(r'\n+|(?<=[.!?])\s+(?=[A-Z])', content.strip())
-    bullets = []
-    for line in lines:
-        line = line.strip()
-        if not line:
+    for focus in all_focus:
+        sheet_id = f"f:{focus['id']}"
+        if sheet_id in exclude_ids or focus.get('sheet_deleted'):
             continue
-        # Remove existing bullet prefixes to normalise
-        line = re.sub(r'^[-•*]\s*', '', line)
-        bullets.append(f"• {line}")
-    return "\n".join(bullets) if bullets else content
+        d = date.fromisoformat(focus['week_start'])
+        pairs.append((focus['week_start'], [
+            d.strftime('%-m/%-d/%y'),
+            d.strftime('%A'),
+            _week_label(focus['week_start']),
+            'Focus',
+            focus['content'],
+            sheet_id,
+        ]))
+
+    pairs.sort(key=lambda x: x[0])
+    return [row for _, row in pairs]
 
 
-def _accomplishment_rows(entries_by_date: dict, week_start: str) -> list:
-    """Build day-by-day rows for one category within a week."""
-    rows = []
-    start_date = date.fromisoformat(week_start)
-    for offset in range(7):
-        day_date = start_date + timedelta(days=offset)
-        if day_date > _today():
-            break
-        day_str = day_date.isoformat()
-        if day_str in entries_by_date:
-            label = day_date.strftime("%A %b %d")
-            all_content = "\n".join(entries_by_date[day_str])
-            rows.append(["", label, _format_content(all_content)])
-    if not rows:
-        rows.append(["", "", "—"])
-    return rows
+def _sync_weekly_reviews_append(
+    sheet,
+    all_accomplishments: list,
+    all_focus: list,
+) -> tuple:
+    """
+    Append-only sync for Weekly Reviews tab.
+    Returns (new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids) as sets of ints.
+    """
+    col_f = sheet.col_values(_ID_COL)  # full column F including header
 
+    # Detect old-format sheet (no ID column) — clear once so we start fresh
+    needs_header = not col_f or col_f[0] != "ID"
+    if col_f and col_f[0] == "ID" and len(col_f) > 1 and _is_old_format(col_f[1]):
+        logger.info("Weekly Reviews sheet is in old format — clearing for fresh append-only sync")
+        sheet.clear()
+        col_f = []
+        needs_header = True
 
-def _habit_week_rows(habit: dict, week_start: str, week_logs: list) -> list:
-    """One row per habit showing day-by-day status for a week."""
-    days_scheduled = habit["days_of_week"]
-    start_date = date.fromisoformat(week_start)
+    if needs_header:
+        sheet.update("A1", [_WEEKLY_HEADER])
+        existing_ids = set()
+    else:
+        existing_ids = _parse_sheet_ids(col_f[1:])  # skip header
 
-    logs_by_date = {log["date"]: log for log in week_logs if log["habit_id"] == habit["id"]}
+    # Detect deletions: entries we thought were in the sheet but aren't anymore
+    deleted_acc_ids = set()
+    deleted_focus_ids = set()
+    for acc in all_accomplishments:
+        if acc.get('sheet_synced') and not acc.get('sheet_deleted'):
+            if f"a:{acc['id']}" not in existing_ids:
+                deleted_acc_ids.add(acc['id'])
+    for focus in all_focus:
+        if focus.get('sheet_synced') and not focus.get('sheet_deleted'):
+            if f"f:{focus['id']}" not in existing_ids:
+                deleted_focus_ids.add(focus['id'])
 
-    day_cells = []
-    for offset in range(7):
-        day_date = start_date + timedelta(days=offset)
-        day_str = day_date.isoformat()
-        if offset not in days_scheduled:
-            day_cells.append("—")
-        elif day_date > _today():
-            day_cells.append("?")
-        elif day_str in logs_by_date:
-            log = logs_by_date[day_str]
-            if log["completed"]:
-                day_cells.append("Yes")
-            else:
-                reason = f" ({log['miss_reason']})" if log.get("miss_reason") else ""
-                day_cells.append(f"No{reason}")
-        else:
-            day_cells.append("?")
+    # Build and append new rows
+    new_rows = _weekly_entry_rows(all_accomplishments, all_focus, existing_ids)
+    if new_rows:
+        sheet.append_rows(new_rows, value_input_option="RAW")
+        sheet.format("E:E", {"wrapStrategy": "WRAP"})
 
-    scheduled_past = sum(
-        1 for i, d in enumerate((start_date + timedelta(days=o) for o in range(7)))
-        if i in days_scheduled and d <= _today()
+    # Collect IDs of newly appended entries
+    new_acc_ids = {int(r[5][2:]) for r in new_rows if r[5].startswith("a:")}
+    new_focus_ids = {int(r[5][2:]) for r in new_rows if r[5].startswith("f:")}
+
+    logger.info(
+        "Weekly Reviews: +%d rows appended, %d acc deleted, %d focus deleted",
+        len(new_rows), len(deleted_acc_ids), len(deleted_focus_ids),
     )
-    completed = sum(1 for d in day_cells if d == "✅")
-    pct = f"{completed}/{scheduled_past}" if scheduled_past else "—"
-
-    return [["", habit["name"], f"{day_cells[0]} {day_cells[1]} {day_cells[2]} {day_cells[3]} {day_cells[4]} {day_cells[5]} {day_cells[6]}  ({pct})"]]
-
-
-def _build_weekly_review_rows(all_accomplishments: list, focus_summaries: dict,
-                               all_habits: list = None, all_habit_logs: list = None) -> list:
-    """
-    Builds Tab 1. For each week (newest first):
-      🎯 NEXT WEEK'S FOCUS  (AI summary — keyed by the FOLLOWING week's Monday)
-      💼 WORK ACCOMPLISHED
-      🏆 PERSONAL ACCOMPLISHED
-
-    focus_summaries: {week_start: summary_text}
-    """
-    all_habits = all_habits or []
-    all_habit_logs = all_habit_logs or []
-
-    work_by_week = _group_by_week_and_date(all_accomplishments, "work")
-    personal_by_week = _group_by_week_and_date(all_accomplishments, "personal")
-
-    # Group habit logs by week
-    habit_logs_by_week = {}
-    for log in all_habit_logs:
-        w = _monday_of(date.fromisoformat(log["date"]))
-        habit_logs_by_week.setdefault(w, []).append(log)
-
-    # Collect all weeks with any data
-    all_weeks = set(work_by_week.keys()) | set(personal_by_week.keys()) | set(habit_logs_by_week.keys())
-    for focus_week in focus_summaries:
-        implied = (date.fromisoformat(focus_week) - timedelta(days=7)).isoformat()
-        all_weeks.add(implied)
-
-    if not all_weeks:
-        return [["No data yet. Use /update to log your first accomplishments!"]]
-
-    rows = [["Section", "Day / Date", "Details"]]
-
-    for week_start in sorted(all_weeks, reverse=True):
-        label = _week_label(week_start)
-        rows.append([f"━━━ Week of {label} ━━━", "", ""])
-        rows.append(["", "", ""])
-
-        # 🎯 Next week's focus — look up the FOLLOWING Monday
-        next_monday = (date.fromisoformat(week_start) + timedelta(days=7)).isoformat()
-        focus_text = focus_summaries.get(next_monday, "")
-
-        rows.append(["🎯 NEXT WEEK'S FOCUS", "", ""])
-        if focus_text:
-            for line in focus_text.splitlines():
-                line = line.strip()
-                if line:
-                    line = re.sub(r'^[-•*]\s*', '• ', line) if re.match(r'^[-•*]', line) else f"• {line}"
-                    rows.append(["", "", line])
-        else:
-            rows.append(["", "", "—"])
-        rows.append(["", "", ""])
-
-        # 💼 Work accomplished
-        rows.append(["💼 WORK ACCOMPLISHED", "", ""])
-        rows.extend(_accomplishment_rows(work_by_week.get(week_start, {}), week_start))
-        rows.append(["", "", ""])
-
-        # 🏆 Personal accomplished
-        rows.append(["🏆 PERSONAL ACCOMPLISHED", "", ""])
-        rows.extend(_accomplishment_rows(personal_by_week.get(week_start, {}), week_start))
-        rows.append(["", "", ""])
-
-        # 📌 Habits
-        if habit_logs_by_week:
-            week_logs = habit_logs_by_week.get(week_start, [])
-            if week_logs or any(
-                week_start in [_monday_of(date.fromisoformat(l["date"])) for l in all_habit_logs]
-            ):
-                rows.append(["📌 HABITS", "", ""])
-                for habit in all_habits:
-                    habit_rows = _habit_week_rows(habit, week_start, week_logs)
-                    rows.extend(habit_rows)
-                rows.append(["", "", ""])
-
-        # Spacer between weeks
-        rows.append(["", "", ""])
-
-    return rows
+    return new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids
 
 
 # ── Tab 2: Later ──────────────────────────────────────────────────────────────
@@ -359,18 +306,18 @@ def _build_habits_grid_rows(all_habits: list, all_logs: list) -> list:
 
 def sync_to_sheets(
     all_accomplishments: list,
-    focus_summaries: dict,
+    all_focus: list,
     organized_later: list,
     all_habits: list = None,
     all_habit_logs: list = None,
-) -> str:
+) -> tuple:
     """
-    Rebuild both tabs from current data.
+    Sync all three tabs to Google Sheets.
 
-    focus_summaries: {week_start: summary_text}  — keyed by the TARGET week's Monday
-    organized_later: output of organize_later_items()
+    Weekly Reviews tab: append-only — never overwrites existing rows.
+    Later and Habits tabs: full rebuild.
 
-    Returns spreadsheet URL.
+    Returns (url, new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids).
     """
     spreadsheet = _get_spreadsheet()
     _ensure_sheets(spreadsheet)
@@ -378,16 +325,10 @@ def sync_to_sheets(
     all_habits = all_habits or []
     all_habit_logs = all_habit_logs or []
 
-    # Tab 1: Weekly Reviews
+    # Tab 1: Weekly Reviews — append-only
     weekly_sheet = spreadsheet.worksheet(SHEET_WEEKLY)
-    weekly_rows = _build_weekly_review_rows(
-        all_accomplishments, focus_summaries, all_habits, all_habit_logs
-    )
-    weekly_sheet.clear()
-    if weekly_rows:
-        weekly_sheet.update("A1", weekly_rows, value_input_option="RAW")
-        weekly_sheet.format("C:C", {"wrapStrategy": "WRAP"})
-    logger.info("Rebuilt Weekly Reviews sheet")
+    new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids = \
+        _sync_weekly_reviews_append(weekly_sheet, all_accomplishments, all_focus)
 
     # Tab 2: Later
     later_sheet = spreadsheet.worksheet(SHEET_LATER)
@@ -405,4 +346,4 @@ def sync_to_sheets(
         habits_sheet.update("A1", habits_rows)
     logger.info("Rebuilt Habits sheet (%d habits)", len(all_habits))
 
-    return spreadsheet.url
+    return spreadsheet.url, new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids

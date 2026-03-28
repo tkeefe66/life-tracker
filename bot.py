@@ -421,18 +421,22 @@ async def _sync_to_sheets_with_ai(bot) -> str:
     1. Summarize focus weeks (cached — only re-runs when new entries added).
        Also extracts any later items detected in focus entries.
     2. Organize later items (cached — only re-runs when new items added).
-    3. Rebuild both Google Sheet tabs.
+    3. Append-only sync to Google Sheets. Weekly Reviews tab never overwrites
+       existing rows — user edits and deletions in Sheets are preserved.
     Returns URL.
     """
     from google_sheets import sync_to_sheets
     from ai_summarize import summarize_focus_and_extract_later, organize_later_items
 
-    all_accomplishments = db.get_all_accomplishments()
-    all_focus = db.get_all_focus_entries()
+    # All focus entries for AI summarization (includes sheet_deleted so AI has full picture)
+    all_focus_for_ai = db.get_all_focus_entries()
+    # Non-deleted entries only for the sheet sync
+    all_accomplishments = db.get_all_accomplishments_for_sync()
+    all_focus_for_sync = db.get_all_focus_for_sync()
 
     # ── Step 1: Focus summaries ───────────────────────────────────────────────
     focus_by_week = {}
-    for entry in all_focus:
+    for entry in all_focus_for_ai:
         focus_by_week.setdefault(entry["week_start"], []).append(entry["content"])
 
     focus_summaries = {}   # {week_start: summary_text}
@@ -483,8 +487,17 @@ async def _sync_to_sheets_with_ai(bot) -> str:
     all_habits = db.get_all_active_habits()
     all_habit_logs = db.get_all_habit_logs()
 
-    return sync_to_sheets(all_accomplishments, focus_summaries, organized_later,
-                          all_habits, all_habit_logs)
+    url, new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids = sync_to_sheets(
+        all_accomplishments, all_focus_for_sync, organized_later, all_habits, all_habit_logs
+    )
+
+    # Persist sync state back to DB
+    db.mark_accomplishments_synced(list(new_acc_ids))
+    db.mark_focus_synced(list(new_focus_ids))
+    db.mark_accomplishments_sheet_deleted(list(deleted_acc_ids))
+    db.mark_focus_sheet_deleted(list(deleted_focus_ids))
+
+    return url
 
 
 async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
