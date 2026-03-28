@@ -465,6 +465,24 @@ def mark_focus_sheet_deleted(ids: list):
     _bulk_update("weekly_focus", "sheet_deleted", True, ids)
 
 
+def update_accomplishment_fields(entry_id: int, category: str, content: str):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE accomplishments SET category={p}, content={p} WHERE id={p}",
+            (category, content, entry_id),
+        )
+
+
+def update_focus_content(entry_id: int, content: str):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE weekly_focus SET content={p} WHERE id={p}",
+            (content, entry_id),
+        )
+
+
 # ── Focus summary cache ───────────────────────────────────────────────────────
 
 def get_cached_summary(week_start: str):

@@ -142,14 +142,64 @@ def _weekly_entry_rows(all_accomplishments: list, all_focus: list, exclude_ids: 
     return [row for _, row in pairs]
 
 
+_VALID_CATEGORIES = {"work", "personal", "focus"}
+
+
+def _read_back_edits(sheet, all_accomplishments: list, all_focus: list) -> tuple:
+    """
+    Read all rows from Sheets and return any that differ from DB values.
+    Returns (edited_acc: list[dict], edited_focus: list[dict]).
+    """
+    all_rows = sheet.get_all_values()
+    if len(all_rows) < 2:
+        return [], []
+
+    acc_by_id = {str(a['id']): a for a in all_accomplishments}
+    focus_by_id = {str(f['id']): f for f in all_focus}
+
+    edited_acc = []
+    edited_focus = []
+
+    for row in all_rows[1:]:  # skip header
+        if len(row) < 6:
+            continue
+        category_val = row[3].strip()
+        content_val = row[4].strip()
+        id_val = row[5].strip()
+
+        if not id_val or not content_val:
+            continue
+        if not re.match(r'^[af]:\d+$', id_val):
+            continue
+
+        entry_type = id_val[0]
+        entry_id = id_val[2:]
+
+        if entry_type == 'a' and entry_id in acc_by_id:
+            acc = acc_by_id[entry_id]
+            sheet_cat = category_val.lower()
+            if sheet_cat not in _VALID_CATEGORIES:
+                sheet_cat = acc['category']  # keep DB value if invalid
+            if sheet_cat != acc['category'].lower() or content_val != acc['content'].strip():
+                edited_acc.append({'id': int(entry_id), 'category': sheet_cat, 'content': content_val})
+
+        elif entry_type == 'f' and entry_id in focus_by_id:
+            focus = focus_by_id[entry_id]
+            if content_val != focus['content'].strip():
+                edited_focus.append({'id': int(entry_id), 'content': content_val})
+
+    return edited_acc, edited_focus
+
+
 def _sync_weekly_reviews_append(
     sheet,
     all_accomplishments: list,
     all_focus: list,
 ) -> tuple:
     """
-    Append-only sync for Weekly Reviews tab.
-    Returns (new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids) as sets of ints.
+    Append-only sync for Weekly Reviews tab with read-back of user edits.
+    Returns (new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids,
+             edited_acc, edited_focus) where edited_* are lists of DB update dicts.
     """
     col_f = sheet.col_values(_ID_COL)  # full column F including header
 
@@ -164,8 +214,11 @@ def _sync_weekly_reviews_append(
     if needs_header:
         sheet.update("A1", [_WEEKLY_HEADER])
         existing_ids = set()
+        edited_acc, edited_focus = [], []
     else:
         existing_ids = _parse_sheet_ids(col_f[1:])  # skip header
+        # Read back any edits the user made in Sheets
+        edited_acc, edited_focus = _read_back_edits(sheet, all_accomplishments, all_focus)
 
     # Detect deletions: entries we thought were in the sheet but aren't anymore
     deleted_acc_ids = set()
@@ -190,10 +243,11 @@ def _sync_weekly_reviews_append(
     new_focus_ids = {int(r[5][2:]) for r in new_rows if r[5].startswith("f:")}
 
     logger.info(
-        "Weekly Reviews: +%d rows appended, %d acc deleted, %d focus deleted",
+        "Weekly Reviews: +%d appended, %d acc deleted, %d focus deleted, %d edits read back",
         len(new_rows), len(deleted_acc_ids), len(deleted_focus_ids),
+        len(edited_acc) + len(edited_focus),
     )
-    return new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids
+    return new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids, edited_acc, edited_focus
 
 
 # ── Tab 2: Later ──────────────────────────────────────────────────────────────
@@ -325,9 +379,9 @@ def sync_to_sheets(
     all_habits = all_habits or []
     all_habit_logs = all_habit_logs or []
 
-    # Tab 1: Weekly Reviews — append-only
+    # Tab 1: Weekly Reviews — append-only with read-back
     weekly_sheet = spreadsheet.worksheet(SHEET_WEEKLY)
-    new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids = \
+    new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids, edited_acc, edited_focus = \
         _sync_weekly_reviews_append(weekly_sheet, all_accomplishments, all_focus)
 
     # Tab 2: Later
@@ -346,4 +400,4 @@ def sync_to_sheets(
         habits_sheet.update("A1", habits_rows)
     logger.info("Rebuilt Habits sheet (%d habits)", len(all_habits))
 
-    return spreadsheet.url, new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids
+    return spreadsheet.url, new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids, edited_acc, edited_focus

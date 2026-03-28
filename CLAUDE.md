@@ -226,8 +226,10 @@ Schema lives in `database.py`. If you add a column, add a migration — do not r
 
 ## Adding a New Feature — Checklist
 
-1. **New command?** Add handler in `bot.py`, register in the command list, document in this file
+1. **New command?** Add handler in `bot.py`, register in `create_application()`, update `_COMMANDS_TEXT` in `bot.py`, send updated command list to user, and document here
 2. **New AI task?** Add function to `ai_summarize.py` only — keep the `_call()` pattern
 3. **New DB table/column?** Add to `database.py` schema + write a migration; test local SQLite and prod Postgres
 4. **New env var?** Add to `config.py`, document in the table above, add to `.env.example`
 5. **New scheduled job?** Add to `jobs/`, wire into `main.py`, document the schedule
+
+> **Rule — keep `/start` current:** Whenever a command is added, removed, or its description changes, update `_COMMANDS_TEXT` in `bot.py` AND send the updated list to the user via Telegram (call `await _send(bot, _COMMANDS_TEXT)` or ask the user to run `/start`).

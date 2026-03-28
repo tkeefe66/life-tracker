@@ -249,33 +249,39 @@ def parse_freeform_message(text: str, today_str: str, correction: str = None) ->
 
     prompt = f"""Today is {today_str}. Someone sent you a free-form voice/text dump to log their day.
 
-Your job: carefully read the message and split it into distinct loggable entries. Each piece of content belongs to EXACTLY ONE category — never duplicate the same text across categories:
+Your job: DECOMPOSE the message into individual discrete activities and classify each one separately.
+
+CRITICAL RULES:
+1. Each distinct activity, task, or accomplishment gets its OWN entry — NEVER combine multiple things into one. A message mentioning 5 things → 5 separate entries.
+2. Content must be SHORT (5-15 words max) — one activity only, no run-on sentences or paragraphs.
+3. Every entry belongs to EXACTLY ONE category — never duplicate content across entries.
+4. "Next week" language (plans, priorities, goals) → ALWAYS "focus" type, even if vague.
+5. For work/personal: date is today ({today_str}) unless message says "yesterday" → day before.
+6. Strip filler words but preserve the key action and subject.
+7. If something is genuinely ambiguous, add a question to "questions" instead of guessing.
 
 Categories:
-- "work": things accomplished AT WORK today (or yesterday if mentioned) — professional tasks, meetings, deliverables, client calls
-- "personal": personal accomplishments today (or yesterday if mentioned) — gym, health, family, hobbies, errands
-- "focus": priorities or goals for NEXT WEEK — phrases like "next week I want to...", "planning to focus on...", "going to work on..."
-- "later": a longer-term goal tied to a specific future timeframe beyond next week (e.g. "by Q3", "in June", "next year")
+- "work": professional tasks, meetings, deliverables, client calls done TODAY (or yesterday)
+- "personal": gym, health, family, hobbies, errands, personal projects done TODAY (or yesterday)
+- "focus": plans or priorities for NEXT WEEK
+- "later": longer-term goals tied to a specific future timeframe (Q3, June, next year)
 
-Rules:
-1. Every sentence or bullet belongs to exactly one category — do NOT copy the same text to multiple entries
-2. If a sentence mixes work and personal, pick the most fitting category
-3. "Next week" language always goes to "focus", even if vague (e.g. "next week I might focus on X or do Y with Chad")
-4. For work/personal: date is today ({today_str}) unless the message says "yesterday" → use the day before
-5. Strip filler words but preserve the person's voice and key details
-6. If something is genuinely ambiguous (could be two different things and you truly can't tell), add a question to the "questions" array instead of guessing
+Examples of correct decomposition:
+  "finished Q1 report, met with Sarah, hit the gym"
+  → work: "Finished Q1 report" | work: "Met with Sarah" | personal: "Hit the gym"
+
+  "tough day, got through emails and PR reviews, need to focus on roadmap next week, also going to Vegas in June"
+  → work: "Cleared email backlog" | work: "Completed PR reviews" | focus: "Product roadmap" | later: "Trip to Vegas" (target: June 2026)
 
 Return ONLY a JSON object — no markdown fences, no explanation:
 {{
   "entries": [
-    {{"type": "work", "content": "concise work entry", "date": "{today_str}"}},
-    {{"type": "personal", "content": "concise personal entry", "date": "{today_str}"}},
+    {{"type": "work", "content": "short activity", "date": "{today_str}"}},
+    {{"type": "personal", "content": "short activity", "date": "{today_str}"}},
     {{"type": "focus", "content": "next week priority"}},
-    {{"type": "later", "content": "longer-term goal", "target_date": "Q3 2026"}}
+    {{"type": "later", "content": "goal description", "target_date": "June 2026"}}
   ],
-  "questions": [
-    "Should 'X' be logged as work or personal?"
-  ]
+  "questions": ["Is 'X' work or personal?"]
 }}
 
 Message: "{text}"{correction_block}

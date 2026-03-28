@@ -209,10 +209,11 @@ async def weekly_summary_job(context: ContextTypes.DEFAULT_TYPE):
     # Sync to Google Sheets
     await _send(bot, "🔄 Updating your Google Sheet…")
     try:
-        url = await _sync_to_sheets_with_ai(bot)
+        url, edit_count = await _sync_to_sheets_with_ai(bot)
+        edit_note = f"\n_{edit_count} edit(s) synced back from Sheets._" if edit_count else ""
         await _send(
             bot,
-            f"✅ Google Sheet updated!\n\n"
+            f"✅ Google Sheet updated!{edit_note}\n\n"
             f"📝 [View your weekly accomplishments]({url})",
         )
     except Exception as e:
@@ -226,21 +227,45 @@ async def weekly_summary_job(context: ContextTypes.DEFAULT_TYPE):
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
+_COMMANDS_TEXT = (
+    "🤖 *Weekly Updates Bot — Commands*\n\n"
+    "*📝 Daily Logging*\n"
+    "• /update — Full check\\-in: work → personal → focus → habits\n"
+    "• /work \\[text\\] — Quick\\-log work \\(inline saves immediately\\)\n"
+    "• /personal \\[text\\] — Quick\\-log personal\n"
+    "• /focus \\[text\\] — Quick\\-log next week's focus\n"
+    "• /log yesterday|mm\\-dd\\-yy — Log for a specific past date\n"
+    "• /skip — Skip the current prompt\n\n"
+    "*📊 Viewing & Syncing*\n"
+    "• /status — This week's logged days\n"
+    "• /sync — Push to Google Sheets \\(also reads back any edits you made in Sheets\\)\n"
+    "• /summary — Generate weekly summary now\n\n"
+    "*🏃 Habits*\n"
+    "• /habit \\[description\\] — Add a habit via natural language\n"
+    "• /habits — List active habits\n"
+    "• /habitstop \\[name\\] — Deactivate a habit\n\n"
+    "*🔭 Later / Goals*\n"
+    "• /later — Add a longer\\-term goal with a target date\n\n"
+    "*📅 Calendar*\n"
+    "• /calendarsync \\[days\\] — Import calendar events into Later items\n\n"
+    "*⚙️ Admin*\n"
+    "• /cleardb — Delete all data \\(requires CONFIRM\\)\n"
+    "• /start — Show this message\n\n"
+    "💡 *Tip:* Just type anything — I'll parse it with AI, show you what I understood, "
+    "and ask you to confirm before saving\\."
+)
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await update.message.reply_text(
-        f"👋 *Welcome to Weekly Updates Bot!*\n\n"
+        f"👋 *Welcome to Weekly Updates Bot\\!*\n\n"
         f"Your chat ID is: `{chat_id}`\n"
-        f"_(Add this to your .env as TELEGRAM\\_CHAT\\_ID)_\n\n"
-        f"I'll message you every day to track your accomplishments, then send you a weekly "
-        f"summary on Sunday with a link to your Google Sheet.\n\n"
-        f"*Commands:*\n"
-        f"• /update — Log today's accomplishments\n"
-        f"• /skip — Skip the current question\n"
-        f"• /status — This week's progress\n"
-        f"• /sync — Push data to Google Sheets now\n"
-        f"• /summary — Generate weekly summary now\n",
-        parse_mode="Markdown",
+        f"_\\(Add this to your \\.env as TELEGRAM\\_CHAT\\_ID\\)_\n\n"
+        f"I'll prompt you daily to log accomplishments and send a weekly summary "
+        f"on Sunday with a link to your Google Sheet\\.\n\n"
+        + _COMMANDS_TEXT,
+        parse_mode="MarkdownV2",
     )
 
 
@@ -487,9 +512,8 @@ async def _sync_to_sheets_with_ai(bot) -> str:
     all_habits = db.get_all_active_habits()
     all_habit_logs = db.get_all_habit_logs()
 
-    url, new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids = sync_to_sheets(
-        all_accomplishments, all_focus_for_sync, organized_later, all_habits, all_habit_logs
-    )
+    url, new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids, edited_acc, edited_focus = \
+        sync_to_sheets(all_accomplishments, all_focus_for_sync, organized_later, all_habits, all_habit_logs)
 
     # Persist sync state back to DB
     db.mark_accomplishments_synced(list(new_acc_ids))
@@ -497,15 +521,22 @@ async def _sync_to_sheets_with_ai(bot) -> str:
     db.mark_accomplishments_sheet_deleted(list(deleted_acc_ids))
     db.mark_focus_sheet_deleted(list(deleted_focus_ids))
 
-    return url
+    # Apply read-back edits from Sheets → DB
+    for edit in edited_acc:
+        db.update_accomplishment_fields(edit['id'], edit['category'], edit['content'])
+    for edit in edited_focus:
+        db.update_focus_content(edit['id'], edit['content'])
+
+    return url, len(edited_acc) + len(edited_focus)
 
 
 async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Syncing to Google Sheets…")
     try:
-        url = await _sync_to_sheets_with_ai(context.bot)
+        url, edit_count = await _sync_to_sheets_with_ai(context.bot)
+        edit_note = f"\n_{edit_count} edit(s) synced back from Sheets._" if edit_count else ""
         await update.message.reply_text(
-            f"✅ Synced!\n\n📝 [View Google Sheet]({url})",
+            f"✅ Synced!{edit_note}\n\n📝 [View Google Sheet]({url})",
             parse_mode="Markdown",
         )
     except Exception as e:
