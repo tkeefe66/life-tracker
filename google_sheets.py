@@ -461,3 +461,33 @@ def sync_to_sheets(
     logger.info("Rebuilt Habits sheet (%d habits)", len(all_habits))
 
     return spreadsheet.url, new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids, edited_acc, edited_focus
+
+
+def sync_life_log_to_sheets(entries: list, people: list, people_by_entry: dict) -> str:
+    """
+    Full rebuild of Life Log + People tabs.
+
+    Append-only with read-back is overkill for the early MVP — we'll add it
+    once the Life Log entry volume justifies the complexity. For now, full
+    rebuild is fine: thousands of rows max, fast Sheets API.
+    """
+    spreadsheet = _get_spreadsheet()
+    _ensure_sheets(spreadsheet)
+
+    life_log_sheet = spreadsheet.worksheet(SHEET_LIFE_LOG)
+    rows = _build_life_log_rows(entries, people_by_entry)
+    life_log_sheet.clear()
+    if rows:
+        life_log_sheet.update("A1", rows)
+        life_log_sheet.format("D:D", {"wrapStrategy": "WRAP"})
+        life_log_sheet.format("G:G", {"wrapStrategy": "WRAP"})
+    logger.info("Life Log sheet rebuilt: %d entries", len(entries))
+
+    people_sheet = spreadsheet.worksheet(SHEET_PEOPLE)
+    p_rows = _build_people_rows(people)
+    people_sheet.clear()
+    if p_rows:
+        people_sheet.update("A1", p_rows)
+    logger.info("People sheet rebuilt: %d people", len(people))
+
+    return spreadsheet.url
