@@ -21,6 +21,12 @@ mypy .                          # type checking (if configured)
 python scripts/cleardb.py       # wipe DB (prompts CONFIRM)
 python scripts/calendar_auth.py # re-auth Google Calendar OAuth2
 
+# One-time Life Log backfill from existing memory spreadsheet
+LIFE_LOG_IMPORT_SHEET_ID=<source_sheet_id> python -m scripts.import_life_log_spreadsheet
+
+# Optional: specify a tab name
+python -m scripts.import_life_log_spreadsheet --tab "Memory Log"
+
 # Force a sync without Telegram
 python -c "from bot import _sync_to_sheets_with_ai; import asyncio; asyncio.run(_sync_to_sheets_with_ai())"
 ```
