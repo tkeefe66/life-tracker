@@ -140,3 +140,28 @@ def test_mark_activity_promoted(temp_db_path):
     db.mark_activity_promoted(rows[0]["id"])
     rows2 = db.get_activity_by_source_id("calendar", "ev1")
     assert rows2[0]["promoted_to_life_log"] in (True, 1)
+
+
+def test_save_proposal_and_confirm(temp_db_path):
+    pid = db.save_proposal(
+        date_start="2026-05-15", date_end="2026-05-22",
+        categories=["Vacation"], description="Trip to Vegas",
+        location="Las Vegas, NV", source="calendar", source_id="ev_vegas",
+    )
+    pending = db.get_pending_proposals()
+    assert len(pending) == 1
+    assert pending[0]["id"] == pid
+
+    db.confirm_proposal(pid)
+    assert db.get_life_log_entry(pid)["status"] == "confirmed"
+    assert db.get_pending_proposals() == []
+
+
+def test_dismiss_proposal(temp_db_path):
+    pid = db.save_proposal(
+        date_start="2026-05-15", date_end=None, categories=["Concert"],
+        description="X", location=None, source="calendar", source_id="ev_x",
+    )
+    db.dismiss_proposal(pid)
+    assert db.get_life_log_entry(pid)["status"] == "dismissed"
+    assert db.get_pending_proposals() == []

@@ -1118,6 +1118,68 @@ def set_entry_status(entry_id: int, status: str):
         )
 
 
+# ── Life Log: Proposal Queue ──────────────────────────────────────────────────
+
+def save_proposal(
+    date_start: str, date_end, categories: list, description: str,
+    location, source: str, source_id,
+) -> int:
+    """Save a Life Log entry proposal with status='proposed' and ai_proposed_at set."""
+    p = _p()
+    cats = _serialize_categories(categories)
+    with _cursor(write=True) as c:
+        if USE_POSTGRES:
+            c.execute(
+                f"""INSERT INTO life_log_entries
+                    (date_start, date_end, categories, description, location, status,
+                     source, source_id, ai_proposed_at)
+                    VALUES ({p},{p},{p},{p},{p}, 'proposed', {p},{p}, CURRENT_TIMESTAMP)
+                    RETURNING id""",
+                (date_start, date_end, cats, description, location, source, source_id),
+            )
+            return c.fetchone()["id"]
+        else:
+            c.execute(
+                """INSERT INTO life_log_entries
+                   (date_start, date_end, categories, description, location, status,
+                    source, source_id, ai_proposed_at)
+                   VALUES (?,?,?,?,?, 'proposed', ?,?, CURRENT_TIMESTAMP)""",
+                (date_start, date_end, cats, description, location, source, source_id),
+            )
+            return c.lastrowid
+
+
+def get_pending_proposals() -> list:
+    """Return all entries with status='proposed', ordered by ai_proposed_at."""
+    with _cursor() as c:
+        c.execute(
+            "SELECT * FROM life_log_entries WHERE status='proposed' "
+            "ORDER BY ai_proposed_at"
+        )
+        return [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
+
+
+def confirm_proposal(entry_id: int):
+    """Set a proposed entry to 'confirmed' and stamp user_confirmed_at."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE life_log_entries SET status='confirmed', "
+            f"user_confirmed_at=CURRENT_TIMESTAMP WHERE id={p}",
+            (entry_id,),
+        )
+
+
+def dismiss_proposal(entry_id: int):
+    """Set a proposed entry to 'dismissed'."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE life_log_entries SET status='dismissed' WHERE id={p}",
+            (entry_id,),
+        )
+
+
 # ── Life Log: People ──────────────────────────────────────────────────────────
 
 def _unpack_person(row):
