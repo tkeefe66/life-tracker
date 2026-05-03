@@ -540,6 +540,16 @@ async def _sync_to_sheets_with_ai(bot) -> str:
     for edit in edited_focus:
         db.update_focus_content(edit['id'], edit['content'])
 
+    # Life Log + People tabs
+    from google_sheets import sync_life_log_to_sheets
+    life_log_entries = db.get_all_life_log_entries()
+    all_people = db.get_all_people()
+    people_by_entry = {
+        e["id"]: [p["name"] for p in db.get_people_for_entry(e["id"])]
+        for e in life_log_entries
+    }
+    sync_life_log_to_sheets(life_log_entries, all_people, people_by_entry)
+
     return url, len(edited_acc) + len(edited_focus)
 
 
