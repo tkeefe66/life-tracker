@@ -167,6 +167,25 @@ def _init_postgres(serial, bool_t):
                 synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                name TEXT PRIMARY KEY,
+                active BOOLEAN DEFAULT TRUE,
+                usage_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # Seed initial categories
+        INITIAL_CATEGORIES = [
+            "Vacation", "Relationship", "Outdoors", "Skiing", "Concert",
+            "Wedding", "Bachelor Party", "Life Event", "Visitors", "Tattoo",
+            "Move/Housing", "Job/Career", "Health", "Achievement", "Pet", "Loss",
+        ]
+        for name in INITIAL_CATEGORIES:
+            c.execute(
+                f"INSERT INTO categories (name) VALUES ({_p()}) ON CONFLICT DO NOTHING",
+                (name,),
+            )
         # Add new columns safely
         for col, defn in [
             ("later_item_draft", "TEXT"),
@@ -290,6 +309,25 @@ def _init_sqlite(bool_t):
                 synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                name TEXT PRIMARY KEY,
+                active INTEGER DEFAULT 1,
+                usage_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # Seed initial categories
+        INITIAL_CATEGORIES = [
+            "Vacation", "Relationship", "Outdoors", "Skiing", "Concert",
+            "Wedding", "Bachelor Party", "Life Event", "Visitors", "Tattoo",
+            "Move/Housing", "Job/Career", "Health", "Achievement", "Pet", "Loss",
+        ]
+        for name in INITIAL_CATEGORIES:
+            c.execute(
+                "INSERT OR IGNORE INTO categories (name) VALUES (?)",
+                (name,),
+            )
         for col, defn in [("later_item_draft", "TEXT"), ("temp_data", "TEXT DEFAULT '{}'")]:
             _add_col(c, "conversation_state", col, defn)
         for col, defn in [
@@ -813,3 +851,48 @@ def mark_event_synced(event_id: str):
                 "INSERT OR IGNORE INTO calendar_sync_log (event_id) VALUES (?)",
                 (event_id,),
             )
+
+
+# ── Life Log: Categories ──────────────────────────────────────────────────────
+
+def get_active_categories() -> list:
+    """Return all categories currently active, ordered by name."""
+    with _cursor() as c:
+        if USE_POSTGRES:
+            c.execute("SELECT * FROM categories WHERE active=TRUE ORDER BY name")
+        else:
+            c.execute("SELECT * FROM categories WHERE active=1 ORDER BY name")
+        return _rows(c.fetchall())
+
+
+def add_category(name: str):
+    p = _p()
+    with _cursor(write=True) as c:
+        if USE_POSTGRES:
+            c.execute(
+                f"INSERT INTO categories (name) VALUES ({p}) ON CONFLICT DO NOTHING",
+                (name,),
+            )
+        else:
+            c.execute(
+                "INSERT OR IGNORE INTO categories (name) VALUES (?)",
+                (name,),
+            )
+
+
+def deactivate_category(name: str):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE categories SET active={'FALSE' if USE_POSTGRES else '0'} WHERE name={p}",
+            (name,),
+        )
+
+
+def increment_category_usage(name: str):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE categories SET usage_count = usage_count + 1 WHERE name={p}",
+            (name,),
+        )
