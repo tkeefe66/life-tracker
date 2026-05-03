@@ -24,6 +24,9 @@ from config import (
     DAILY_PROMPT_MINUTE,
     HABIT_REMINDER_HOUR,
     HABIT_REMINDER_MINUTE,
+    LIFELOG_DAYAFTER_HOUR,
+    LIFELOG_REALTIME_INTERVAL_MIN,
+    LIFELOG_SUNDAY_HOUR,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
     TIMEZONE,
@@ -40,6 +43,9 @@ try:
     from jobs.daily_calendar import run_daily_calendar_sync, run_bulk_calendar_sync
     from jobs.daily_ai_status import run_daily_ai_status
     from jobs.monthly_forward import run_monthly_forward
+    from jobs.lifelog_realtime import run_realtime_proposals
+    from jobs.lifelog_dayafter import run_dayafter_proposals
+    from jobs.lifelog_sunday import run_sunday_digest
     _CALENDAR_JOBS_AVAILABLE = True
 except Exception as _cal_import_err:
     import logging as _logging
@@ -1143,6 +1149,33 @@ def create_application() -> Application:
     # Calendar jobs — only if imports succeeded
     if _CALENDAR_JOBS_AVAILABLE:
         try:
+            async def lifelog_realtime_job(context: ContextTypes.DEFAULT_TYPE):
+                await run_realtime_proposals(context.bot)
+
+            async def lifelog_dayafter_job(context: ContextTypes.DEFAULT_TYPE):
+                await run_dayafter_proposals(context.bot)
+
+            async def lifelog_sunday_job(context: ContextTypes.DEFAULT_TYPE):
+                await run_sunday_digest(context.bot)
+
+            app.job_queue.run_repeating(
+                lifelog_realtime_job,
+                interval=LIFELOG_REALTIME_INTERVAL_MIN * 60,
+                first=60,
+                name="lifelog_realtime",
+            )
+            app.job_queue.run_daily(
+                lifelog_dayafter_job,
+                time=datetime.time(hour=LIFELOG_DAYAFTER_HOUR, minute=0, tzinfo=tz),
+                name="lifelog_dayafter",
+            )
+            app.job_queue.run_daily(
+                lifelog_sunday_job,
+                time=datetime.time(hour=LIFELOG_SUNDAY_HOUR, minute=0, tzinfo=tz),
+                days=(6,),  # Sunday
+                name="lifelog_sunday",
+            )
+            logger.info("Registered lifelog_realtime, lifelog_dayafter, lifelog_sunday jobs")
             app.job_queue.run_daily(
                 calendar_sync_job,
                 time=datetime.time(hour=0, minute=1, tzinfo=tz),
