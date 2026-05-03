@@ -167,7 +167,8 @@ Return ONLY a JSON object — no markdown fences:
   "date_start": "YYYY-MM-DD",
   "date_end": "YYYY-MM-DD or null (only for multi-day events)",
   "people": ["first names mentioned"],
-  "questions": ["only if you genuinely cannot determine something important"]
+  "questions": ["only if you genuinely cannot determine something important"],
+  "relationship_event": null
 }}
 
 Rules:
@@ -178,6 +179,11 @@ Rules:
 - description: memoir voice, not action-log voice. "Trip to Vegas with Sprink" beats "Vegas trip"
 - If you cannot determine the category confidently, leave categories empty and add a question
 - Don't invent details not in the text
+- If the message indicates ending a romantic relationship ("broke up", "ended things", "split up"),
+  set "relationship_event" to {{"action": "end", "person": "X"}}.
+- If it indicates starting a new dating relationship ("started dating X", "official with X", "we're official"),
+  set "relationship_event" to {{"action": "start", "person": "X"}}.
+- Otherwise, set "relationship_event" to null.
 
 Message: "{text}"{correction_block}
 """
@@ -185,6 +191,7 @@ Message: "{text}"{correction_block}
     return _call_json(prompt, max_tokens=500, default={
         "categories": [], "description": text[:100], "location": None,
         "date_start": today, "date_end": None, "people": [], "questions": [],
+        "relationship_event": None,
     })
 
 

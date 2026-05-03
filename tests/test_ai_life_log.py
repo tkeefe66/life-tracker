@@ -148,3 +148,23 @@ def test_extract_from_spreadsheet_row(mock_anthropic):
     assert "Wedding" in result["categories"]
     assert "Vacation" in result["categories"]
     assert "Spinkel" in result["people"]
+
+
+def test_parse_log_detects_breakup(mock_anthropic):
+    mock_anthropic.messages.create.return_value.content = [MagicMock(text=json.dumps({
+        "categories": ["Relationship"],
+        "description": "Broke up with Megan",
+        "location": None,
+        "date_start": "2026-05-02",
+        "date_end": None,
+        "people": ["Megan"],
+        "questions": [],
+        "relationship_event": {"action": "end", "person": "Megan"}
+    }))]
+    import ai_life_log
+    result = ai_life_log.parse_log_command(
+        "Broke up with Megan today",
+        today="2026-05-02",
+        active_categories=["Relationship"],
+    )
+    assert result.get("relationship_event") == {"action": "end", "person": "Megan"}
