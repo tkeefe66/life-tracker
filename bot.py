@@ -1176,23 +1176,25 @@ def create_application() -> Application:
                 name="lifelog_sunday",
             )
             logger.info("Registered lifelog_realtime, lifelog_dayafter, lifelog_sunday jobs")
-            app.job_queue.run_daily(
-                calendar_sync_job,
-                time=datetime.time(hour=0, minute=1, tzinfo=tz),
-                name="calendar_sync",
-            )
-            app.job_queue.run_daily(
-                ai_status_job,
-                time=datetime.time(hour=0, minute=15, tzinfo=tz),
-                name="ai_status",
-            )
+            # Replaced by lifelog_realtime + lifelog_dayafter + lifelog_sunday in M7.
+            # app.job_queue.run_daily(
+            #     calendar_sync_job,
+            #     time=datetime.time(hour=0, minute=1, tzinfo=tz),
+            #     name="calendar_sync",
+            # )
+            # ai_status_job retired with the /later concept (M10)
+            # app.job_queue.run_daily(
+            #     ai_status_job,
+            #     time=datetime.time(hour=0, minute=15, tzinfo=tz),
+            #     name="ai_status",
+            # )
             app.job_queue.run_monthly(
                 monthly_forward_job,
                 when=datetime.time(hour=8, minute=0, tzinfo=tz),
                 day=1,
                 name="monthly_forward",
             )
-            logger.info("Registered calendar_sync, ai_status, monthly_forward jobs")
+            logger.info("Registered monthly_forward job")
         except Exception as e:
             logger.error("Failed to register calendar jobs: %s", e, exc_info=True)
     else:
