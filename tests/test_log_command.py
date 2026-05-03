@@ -143,3 +143,39 @@ async def test_new_person_onboarding_sets_relationship_type(temp_db_path):
     p = db.get_person(pid)
     assert p["relationship_type"] == "dating_prospect"
     assert db.get_state()["state"] == "idle"
+
+
+@pytest.mark.asyncio
+async def test_confirm_breakup_sets_person_status_ended(temp_db_path):
+    import database as db
+    from handlers.log_command import handle_confirm_response
+
+    pid = db.save_person(
+        name="Megan", aliases=[], relationship_type="dating",
+        first_seen="2026-02-15", notes=None,
+    )
+    db.set_state(
+        "lifelog_confirming",
+        temp_data={
+            "original_text": "Broke up with Megan today",
+            "parsed": {
+                "categories": ["Relationship"],
+                "description": "Broke up with Megan",
+                "location": None,
+                "date_start": "2026-05-02",
+                "date_end": None,
+                "people": ["Megan"],
+                "questions": [],
+                "relationship_event": {"action": "end", "person": "Megan"},
+            },
+        },
+    )
+    update = MagicMock()
+    update.message.reply_text = AsyncMock()
+    context = MagicMock()
+
+    await handle_confirm_response(update, context, "yes")
+
+    p = db.get_person(pid)
+    assert p["status"] == "ended"
+    assert p["end_date"] == "2026-05-02"

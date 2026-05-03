@@ -137,6 +137,24 @@ async def handle_confirm_response(update: Update, context: ContextTypes.DEFAULT_
             entry_id, parsed.get("people", []), parsed["date_start"]
         )
 
+        rel_event = parsed.get("relationship_event")
+        if rel_event and rel_event.get("person"):
+            person = db.find_person_by_name(rel_event["person"])
+            if person:
+                action = rel_event.get("action")
+                if action == "end":
+                    db.set_person_relationship_status(
+                        person["id"], "ended", end_date=parsed["date_start"],
+                    )
+                elif action == "start":
+                    from database import _cursor, _p as _ph
+                    with _cursor(write=True) as c:
+                        c.execute(
+                            f"UPDATE people SET relationship_type='dating', "
+                            f"start_date={_ph()}, status='active' WHERE id={_ph()}",
+                            (parsed["date_start"], person["id"]),
+                        )
+
         await update.message.reply_text(
             f"✅ Saved!\n\n📝 *{parsed['description']}*",
             parse_mode="Markdown",
