@@ -70,3 +70,44 @@ def test_propose_returns_skip_for_noise(mock_anthropic):
         description="", location="", active_categories=["Vacation"],
     )
     assert result["confidence"] == "skip"
+
+
+def test_parse_log_command_extracts_entry(mock_anthropic):
+    mock_anthropic.messages.create.return_value.content = [MagicMock(text=json.dumps({
+        "categories": ["Relationship"],
+        "description": "Met Megan at Goldens",
+        "location": "Golden, CO",
+        "date_start": "2026-05-02",
+        "date_end": None,
+        "people": ["Megan"],
+        "questions": []
+    }))]
+    import ai_life_log
+    result = ai_life_log.parse_log_command(
+        "Met Megan at Goldens in Golden tonight",
+        today="2026-05-02",
+        active_categories=["Relationship", "Vacation"],
+    )
+    assert result["categories"] == ["Relationship"]
+    assert result["people"] == ["Megan"]
+    assert result["date_start"] == "2026-05-02"
+
+
+def test_parse_log_command_with_correction(mock_anthropic):
+    mock_anthropic.messages.create.return_value.content = [MagicMock(text=json.dumps({
+        "categories": ["Skiing"],
+        "description": "Skied at Killington",
+        "location": "Killington, VT",
+        "date_start": "2026-05-01",
+        "date_end": None,
+        "people": [],
+        "questions": []
+    }))]
+    import ai_life_log
+    result = ai_life_log.parse_log_command(
+        "Skied at Killington yesterday",
+        today="2026-05-02",
+        active_categories=["Skiing"],
+        correction="Actually it was Vermont not Colorado",
+    )
+    assert result["location"] == "Killington, VT"

@@ -123,3 +123,66 @@ Rules:
         "confidence": "skip", "categories": [], "description": "",
         "location": "", "people": [], "reason": "AI parse failed",
     })
+
+
+def parse_log_command(
+    text: str,
+    today: str,
+    active_categories: list,
+    correction=None,
+) -> dict:
+    """
+    Parse a /log command into a structured Life Log entry.
+
+    Returns:
+        {
+          "categories": [str],
+          "description": str,
+          "location": str | None,
+          "date_start": str (YYYY-MM-DD),
+          "date_end": str | None (YYYY-MM-DD),
+          "people": [str],
+          "questions": [str]   # ambiguities to surface to user
+        }
+    """
+    cats_str = ", ".join(active_categories)
+    correction_block = (
+        f"\n\nThe user provided a correction to your previous interpretation:\n"
+        f'"{correction}"\nRevise accordingly.'
+        if correction else ""
+    )
+
+    prompt = f"""Today is {today}. The user typed a /log command for their personal Life Log
+(a 30-year memoir of memorable life events).
+
+Parse it into ONE Life Log entry. Extract people, location, date(s), and pick 1-3 categories.
+
+Available categories: {cats_str}
+
+Return ONLY a JSON object — no markdown fences:
+{{
+  "categories": ["one or more from the list above"],
+  "description": "short memoir-style description (5-15 words)",
+  "location": "place or null",
+  "date_start": "YYYY-MM-DD",
+  "date_end": "YYYY-MM-DD or null (only for multi-day events)",
+  "people": ["first names mentioned"],
+  "questions": ["only if you genuinely cannot determine something important"]
+}}
+
+Rules:
+- "tonight" / "today" → date_start = {today}
+- "yesterday" → day before {today}
+- Multi-day phrasing ("over the weekend", "for a week") → use date_end
+- People: strip honorifics, use first names unless full name is given
+- description: memoir voice, not action-log voice. "Trip to Vegas with Sprink" beats "Vegas trip"
+- If you cannot determine the category confidently, leave categories empty and add a question
+- Don't invent details not in the text
+
+Message: "{text}"{correction_block}
+"""
+
+    return _call_json(prompt, max_tokens=500, default={
+        "categories": [], "description": text[:100], "location": None,
+        "date_start": today, "date_end": None, "people": [], "questions": [],
+    })
