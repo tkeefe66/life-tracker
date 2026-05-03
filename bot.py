@@ -35,6 +35,7 @@ from handlers.log_command import (
     handle_new_person_response as lifelog_handle_new_person,
 )
 from handlers.people import people_command
+from handlers.lifelog_queries import ask_command
 try:
     from jobs.daily_calendar import run_daily_calendar_sync, run_bulk_calendar_sync
     from jobs.daily_ai_status import run_daily_ai_status
@@ -1099,6 +1100,7 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("update", update_command))
     app.add_handler(CommandHandler("log", lifelog_log_command))
     app.add_handler(CommandHandler("people", people_command))
+    app.add_handler(CommandHandler("ask", ask_command))
     app.add_handler(CommandHandler("work", work_command))
     app.add_handler(CommandHandler("personal", personal_command))
     app.add_handler(CommandHandler("focus", focus_command))
