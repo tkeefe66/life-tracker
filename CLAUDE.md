@@ -27,6 +27,11 @@ LIFE_LOG_IMPORT_SHEET_ID=<source_sheet_id> python -m scripts.import_life_log_spr
 # Optional: specify a tab name
 python -m scripts.import_life_log_spreadsheet --tab "Memory Log"
 
+# Calendar history backfill — creates Life Log proposals you can confirm via Telegram
+python -m scripts.import_calendar_history --start-year 2018  # all years from 2018-now
+python -m scripts.import_calendar_history --year 2024        # one year
+python -m scripts.import_calendar_history --start-year 2024 --dry-run  # preview
+
 # Force a sync without Telegram
 python -c "from bot import _sync_to_sheets_with_ai; import asyncio; asyncio.run(_sync_to_sheets_with_ai())"
 ```
