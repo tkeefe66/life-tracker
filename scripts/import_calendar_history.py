@@ -141,6 +141,12 @@ def main():
         total += import_year(y, dry_run=args.dry_run)
     logger.info("Done — %d total proposals", total)
 
+    if total and not args.dry_run:
+        logger.info(
+            "Review them in Telegram with /proposals (paginated, %d per page) "
+            "or 'yes all' / 'skip all' to bulk-handle.", 10
+        )
+
 
 if __name__ == "__main__":
     main()

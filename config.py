@@ -42,7 +42,7 @@ DATABASE_URL = _raw_db_url
 # SQLite path used only when DATABASE_URL is not set
 DATABASE_PATH = os.getenv("DATABASE_PATH", "weekly_updates.db")
 
-LIFELOG_REALTIME_INTERVAL_MIN = int(os.getenv("LIFELOG_REALTIME_INTERVAL_MIN", "15"))
+LIFELOG_REALTIME_INTERVAL_MIN = int(os.getenv("LIFELOG_REALTIME_INTERVAL_MIN", "360"))
 LIFELOG_DAYAFTER_HOUR = int(os.getenv("LIFELOG_DAYAFTER_HOUR", "9"))
 LIFELOG_SUNDAY_HOUR = int(os.getenv("LIFELOG_SUNDAY_HOUR", "17"))
 

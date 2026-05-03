@@ -39,6 +39,7 @@ from handlers.log_command import (
 )
 from handlers.people import people_command
 from handlers.lifelog_queries import ask_command
+from handlers.proposals_review import proposals_command
 try:
     from jobs.daily_calendar import run_daily_calendar_sync, run_bulk_calendar_sync
     from jobs.daily_ai_status import run_daily_ai_status
@@ -250,7 +251,8 @@ _COMMANDS_TEXT = (
     "*🧠 Life Log*\n"
     "• /log \\[text\\] — Log a memorable moment \\(AI extracts category, people, date\\)\n"
     "• /ask \\[question\\] — Natural\\-language query of your Life Log\n"
-    "• /people — List people in your Life Log\n\n"
+    "• /people — List people in your Life Log\n"
+    "• /proposals \\[page\\] — Review pending calendar proposals \\(paginated\\)\n\n"
     "*📊 Viewing & Syncing*\n"
     "• /status — This week's logged data\n"
     "• /sync — Push Life Log \\+ People \\+ Habits to Google Sheets\n"
@@ -1020,6 +1022,7 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("log", lifelog_log_command))
     app.add_handler(CommandHandler("people", people_command))
     app.add_handler(CommandHandler("ask", ask_command))
+    app.add_handler(CommandHandler("proposals", proposals_command))
     app.add_handler(CommandHandler("habit", habit_command))
     app.add_handler(CommandHandler("habits", habits_command))
     app.add_handler(CommandHandler("habitstop", habitstop_command))
