@@ -27,6 +27,8 @@ def _today() -> date:
 SHEET_WEEKLY = "Weekly Reviews"
 SHEET_LATER = "Later"
 SHEET_HABITS = "Habits"
+SHEET_LIFE_LOG = "Life Log"
+SHEET_PEOPLE = "People"
 
 
 # ── Client ────────────────────────────────────────────────────────────────────
@@ -68,7 +70,10 @@ def _get_spreadsheet() -> gspread.Spreadsheet:
 
 def _ensure_sheets(spreadsheet: gspread.Spreadsheet):
     existing = {ws.title for ws in spreadsheet.worksheets()}
-    for name, cols in [(SHEET_WEEKLY, 6), (SHEET_LATER, 4), (SHEET_HABITS, 12)]:
+    for name, cols in [
+        (SHEET_WEEKLY, 6), (SHEET_LATER, 4), (SHEET_HABITS, 12),
+        (SHEET_LIFE_LOG, 10), (SHEET_PEOPLE, 10),
+    ]:
         if name not in existing:
             spreadsheet.add_worksheet(title=name, rows=5000, cols=cols)
             logger.info("Created sheet: %s", name)
@@ -353,6 +358,61 @@ def _build_habits_grid_rows(all_habits: list, all_logs: list) -> list:
 
         rows.append(["", "", "", "", "", "", "", "", ""])
 
+    return rows
+
+
+# ── Tab 4: Life Log ───────────────────────────────────────────────────────────
+
+_LIFE_LOG_HEADER = [
+    "Date", "End Date", "Categories", "Description", "People",
+    "Location", "Notes", "Status", "Source", "ID",
+]
+
+
+def _build_life_log_rows(entries: list, people_by_entry: dict) -> list:
+    rows = [_LIFE_LOG_HEADER]
+    for e in entries:
+        cats = ", ".join(e.get("categories") or [])
+        people = ", ".join(people_by_entry.get(e["id"], []))
+        rows.append([
+            e.get("date_start", "") or "",
+            e.get("date_end", "") or "",
+            cats,
+            e.get("description", "") or "",
+            people,
+            e.get("location", "") or "",
+            e.get("notes", "") or "",
+            e.get("status", "") or "",
+            e.get("source", "") or "",
+            str(e.get("id", "")),
+        ])
+    return rows
+
+
+# ── Tab 5: People ─────────────────────────────────────────────────────────────
+
+_PEOPLE_HEADER = [
+    "Name", "Aliases", "Type", "Status", "First Seen", "Last Seen",
+    "Start Date", "End Date", "Notes", "ID",
+]
+
+
+def _build_people_rows(people: list) -> list:
+    rows = [_PEOPLE_HEADER]
+    for p in people:
+        aliases = ", ".join(p.get("aliases") or [])
+        rows.append([
+            p.get("name", ""),
+            aliases,
+            p.get("relationship_type") or "",
+            p.get("status") or "",
+            p.get("first_seen") or "",
+            p.get("last_seen") or "",
+            p.get("start_date") or "",
+            p.get("end_date") or "",
+            p.get("notes") or "",
+            str(p.get("id", "")),
+        ])
     return rows
 
 
