@@ -219,6 +219,20 @@ def _init_postgres(serial, bool_t):
             )
         """)
         c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_people_person_id ON life_log_people(person_id)")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS activity_log (
+                id {serial} PRIMARY KEY,
+                source TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                occurred_at TIMESTAMP,
+                payload JSONB,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                promoted_to_life_log {bool_t} DEFAULT FALSE,
+                UNIQUE(source, source_id)
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS ix_activity_log_occurred_at ON activity_log(occurred_at)")
         # Seed initial categories
         INITIAL_CATEGORIES = [
             "Vacation", "Relationship", "Outdoors", "Skiing", "Concert",
@@ -405,6 +419,20 @@ def _init_sqlite(bool_t):
             )
         """)
         c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_people_person_id ON life_log_people(person_id)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS activity_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                occurred_at TEXT,
+                payload TEXT,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                promoted_to_life_log INTEGER DEFAULT 0,
+                UNIQUE(source, source_id)
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS ix_activity_log_occurred_at ON activity_log(occurred_at)")
         # Seed initial categories
         INITIAL_CATEGORIES = [
             "Vacation", "Relationship", "Outdoors", "Skiing", "Concert",
@@ -1258,3 +1286,64 @@ def merge_people(keep_id: int, merge_id: int):
             )
             c.execute("DELETE FROM life_log_people WHERE person_id=?", (merge_id,))
             c.execute("DELETE FROM people WHERE id=?", (merge_id,))
+
+
+# ── Activity Log ──────────────────────────────────────────────────────────────
+
+def _serialize_payload(payload: dict):
+    return payload if USE_POSTGRES else json.dumps(payload)
+
+
+def _deserialize_payload(raw):
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    return json.loads(raw)
+
+
+def record_activity(
+    source: str, source_id: str, event_type: str,
+    occurred_at, payload: dict,
+):
+    """Idempotent insert — first write wins per (source, source_id)."""
+    p = _p()
+    payload_val = _serialize_payload(payload)
+    with _cursor(write=True) as c:
+        if USE_POSTGRES:
+            c.execute(
+                f"""INSERT INTO activity_log
+                    (source, source_id, event_type, occurred_at, payload)
+                    VALUES ({p},{p},{p},{p},{p}) ON CONFLICT DO NOTHING""",
+                (source, source_id, event_type, occurred_at, payload_val),
+            )
+        else:
+            c.execute(
+                """INSERT OR IGNORE INTO activity_log
+                   (source, source_id, event_type, occurred_at, payload)
+                   VALUES (?,?,?,?,?)""",
+                (source, source_id, event_type, occurred_at, payload_val),
+            )
+
+
+def get_activity_by_source_id(source: str, source_id: str) -> list:
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"SELECT * FROM activity_log WHERE source={p} AND source_id={p}",
+            (source, source_id),
+        )
+        rows = _rows(c.fetchall())
+        for r in rows:
+            r["payload"] = _deserialize_payload(r.get("payload"))
+        return rows
+
+
+def mark_activity_promoted(activity_id: int):
+    p = _p()
+    val = "TRUE" if USE_POSTGRES else "1"
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE activity_log SET promoted_to_life_log={val} WHERE id={p}",
+            (activity_id,),
+        )

@@ -109,3 +109,34 @@ def test_find_person_by_name_or_alias(temp_db_path):
     assert db.find_person_by_name("Sprink")["id"] == pid
     assert db.find_person_by_name("Sprink ")["id"] == pid
     assert db.find_person_by_name("Unknown") is None
+
+
+def test_record_activity(temp_db_path):
+    db.record_activity(
+        source="calendar",
+        source_id="event_abc",
+        event_type="calendar_event",
+        occurred_at="2026-05-02T18:00:00",
+        payload={"title": "Dinner", "attendees": ["Megan"]},
+    )
+    rows = db.get_activity_by_source_id("calendar", "event_abc")
+    assert rows[0]["payload"]["title"] == "Dinner"
+
+
+def test_record_activity_dedup_by_source_id(temp_db_path):
+    db.record_activity("calendar", "event_xyz", "calendar_event",
+                       "2026-05-02T18:00:00", {"title": "A"})
+    db.record_activity("calendar", "event_xyz", "calendar_event",
+                       "2026-05-02T18:00:00", {"title": "A updated"})
+    rows = db.get_activity_by_source_id("calendar", "event_xyz")
+    assert len(rows) == 1
+    assert rows[0]["payload"]["title"] == "A"  # first write wins; idempotent
+
+
+def test_mark_activity_promoted(temp_db_path):
+    db.record_activity("calendar", "ev1", "calendar_event",
+                       "2026-05-02T00:00:00", {"x": 1})
+    rows = db.get_activity_by_source_id("calendar", "ev1")
+    db.mark_activity_promoted(rows[0]["id"])
+    rows2 = db.get_activity_by_source_id("calendar", "ev1")
+    assert rows2[0]["promoted_to_life_log"] in (True, 1)
