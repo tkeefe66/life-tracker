@@ -186,3 +186,46 @@ Message: "{text}"{correction_block}
         "categories": [], "description": text[:100], "location": None,
         "date_start": today, "date_end": None, "people": [], "questions": [],
     })
+
+
+def recommend_category_changes(
+    category_usage: list,
+    recent_descriptions: list,
+) -> dict:
+    """
+    Periodic review: suggest merges, drops, or new categories based on usage patterns.
+
+    Returns:
+        {"recommendations": [
+            {"action": "drop"|"merge"|"add", ... }
+        ]}
+    """
+    usage_str = "\n".join(f"- {c['name']}: {c['usage_count']} entries" for c in category_usage)
+    desc_str = "\n".join(f"- {d}" for d in recent_descriptions[:50])
+
+    prompt = f"""Review the user's Life Log category usage and recent entries.
+Recommend changes to the category list — drops, merges, or new additions.
+
+Current categories with usage counts:
+{usage_str}
+
+Recent entry descriptions (sample):
+{desc_str}
+
+Return ONLY a JSON object:
+{{
+  "recommendations": [
+    {{"action": "drop", "name": "X", "reason": "why"}},
+    {{"action": "merge", "from": "X", "into": "Y", "reason": "why"}},
+    {{"action": "add", "name": "X", "reason": "why"}}
+  ]
+}}
+
+Rules:
+- Only recommend dropping if usage is 0 over a long period
+- Only recommend merging if there is clear conceptual overlap
+- Only recommend adding if 5+ entries in recent descriptions don't fit existing categories
+- It's fine to return an empty list if no changes are warranted
+"""
+
+    return _call_json(prompt, max_tokens=600, default={"recommendations": []})

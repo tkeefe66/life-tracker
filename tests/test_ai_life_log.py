@@ -111,3 +111,22 @@ def test_parse_log_command_with_correction(mock_anthropic):
         correction="Actually it was Vermont not Colorado",
     )
     assert result["location"] == "Killington, VT"
+
+
+def test_recommend_category_changes(mock_anthropic):
+    mock_anthropic.messages.create.return_value.content = [MagicMock(text=json.dumps({
+        "recommendations": [
+            {"action": "drop", "name": "Pet", "reason": "0 entries in 6 months"},
+            {"action": "merge", "from": "Outdoors", "into": "Hiking", "reason": "Hiking now dominates"}
+        ]
+    }))]
+    import ai_life_log
+    result = ai_life_log.recommend_category_changes(
+        category_usage=[
+            {"name": "Vacation", "usage_count": 12},
+            {"name": "Pet", "usage_count": 0},
+            {"name": "Outdoors", "usage_count": 3},
+        ],
+        recent_descriptions=["Hiked Mt Quandary", "Hiked Bierstadt"],
+    )
+    assert any(r["action"] == "drop" for r in result["recommendations"])
