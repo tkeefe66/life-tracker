@@ -229,3 +229,51 @@ Rules:
 """
 
     return _call_json(prompt, max_tokens=600, default={"recommendations": []})
+
+
+def extract_entry_from_existing_text(
+    original_category: str,
+    original_description: str,
+    active_categories: list,
+) -> dict:
+    """
+    Used during one-time spreadsheet backfill. The user's existing sheet has
+    free-text categories like "Wedding + Vacation" and descriptions packed with
+    people/places. Extract structured data.
+
+    Returns:
+        {
+          "categories": [str],
+          "description": str,    # cleaned-up description
+          "location": str | None,
+          "people": [str],
+        }
+    """
+    cats_str = ", ".join(active_categories)
+
+    prompt = f"""Extract structured Life Log data from a spreadsheet row.
+
+Original category text: "{original_category}"
+Description: "{original_description}"
+
+Available structured categories: {cats_str}
+
+Return ONLY a JSON object:
+{{
+  "categories": ["matching categories from the available list — pick 1-3"],
+  "description": "cleaned description (keep the user's voice, just fix obvious issues)",
+  "location": "extracted location or null",
+  "people": ["names mentioned in the description"]
+}}
+
+Rules:
+- Map original category text to available categories. "Wedding + Vacation" → both.
+  "Outdoors" stays as Outdoors. Unknown → closest match or "Life Event" as fallback.
+- Don't editorialize the description — preserve the user's words.
+- People: extract names. "Mom and Dad" → ["Mom", "Dad"]. "with Sprink/Emily" → ["Sprink", "Emily"].
+"""
+
+    return _call_json(prompt, max_tokens=400, default={
+        "categories": [], "description": original_description,
+        "location": None, "people": [],
+    })

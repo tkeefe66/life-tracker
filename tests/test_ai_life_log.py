@@ -130,3 +130,21 @@ def test_recommend_category_changes(mock_anthropic):
         recent_descriptions=["Hiked Mt Quandary", "Hiked Bierstadt"],
     )
     assert any(r["action"] == "drop" for r in result["recommendations"])
+
+
+def test_extract_from_spreadsheet_row(mock_anthropic):
+    mock_anthropic.messages.create.return_value.content = [MagicMock(text=json.dumps({
+        "categories": ["Wedding", "Vacation"],
+        "description": "Spinkel Wedding - London 1 week, Spain 2 weeks",
+        "location": "London → Spain",
+        "people": ["Spinkel", "Emily"],
+    }))]
+    import ai_life_log
+    result = ai_life_log.extract_entry_from_existing_text(
+        original_category="Wedding + Vacation",
+        original_description="Spinkel Wedding - London 1 week, Spain 2 weeks (Barcelona, Malaga, Majorca)",
+        active_categories=["Wedding", "Vacation"],
+    )
+    assert "Wedding" in result["categories"]
+    assert "Vacation" in result["categories"]
+    assert "Spinkel" in result["people"]
