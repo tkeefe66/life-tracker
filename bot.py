@@ -29,6 +29,11 @@ from config import (
     TIMEZONE,
     WEEKLY_SUMMARY_HOUR,
 )
+from handlers.log_command import (
+    log_command as lifelog_log_command,
+    handle_confirm_response as lifelog_handle_confirm,
+    handle_new_person_response as lifelog_handle_new_person,
+)
 try:
     from jobs.daily_calendar import run_daily_calendar_sync, run_bulk_calendar_sync
     from jobs.daily_ai_status import run_daily_ai_status
@@ -837,6 +842,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state_data = db.get_state()
     state = state_data.get("state", "idle")
 
+    if state == "lifelog_confirming":
+        if await lifelog_handle_confirm(update, context, text):
+            return
+    if state == "lifelog_new_person":
+        if await lifelog_handle_new_person(update, context, text):
+            return
+
     if state == "idle":
         await _handle_freeform_message(update, context, text)
         return
@@ -1067,7 +1079,7 @@ def create_application() -> Application:
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("update", update_command))
-    app.add_handler(CommandHandler("log", log_command))
+    app.add_handler(CommandHandler("log", lifelog_log_command))
     app.add_handler(CommandHandler("work", work_command))
     app.add_handler(CommandHandler("personal", personal_command))
     app.add_handler(CommandHandler("focus", focus_command))
