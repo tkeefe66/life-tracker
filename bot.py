@@ -844,6 +844,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state_data = db.get_state()
     state = state_data.get("state", "idle")
 
+    # Proposal replies are stateless — handle in any state
+    from handlers.lifelog_proposals import handle_proposal_reply
+    if await handle_proposal_reply(update, context, text):
+        return
+
     if state == "lifelog_confirming":
         if await lifelog_handle_confirm(update, context, text):
             return
