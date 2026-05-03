@@ -194,3 +194,62 @@ async def _ask_relationship_type(update: Update, person: dict):
         "_(Type /skip to leave blank for now)_",
         parse_mode="Markdown",
     )
+
+
+_RELATIONSHIP_TYPES = {
+    "family": "family",
+    "friend": "friend",
+    "dating prospect": "dating_prospect",
+    "dating": "dating",
+    "colleague": "colleague",
+    "acquaintance": "acquaintance",
+    "other": "other",
+}
+
+
+async def handle_new_person_response(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:
+    """Handle the relationship-type reply during person onboarding."""
+    state_data = db.get_state()
+    temp = json.loads(state_data.get("temp_data") or "{}")
+    person_id = temp.get("current_person_id")
+    pending_ids = temp.get("pending_person_ids", [])
+
+    text_lc = text.strip().lower()
+    if text_lc == "/skip":
+        rel_type = None
+    elif text_lc in _RELATIONSHIP_TYPES:
+        rel_type = _RELATIONSHIP_TYPES[text_lc]
+    else:
+        await update.message.reply_text(
+            "Pick one: family, friend, dating prospect, dating, colleague, acquaintance, other "
+            "(or /skip)."
+        )
+        return True
+
+    if rel_type:
+        # Update relationship_type directly via raw SQL (no dedicated DB function for this field).
+        # Pattern matches how other handlers in the codebase reach into _cursor/_p.
+        from database import _cursor, _p as _ph
+        with _cursor(write=True) as c:
+            c.execute(
+                f"UPDATE people SET relationship_type={_ph()} WHERE id={_ph()}",
+                (rel_type, person_id),
+            )
+
+    person = db.get_person(person_id)
+    label = rel_type or "(no type)"
+    await update.message.reply_text(f"✅ {person['name']} → {label}")
+
+    if pending_ids:
+        next_id, *rest = pending_ids
+        next_person = db.get_person(next_id)
+        db.set_state(
+            "lifelog_new_person",
+            temp_data={"current_person_id": next_id, "pending_person_ids": rest},
+        )
+        await _ask_relationship_type(update, next_person)
+    else:
+        db.set_state("idle")
+        await update.message.reply_text("All done! 🎉")
+
+    return True

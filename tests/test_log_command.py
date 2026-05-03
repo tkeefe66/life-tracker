@@ -117,3 +117,29 @@ async def test_confirm_no_cancels(temp_db_path, mock_anthropic):
     assert handled is True
     assert db.get_state()["state"] == "idle"
     assert db.get_all_life_log_entries() == []
+
+
+@pytest.mark.asyncio
+async def test_new_person_onboarding_sets_relationship_type(temp_db_path):
+    import database as db
+    from handlers.log_command import handle_new_person_response
+
+    pid = db.save_person(
+        name="Megan", aliases=[], relationship_type=None,
+        first_seen="2026-05-02", notes=None,
+    )
+    db.set_state(
+        "lifelog_new_person",
+        temp_data={"current_person_id": pid, "pending_person_ids": []},
+    )
+
+    update = MagicMock()
+    update.message.reply_text = AsyncMock()
+    context = MagicMock()
+
+    handled = await handle_new_person_response(update, context, "dating prospect")
+    assert handled is True
+
+    p = db.get_person(pid)
+    assert p["relationship_type"] == "dating_prospect"
+    assert db.get_state()["state"] == "idle"
