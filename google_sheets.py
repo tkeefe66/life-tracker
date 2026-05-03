@@ -491,3 +491,16 @@ def sync_life_log_to_sheets(entries: list, people: list, people_by_entry: dict) 
     logger.info("People sheet rebuilt: %d people", len(people))
 
     return spreadsheet.url
+
+
+def sync_habits_to_sheets(all_habits: list, all_habit_logs: list) -> str:
+    """Full rebuild of the Habits tab."""
+    spreadsheet = _get_spreadsheet()
+    _ensure_sheets(spreadsheet)
+    habits_sheet = spreadsheet.worksheet(SHEET_HABITS)
+    habits_rows = _build_habits_grid_rows(all_habits, all_habit_logs)
+    habits_sheet.clear()
+    if habits_rows:
+        habits_sheet.update("A1", habits_rows)
+    logger.info("Rebuilt Habits sheet (%d habits)", len(all_habits))
+    return spreadsheet.url

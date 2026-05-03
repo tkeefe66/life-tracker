@@ -451,103 +451,23 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-async def _sync_to_sheets_with_ai(bot) -> str:
-    """
-    1. Summarize focus weeks (cached — only re-runs when new entries added).
-       Also extracts any later items detected in focus entries.
-    2. Organize later items (cached — only re-runs when new items added).
-    3. Append-only sync to Google Sheets. Weekly Reviews tab never overwrites
-       existing rows — user edits and deletions in Sheets are preserved.
-    Returns URL.
-    """
-    from google_sheets import sync_to_sheets
-    from ai_summarize import summarize_focus_and_extract_later, organize_later_items
+async def _sync_to_sheets_with_ai(bot) -> tuple:
+    """Sync Life Log, People, and Habits tabs."""
+    from google_sheets import sync_life_log_to_sheets, sync_habits_to_sheets
 
-    # All focus entries for AI summarization (includes sheet_deleted so AI has full picture)
-    all_focus_for_ai = db.get_all_focus_entries()
-    # Non-deleted entries only for the sheet sync
-    all_accomplishments = db.get_all_accomplishments_for_sync()
-    all_focus_for_sync = db.get_all_focus_for_sync()
-
-    # ── Step 1: Focus summaries ───────────────────────────────────────────────
-    focus_by_week = {}
-    for entry in all_focus_for_ai:
-        focus_by_week.setdefault(entry["week_start"], []).append(entry["content"])
-
-    focus_summaries = {}   # {week_start: summary_text}
-    weeks_to_process = []
-
-    for week_start, entries in focus_by_week.items():
-        cached = db.get_cached_summary(week_start)
-        if cached and cached["entry_count"] == len(entries):
-            focus_summaries[week_start] = cached["summary_text"]
-        else:
-            weeks_to_process.append((week_start, entries))
-
-    if weeks_to_process:
-        await _send(bot, f"🤖 Processing {len(weeks_to_process)} week(s) of focus items…")
-        for week_start, entries in weeks_to_process:
-            result = summarize_focus_and_extract_later(entries)
-            focus_summaries[week_start] = result["next_week_summary"]
-            db.save_cached_summary(week_start, result["next_week_summary"], len(entries))
-
-            # Auto-save any later items Claude detected in the focus entries
-            for item in result.get("later_items", []):
-                db.save_later_item(
-                    content=item.get("content", ""),
-                    target_date=item.get("target_date", ""),
-                    source="auto",
-                )
-
-    # ── Step 2: Later items organization ─────────────────────────────────────
-    all_later = db.get_all_later_items()
-    item_count = len(all_later)
-    organized_later = []
-
-    if all_later:
-        import json as _json
-        cache_key = item_count * 1000 + _LATER_ORG_CACHE_VERSION
-        cached_later = db.get_cached_later_org()
-        if cached_later and cached_later["item_count"] == cache_key:
-            organized_later = _json.loads(cached_later["groups_json"])
-        else:
-            await _send(bot, "🗂 Organizing your later items…")
-            organized_later = organize_later_items(all_later)
-            db.save_cached_later_org(
-                _json.dumps(organized_later, default=str),
-                cache_key,
-            )
-
-    # ── Step 3: Sync ──────────────────────────────────────────────────────────
-    all_habits = db.get_all_active_habits()
-    all_habit_logs = db.get_all_habit_logs()
-
-    url, new_acc_ids, new_focus_ids, deleted_acc_ids, deleted_focus_ids, edited_acc, edited_focus = \
-        sync_to_sheets(all_accomplishments, all_focus_for_sync, organized_later, all_habits, all_habit_logs)
-
-    # Persist sync state back to DB
-    db.mark_accomplishments_synced(list(new_acc_ids))
-    db.mark_focus_synced(list(new_focus_ids))
-    db.mark_accomplishments_sheet_deleted(list(deleted_acc_ids))
-    db.mark_focus_sheet_deleted(list(deleted_focus_ids))
-
-    # Apply read-back edits from Sheets → DB
-    for edit in edited_acc:
-        db.update_accomplishment_fields(edit['id'], edit['category'], edit['content'])
-    for edit in edited_focus:
-        db.update_focus_content(edit['id'], edit['content'])
-
-    # Life Log + People tabs
-    from google_sheets import sync_life_log_to_sheets
     life_log_entries = db.get_all_life_log_entries()
     all_people = db.get_all_people()
     people_by_entry = {
         e["id"]: [p["name"] for p in db.get_people_for_entry(e["id"])]
         for e in life_log_entries
     }
-    sync_life_log_to_sheets(life_log_entries, all_people, people_by_entry)
+    url = sync_life_log_to_sheets(life_log_entries, all_people, people_by_entry)
 
-    return url, len(edited_acc) + len(edited_focus)
+    all_habits = db.get_all_active_habits()
+    all_habit_logs = db.get_all_habit_logs()
+    sync_habits_to_sheets(all_habits, all_habit_logs)
+
+    return url, 0  # second value retained for /sync caller signature
 
 
 async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
