@@ -175,6 +175,26 @@ def _init_postgres(serial, bool_t):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS life_log_entries (
+                id {serial} PRIMARY KEY,
+                date_start DATE NOT NULL,
+                date_end DATE,
+                categories TEXT[] NOT NULL DEFAULT '{{}}',
+                description TEXT NOT NULL,
+                location TEXT,
+                notes TEXT,
+                status TEXT NOT NULL DEFAULT 'confirmed',
+                source TEXT NOT NULL DEFAULT 'manual',
+                source_id TEXT,
+                ai_proposed_at TIMESTAMP,
+                user_confirmed_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_date_start ON life_log_entries(date_start)")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_status ON life_log_entries(status)")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_source_id ON life_log_entries(source_id)")
         # Seed initial categories
         INITIAL_CATEGORIES = [
             "Vacation", "Relationship", "Outdoors", "Skiing", "Concert",
@@ -317,6 +337,26 @@ def _init_sqlite(bool_t):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS life_log_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date_start TEXT NOT NULL,
+                date_end TEXT,
+                categories TEXT NOT NULL DEFAULT '[]',
+                description TEXT NOT NULL,
+                location TEXT,
+                notes TEXT,
+                status TEXT NOT NULL DEFAULT 'confirmed',
+                source TEXT NOT NULL DEFAULT 'manual',
+                source_id TEXT,
+                ai_proposed_at TEXT,
+                user_confirmed_at TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_date_start ON life_log_entries(date_start)")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_status ON life_log_entries(status)")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_source_id ON life_log_entries(source_id)")
         # Seed initial categories
         INITIAL_CATEGORIES = [
             "Vacation", "Relationship", "Outdoors", "Skiing", "Concert",
@@ -895,4 +935,108 @@ def increment_category_usage(name: str):
         c.execute(
             f"UPDATE categories SET usage_count = usage_count + 1 WHERE name={p}",
             (name,),
+        )
+
+
+# ── Life Log: Entries ─────────────────────────────────────────────────────────
+
+def _serialize_categories(categories: list):
+    """Postgres uses array; SQLite stores JSON."""
+    return categories if USE_POSTGRES else json.dumps(categories)
+
+
+def _deserialize_categories(raw) -> list:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    return json.loads(raw)
+
+
+def _unpack_life_log_entry(row):
+    if row is None:
+        return None
+    row["categories"] = _deserialize_categories(row.get("categories"))
+    return row
+
+
+def save_life_log_entry(
+    date_start, date_end, categories, description,
+    location, notes, status, source, source_id,
+) -> int:
+    p = _p()
+    cats = _serialize_categories(categories)
+    with _cursor(write=True) as c:
+        if USE_POSTGRES:
+            c.execute(
+                f"""INSERT INTO life_log_entries
+                    (date_start, date_end, categories, description, location, notes,
+                     status, source, source_id, user_confirmed_at)
+                    VALUES ({p},{p},{p},{p},{p},{p},{p},{p},{p}, CURRENT_TIMESTAMP)
+                    RETURNING id""",
+                (date_start, date_end, cats, description, location, notes,
+                 status, source, source_id),
+            )
+            return c.fetchone()["id"]
+        else:
+            c.execute(
+                """INSERT INTO life_log_entries
+                   (date_start, date_end, categories, description, location, notes,
+                    status, source, source_id, user_confirmed_at)
+                   VALUES (?,?,?,?,?,?,?,?,?, CURRENT_TIMESTAMP)""",
+                (date_start, date_end, cats, description, location, notes,
+                 status, source, source_id),
+            )
+            return c.lastrowid
+
+
+def get_life_log_entry(entry_id: int):
+    p = _p()
+    with _cursor() as c:
+        c.execute(f"SELECT * FROM life_log_entries WHERE id={p}", (entry_id,))
+        return _unpack_life_log_entry(_row(c.fetchone()))
+
+
+def get_life_log_entries_in_range(date_from: str, date_to: str) -> list:
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"SELECT * FROM life_log_entries "
+            f"WHERE date_start>={p} AND date_start<={p} AND status='confirmed' "
+            f"ORDER BY date_start, id",
+            (date_from, date_to),
+        )
+        return [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
+
+
+def get_all_life_log_entries() -> list:
+    """All confirmed/upcoming entries across all time, ordered by date."""
+    with _cursor() as c:
+        c.execute(
+            "SELECT * FROM life_log_entries WHERE status IN ('confirmed','upcoming') "
+            "ORDER BY date_start, id"
+        )
+        return [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
+
+
+def update_life_log_entry(
+    entry_id: int, categories: list, description: str,
+    location, notes,
+):
+    p = _p()
+    cats = _serialize_categories(categories)
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE life_log_entries SET categories={p}, description={p}, "
+            f"location={p}, notes={p} WHERE id={p}",
+            (cats, description, location, notes, entry_id),
+        )
+
+
+def set_entry_status(entry_id: int, status: str):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE life_log_entries SET status={p} WHERE id={p}",
+            (status, entry_id),
         )
