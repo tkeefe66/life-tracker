@@ -87,6 +87,13 @@ def get_events_rolling_window(days: int = 2) -> list:
         start_dt = start.get("dateTime") or start.get("date", "")
         end_dt = end.get("dateTime") or end.get("date", "")
 
+        attendees_raw = item.get("attendees", []) or []
+        attendees = [
+            (a.get("displayName") or a.get("email", "").split("@")[0])
+            for a in attendees_raw
+            if not a.get("self")
+        ]
+
         events.append({
             "event_id": item["id"],
             "title": item.get("summary", "(No title)"),
@@ -95,6 +102,7 @@ def get_events_rolling_window(days: int = 2) -> list:
             "description": item.get("description", ""),
             "location": item.get("location", ""),
             "is_recurring": bool(item.get("recurringEventId")),
+            "attendees": attendees,
         })
 
     logger.info("Fetched %d events from calendar (%d-day window)", len(events), days)
