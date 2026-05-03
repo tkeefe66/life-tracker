@@ -195,6 +195,30 @@ def _init_postgres(serial, bool_t):
         c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_date_start ON life_log_entries(date_start)")
         c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_status ON life_log_entries(status)")
         c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_source_id ON life_log_entries(source_id)")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS people (
+                id {serial} PRIMARY KEY,
+                name TEXT NOT NULL,
+                aliases TEXT[] DEFAULT '{{}}',
+                relationship_type TEXT,
+                status TEXT DEFAULT 'active',
+                first_seen DATE,
+                last_seen DATE,
+                start_date DATE,
+                end_date DATE,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS ix_people_name_lower ON people(LOWER(name))")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS life_log_people (
+                entry_id INTEGER NOT NULL REFERENCES life_log_entries(id) ON DELETE CASCADE,
+                person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+                PRIMARY KEY (entry_id, person_id)
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_people_person_id ON life_log_people(person_id)")
         # Seed initial categories
         INITIAL_CATEGORIES = [
             "Vacation", "Relationship", "Outdoors", "Skiing", "Concert",
@@ -357,6 +381,30 @@ def _init_sqlite(bool_t):
         c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_date_start ON life_log_entries(date_start)")
         c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_status ON life_log_entries(status)")
         c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_entries_source_id ON life_log_entries(source_id)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS people (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                aliases TEXT DEFAULT '[]',
+                relationship_type TEXT,
+                status TEXT DEFAULT 'active',
+                first_seen TEXT,
+                last_seen TEXT,
+                start_date TEXT,
+                end_date TEXT,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS ix_people_name_lower ON people(LOWER(name))")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS life_log_people (
+                entry_id INTEGER NOT NULL REFERENCES life_log_entries(id) ON DELETE CASCADE,
+                person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+                PRIMARY KEY (entry_id, person_id)
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS ix_life_log_people_person_id ON life_log_people(person_id)")
         # Seed initial categories
         INITIAL_CATEGORIES = [
             "Vacation", "Relationship", "Outdoors", "Skiing", "Concert",
@@ -1040,3 +1088,173 @@ def set_entry_status(entry_id: int, status: str):
             f"UPDATE life_log_entries SET status={p} WHERE id={p}",
             (status, entry_id),
         )
+
+
+# ── Life Log: People ──────────────────────────────────────────────────────────
+
+def _unpack_person(row):
+    if row is None:
+        return None
+    raw = row.get("aliases")
+    if isinstance(raw, str):
+        row["aliases"] = json.loads(raw)
+    elif raw is None:
+        row["aliases"] = []
+    return row
+
+
+def save_person(
+    name: str, aliases: list, relationship_type, first_seen, notes,
+) -> int:
+    p = _p()
+    aliases_val = aliases if USE_POSTGRES else json.dumps(aliases)
+    with _cursor(write=True) as c:
+        if USE_POSTGRES:
+            c.execute(
+                f"""INSERT INTO people (name, aliases, relationship_type, first_seen,
+                    last_seen, notes, status)
+                    VALUES ({p},{p},{p},{p},{p},{p},'active') RETURNING id""",
+                (name, aliases_val, relationship_type, first_seen, first_seen, notes),
+            )
+            return c.fetchone()["id"]
+        else:
+            c.execute(
+                """INSERT INTO people (name, aliases, relationship_type, first_seen,
+                   last_seen, notes, status)
+                   VALUES (?,?,?,?,?,?,'active')""",
+                (name, aliases_val, relationship_type, first_seen, first_seen, notes),
+            )
+            return c.lastrowid
+
+
+def get_person(person_id: int):
+    p = _p()
+    with _cursor() as c:
+        c.execute(f"SELECT * FROM people WHERE id={p}", (person_id,))
+        return _unpack_person(_row(c.fetchone()))
+
+
+def find_person_by_name(name: str):
+    """Match by name OR alias, case-insensitive, trimmed."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    p = _p()
+    with _cursor() as c:
+        if USE_POSTGRES:
+            c.execute(
+                f"SELECT * FROM people WHERE LOWER(name)=LOWER({p})",
+                (name,),
+            )
+            row = c.fetchone()
+            if row:
+                return _unpack_person(_row(row))
+            # case-insensitive alias check
+            c.execute(
+                "SELECT * FROM people WHERE EXISTS "
+                "(SELECT 1 FROM unnest(aliases) a WHERE LOWER(a)=LOWER(%s))",
+                (name,),
+            )
+            return _unpack_person(_row(c.fetchone()))
+        else:
+            c.execute("SELECT * FROM people")
+            for row in _rows(c.fetchall()):
+                p_row = _unpack_person(row)
+                if p_row["name"].lower() == name.lower():
+                    return p_row
+                if any(a.lower() == name.lower() for a in p_row["aliases"]):
+                    return p_row
+            return None
+
+
+def get_all_people() -> list:
+    with _cursor() as c:
+        c.execute("SELECT * FROM people ORDER BY name")
+        return [_unpack_person(r) for r in _rows(c.fetchall())]
+
+
+def link_entry_to_people(entry_id: int, person_ids: list):
+    p = _p()
+    with _cursor(write=True) as c:
+        for pid in person_ids:
+            if USE_POSTGRES:
+                c.execute(
+                    f"INSERT INTO life_log_people (entry_id, person_id) VALUES ({p},{p}) "
+                    f"ON CONFLICT DO NOTHING",
+                    (entry_id, pid),
+                )
+            else:
+                c.execute(
+                    "INSERT OR IGNORE INTO life_log_people (entry_id, person_id) VALUES (?,?)",
+                    (entry_id, pid),
+                )
+
+
+def get_people_for_entry(entry_id: int) -> list:
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"SELECT p.* FROM people p "
+            f"JOIN life_log_people lp ON lp.person_id = p.id "
+            f"WHERE lp.entry_id = {p} ORDER BY p.name",
+            (entry_id,),
+        )
+        return [_unpack_person(r) for r in _rows(c.fetchall())]
+
+
+def get_entries_for_person(person_id: int) -> list:
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"SELECT e.* FROM life_log_entries e "
+            f"JOIN life_log_people lp ON lp.entry_id = e.id "
+            f"WHERE lp.person_id = {p} ORDER BY e.date_start",
+            (person_id,),
+        )
+        return [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
+
+
+def update_person_last_seen(person_id: int, last_seen: str):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE people SET last_seen={p} WHERE id={p} "
+            f"AND (last_seen IS NULL OR last_seen < {p})",
+            (last_seen, person_id, last_seen),
+        )
+
+
+def set_person_relationship_status(person_id: int, status: str, end_date=None):
+    p = _p()
+    with _cursor(write=True) as c:
+        if end_date:
+            c.execute(
+                f"UPDATE people SET status={p}, end_date={p} WHERE id={p}",
+                (status, end_date, person_id),
+            )
+        else:
+            c.execute(
+                f"UPDATE people SET status={p} WHERE id={p}",
+                (status, person_id),
+            )
+
+
+def merge_people(keep_id: int, merge_id: int):
+    """Move all entry links from merge_id to keep_id, then delete merge_id."""
+    p = _p()
+    with _cursor(write=True) as c:
+        if USE_POSTGRES:
+            c.execute(
+                f"UPDATE life_log_people SET person_id={p} WHERE person_id={p} "
+                f"AND entry_id NOT IN (SELECT entry_id FROM life_log_people WHERE person_id={p})",
+                (keep_id, merge_id, keep_id),
+            )
+            c.execute(f"DELETE FROM life_log_people WHERE person_id={p}", (merge_id,))
+            c.execute(f"DELETE FROM people WHERE id={p}", (merge_id,))
+        else:
+            c.execute(
+                "UPDATE OR IGNORE life_log_people SET person_id=? WHERE person_id=?",
+                (keep_id, merge_id),
+            )
+            c.execute("DELETE FROM life_log_people WHERE person_id=?", (merge_id,))
+            c.execute("DELETE FROM people WHERE id=?", (merge_id,))

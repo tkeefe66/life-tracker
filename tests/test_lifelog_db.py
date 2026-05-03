@@ -72,3 +72,40 @@ def test_get_life_log_entries_by_date_range(temp_db_path):
     entries = db.get_life_log_entries_in_range("2025-01-01", "2025-12-31")
     descriptions = [e["description"] for e in entries]
     assert descriptions == ["A", "B"]
+
+
+def test_save_person(temp_db_path):
+    person_id = db.save_person(
+        name="Megan", aliases=[], relationship_type="dating_prospect",
+        first_seen="2026-02-15", notes="Met at Goldens",
+    )
+    p = db.get_person(person_id)
+    assert p["name"] == "Megan"
+    assert p["relationship_type"] == "dating_prospect"
+    assert p["status"] == "active"
+
+
+def test_link_entry_to_person(temp_db_path):
+    eid = db.save_life_log_entry(
+        date_start="2026-02-15", date_end=None, categories=["Relationship"],
+        description="Met Megan at Goldens", location="Golden, CO",
+        notes=None, status="confirmed", source="manual", source_id=None,
+    )
+    pid = db.save_person(
+        name="Megan", aliases=[], relationship_type="dating_prospect",
+        first_seen="2026-02-15", notes=None,
+    )
+    db.link_entry_to_people(eid, [pid])
+    people = db.get_people_for_entry(eid)
+    assert [p["name"] for p in people] == ["Megan"]
+
+
+def test_find_person_by_name_or_alias(temp_db_path):
+    pid = db.save_person(
+        name="Spinkel", aliases=["Sprink"], relationship_type="friend",
+        first_seen="2024-01-01", notes=None,
+    )
+    assert db.find_person_by_name("Spinkel")["id"] == pid
+    assert db.find_person_by_name("Sprink")["id"] == pid
+    assert db.find_person_by_name("Sprink ")["id"] == pid
+    assert db.find_person_by_name("Unknown") is None
