@@ -247,33 +247,22 @@ async def weekly_summary_job(context: ContextTypes.DEFAULT_TYPE):
 
 _COMMANDS_TEXT = (
     "🤖 *Weekly Updates Bot — Commands*\n\n"
-    "*📝 Daily Logging*\n"
-    "• /update — Full check\\-in: work → personal → focus → habits\n"
-    "• /work \\[text\\] — Quick\\-log work \\(inline saves immediately\\)\n"
-    "• /personal \\[text\\] — Quick\\-log personal\n"
-    "• /focus \\[text\\] — Quick\\-log next week's focus\n"
-    "• /skip — Skip the current prompt\n\n"
+    "*🧠 Life Log*\n"
+    "• /log \\[text\\] — Log a memorable moment \\(AI extracts category, people, date\\)\n"
+    "• /ask \\[question\\] — Natural\\-language query of your Life Log\n"
+    "• /people — List people in your Life Log\n\n"
     "*📊 Viewing & Syncing*\n"
-    "• /status — This week's logged days\n"
-    "• /sync — Push to Google Sheets \\(also reads back any edits you made in Sheets\\)\n"
+    "• /status — This week's logged data\n"
+    "• /sync — Push Life Log \\+ People \\+ Habits to Google Sheets\n"
     "• /summary — Generate weekly summary now\n\n"
     "*🏃 Habits*\n"
     "• /habit \\[description\\] — Add a habit via natural language\n"
     "• /habits — List active habits\n"
     "• /habitstop \\[name\\] — Deactivate a habit\n\n"
-    "*🔭 Later / Goals*\n"
-    "• /later — Add a longer\\-term goal with a target date\n\n"
-    "*📅 Calendar*\n"
-    "• /calendarsync \\[days\\] — Import calendar events into Later items\n\n"
-    "*🧠 Life Log*\n"
-    "• /log \\[text\\] — Log a memorable moment \\(AI extracts category, people, date\\)\n"
-    "• /people — List people in your Life Log\n"
-    "• /ask \\[question\\] — Natural\\-language query of your Life Log\n\n"
     "*⚙️ Admin*\n"
+    "• /skip — Skip the current prompt in any active flow\n"
     "• /cleardb — Delete all data \\(requires CONFIRM\\)\n"
-    "• /start — Show this message\n\n"
-    "💡 *Tip:* Just type anything — I'll parse it with AI, show you what I understood, "
-    "and ask you to confirm before saving\\."
+    "• /start — Show this message\n"
 )
 
 
@@ -876,7 +865,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     if state == "idle":
-        await _handle_freeform_message(update, context, text)
+        await update.message.reply_text(
+            "I'm not sure what to do with that.\n\n"
+            "Try `/log <text>` to log a Life Log entry, or `/ask <question>` to query.",
+            parse_mode="Markdown",
+        )
         return
 
     current_date = state_data.get("entry_date")
@@ -1104,14 +1097,9 @@ def create_application() -> Application:
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("update", update_command))
     app.add_handler(CommandHandler("log", lifelog_log_command))
     app.add_handler(CommandHandler("people", people_command))
     app.add_handler(CommandHandler("ask", ask_command))
-    app.add_handler(CommandHandler("work", work_command))
-    app.add_handler(CommandHandler("personal", personal_command))
-    app.add_handler(CommandHandler("focus", focus_command))
-    app.add_handler(CommandHandler("later", later_command))
     app.add_handler(CommandHandler("habit", habit_command))
     app.add_handler(CommandHandler("habits", habits_command))
     app.add_handler(CommandHandler("habitstop", habitstop_command))
@@ -1120,8 +1108,6 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("sync", sync_command))
     app.add_handler(CommandHandler("summary", summary_command))
     app.add_handler(CommandHandler("cleardb", cleardb_command))
-    if _CALENDAR_JOBS_AVAILABLE:
-        app.add_handler(CommandHandler("calendarsync", calendarsync_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Morning habit reminders
@@ -1129,13 +1115,6 @@ def create_application() -> Application:
         morning_habit_reminder_job,
         time=datetime.time(hour=HABIT_REMINDER_HOUR, minute=HABIT_REMINDER_MINUTE, tzinfo=tz),
         name="morning_habits",
-    )
-
-    # Daily prompt
-    app.job_queue.run_daily(
-        daily_prompt_job,
-        time=datetime.time(hour=DAILY_PROMPT_HOUR, minute=DAILY_PROMPT_MINUTE, tzinfo=tz),
-        name="daily_prompt",
     )
 
     # Weekly summary — Sunday only (days=(6,))
