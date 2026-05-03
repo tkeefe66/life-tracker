@@ -29,6 +29,18 @@ async def _confirm_one(entry_id: int):
         rows = db.get_activity_by_source_id(entry["source"], entry["source_id"])
         if rows:
             db.mark_activity_promoted(rows[0]["id"])
+    # Fire-and-forget sync
+    try:
+        from google_sheets import sync_life_log_to_sheets
+        entries = db.get_all_life_log_entries()
+        people = db.get_all_people()
+        people_by_entry = {
+            e["id"]: [p["name"] for p in db.get_people_for_entry(e["id"])]
+            for e in entries
+        }
+        sync_life_log_to_sheets(entries, people, people_by_entry)
+    except Exception as e:
+        logger.warning("Auto-sync failed (non-fatal): %s", e)
     return entry
 
 

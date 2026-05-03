@@ -137,6 +137,19 @@ async def handle_confirm_response(update: Update, context: ContextTypes.DEFAULT_
             entry_id, parsed.get("people", []), parsed["date_start"]
         )
 
+        # Fire-and-forget sync (best-effort; ignores errors)
+        try:
+            from google_sheets import sync_life_log_to_sheets
+            entries = db.get_all_life_log_entries()
+            people = db.get_all_people()
+            people_by_entry = {
+                e["id"]: [p["name"] for p in db.get_people_for_entry(e["id"])]
+                for e in entries
+            }
+            sync_life_log_to_sheets(entries, people, people_by_entry)
+        except Exception as e:
+            logger.warning("Auto-sync failed (non-fatal): %s", e)
+
         rel_event = parsed.get("relationship_event")
         if rel_event and rel_event.get("person"):
             person = db.find_person_by_name(rel_event["person"])
