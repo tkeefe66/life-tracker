@@ -67,6 +67,18 @@ def test_is_flight_matches_common_patterns():
     assert is_flight("United UA456 to SFO")
 
 
+def test_is_flight_matches_ascii_arrow_iata_pattern():
+    """Calendar titles often use ASCII arrows like 'JFK->BTV' (no 'flight' keyword)."""
+    # ASCII arrow with no spaces
+    assert is_flight("JFK->BTV")
+    # ASCII arrow with spaces
+    assert is_flight("JFK -> BTV")
+    # Unicode arrow without 'flight' keyword
+    assert is_flight("JFK→BTV")
+    # Plain hyphen (e.g., "BOS-LAX trip")
+    assert is_flight("BOS-LAX")
+
+
 def test_is_flight_rejects_non_flights():
     assert not is_flight("Skiing at Killington")
     assert not is_flight("Dinner with Sarah")

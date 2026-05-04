@@ -45,7 +45,7 @@ def precluster_by_date(events: list, max_gap_days: int = 1) -> list:
 
 _FLIGHT_RE = re.compile(
     r"\b(flight|fly|flying|flew|airline)\b"
-    r"|\b[A-Z]{3}\s*[-→]\s*[A-Z]{3}\b"      # IATA code dash IATA code
+    r"|\b[A-Z]{3}\s*(?:->|→|-)\s*[A-Z]{3}\b"  # IATA code, ASCII or Unicode arrow, or hyphen
     r"|\b(?:AA|UA|DL|BA|AC|JB|WN|NK|F9)\s*\d{1,4}\b",  # carrier code + flight num
     re.IGNORECASE,
 )
