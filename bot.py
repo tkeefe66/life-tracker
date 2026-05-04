@@ -39,12 +39,13 @@ from handlers.log_command import (
 )
 from handlers.people import people_command
 from handlers.lifelog_queries import ask_command
-from handlers.proposals_review import proposals_command
-from handlers.syncproposals import syncproposals_command
-from handlers.pushproposals import pushproposals_command
 from handlers.dismissbirthdays import dismissbirthdays_command
-from handlers.showproposal import showproposal_command
 from handlers.calendarbackfill import calendarbackfill_command
+from handlers.buildstories import buildstories_command
+from handlers.syncstories import syncstories_command
+from handlers.pushstories import pushstories_command
+from handlers.showstory import showstory_command
+from handlers import story_review
 try:
     from jobs.daily_calendar import run_daily_calendar_sync, run_bulk_calendar_sync
     from jobs.daily_ai_status import run_daily_ai_status
@@ -257,12 +258,12 @@ _COMMANDS_TEXT = (
     "• /log \\[text\\] — Log a memorable moment \\(AI extracts category, people, date\\)\n"
     "• /ask \\[question\\] — Natural\\-language query of your Life Log\n"
     "• /people — List people in your Life Log\n"
-    "• /proposals \\[page\\] — Review pending calendar proposals in Telegram \\(paginated\\)\n"
-    "• /syncproposals — Apply decisions you made in the *Proposals* tab of your Sheet\n"
-    "• /pushproposals — Re\\-push pending proposals to the Sheet \\(retry after a failed sheet write\\)\n"
+    "• /buildstories — Cluster pending events into stories \\(trip, interview, etc\\.\\)\n"
+    "• /syncstories — Apply *Stories* tab decisions and start Telegram review\n"
+    "• /pushstories — Re\\-push pending stories to the Sheet \\(retry after a failed sheet write\\)\n"
+    "• /showstory \\[id\\] — Inspect a story's data\n"
     "• /dismissbirthdays — Bulk\\-dismiss pending birthday proposals\n"
-    "• /showproposal \\[id\\] — Inspect a proposal \\+ its original calendar event\n"
-    "• /calendarbackfill \\[start\\_year\\] \\[end\\_year\\] — Import calendar history into Proposals\n\n"
+    "• /calendarbackfill \\[start\\_year\\] \\[end\\_year\\] — Import calendar history\n\n"
     "*📊 Viewing & Syncing*\n"
     "• /status — This week's logged data\n"
     "• /sync — Push Life Log \\+ People \\+ Habits to Google Sheets\n"
@@ -789,6 +790,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state_data = db.get_state()
     state = state_data.get("state", "idle")
 
+    async def _reply(msg):
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
     # Proposal replies are stateless — handle in any state
     from handlers.lifelog_proposals import handle_proposal_reply
     if await handle_proposal_reply(update, context, text):
@@ -801,7 +805,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await lifelog_handle_new_person(update, context, text):
             return
 
+    # Story-review states — delegate to handlers.story_review
+    if state == "story_resume_prompt":
+        await story_review.handle_story_resume_prompt(text, _reply)
+        return
+    if state == "story_confirming":
+        await story_review.handle_story_confirming(text, _reply)
+        return
+    if state == "story_why_mattered":
+        await story_review.handle_story_why_mattered(text, _reply)
+        return
+    if state == "story_extras_optin":
+        await story_review.handle_story_extras_optin(text, _reply)
+        return
+    if state == "story_extras_qa":
+        await story_review.handle_story_extras_qa(text, _reply)
+        return
+
     if state == "idle":
+        # Offer to resume an in-progress story queue, if there is one.
+        handled = await story_review.maybe_offer_resume(_reply)
+        if handled:
+            return
         await update.message.reply_text(
             "I'm not sure what to do with that.\n\n"
             "Try `/log <text>` to log a Life Log entry, or `/ask <question>` to query.",
@@ -1037,12 +1062,12 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("log", lifelog_log_command))
     app.add_handler(CommandHandler("people", people_command))
     app.add_handler(CommandHandler("ask", ask_command))
-    app.add_handler(CommandHandler("proposals", proposals_command))
-    app.add_handler(CommandHandler("syncproposals", syncproposals_command))
-    app.add_handler(CommandHandler("pushproposals", pushproposals_command))
     app.add_handler(CommandHandler("dismissbirthdays", dismissbirthdays_command))
-    app.add_handler(CommandHandler("showproposal", showproposal_command))
     app.add_handler(CommandHandler("calendarbackfill", calendarbackfill_command))
+    app.add_handler(CommandHandler("buildstories", buildstories_command))
+    app.add_handler(CommandHandler("syncstories", syncstories_command))
+    app.add_handler(CommandHandler("pushstories", pushstories_command))
+    app.add_handler(CommandHandler("showstory", showstory_command))
     app.add_handler(CommandHandler("habit", habit_command))
     app.add_handler(CommandHandler("habits", habits_command))
     app.add_handler(CommandHandler("habitstop", habitstop_command))
