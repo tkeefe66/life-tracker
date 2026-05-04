@@ -296,3 +296,77 @@ Rules:
         "categories": [], "description": original_description,
         "location": None, "people": [],
     })
+
+
+SEEDED_STORY_TYPES = (
+    "trip", "interview_cycle", "conference", "holiday_weekend",
+    "dating_arc", "project_milestone", "family_visit", "other",
+)
+
+
+def cluster_into_story(events: list, active_categories: list) -> dict:
+    """Classify a date-proximity cluster into a story candidate.
+
+    Input events are dicts with id, date_start, title, description, location.
+    Returns:
+        {
+          "story_type": str,
+          "summary": str,
+          "highlights": [str],          # ordered, aligned with event_id_refs
+          "event_id_refs": [int],       # which child event each highlight came from
+          "suggested_extras_questions": [str],
+          "location": str,
+        }
+
+    On AI parse failure, returns a "other"-type singleton story spanning all
+    input events (no highlights), so the caller can still proceed.
+    """
+    types_str = ", ".join(SEEDED_STORY_TYPES)
+    cats_str = ", ".join(active_categories)
+    events_str = "\n".join(
+        f"  - id={e['id']} | {e['date_start']} | "
+        f"{e.get('title') or e.get('description') or '(no title)'} | "
+        f"loc={e.get('location') or '(none)'}"
+        for e in events
+    )
+
+    prompt = f"""You are classifying a tightly-clustered group of calendar events
+as a single "story" for a personal Life Log (a 30-year memoir).
+
+Seeded story types (you may invent a new type if none of these fit, but prefer these):
+{types_str}
+
+Active Life Log categories: {cats_str}
+
+Events in this cluster:
+{events_str}
+
+Return ONLY a JSON object — no markdown fences:
+{{
+  "story_type": "one of the seeded types or a new lowercase_with_underscores name",
+  "summary": "one-line memoir-style summary, 5-15 words",
+  "highlights": ["short bullet 1", "short bullet 2", ...],
+  "event_id_refs": [1, 2, ...],
+  "suggested_extras_questions": ["question to capture trip details", ...],
+  "location": "primary location or empty string"
+}}
+
+CRITICAL rules:
+- highlights[i] MUST describe event with id=event_id_refs[i]. Same length, aligned by index.
+- Do NOT invent details not present in the event titles or descriptions.
+- If an event title looks like a flight (e.g. "JFK->BTV", "AA 1234"), include it as a highlight.
+- Keep summary tight (memoir-style, not the raw calendar titles).
+- 1-3 suggested_extras_questions, type-specific (e.g. for trip: travel mode, who came; for interview_cycle: outcome, role).
+"""
+
+    cluster_event_ids = [e["id"] for e in events]
+    fallback = {
+        "story_type": "other",
+        "summary": (events[0].get("title") or events[0].get("description") or "(untitled)")
+                   if events else "(empty)",
+        "highlights": [],
+        "event_id_refs": cluster_event_ids,
+        "suggested_extras_questions": [],
+        "location": (events[0].get("location") or "") if events else "",
+    }
+    return _call_json(prompt, max_tokens=800, default=fallback)

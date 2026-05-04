@@ -107,3 +107,52 @@ def test_drop_orphan_highlights_handles_missing_refs():
     # Highlight without a ref is dropped (we can't validate it).
     assert out["highlights"] == ["A", "B"]
     assert out["event_id_refs"] == [1, 2]
+
+
+import json
+from unittest.mock import MagicMock
+
+
+def test_cluster_into_story_returns_expected_shape(mock_anthropic):
+    from ai_life_log import cluster_into_story
+
+    payload = {
+        "story_type": "trip",
+        "summary": "Vermont ski trip with Sarah and Tom",
+        "highlights": ["JFK→BTV flight", "Skied Killington"],
+        "event_id_refs": [1, 2],
+        "suggested_extras_questions": [
+            "What was the mode of travel?",
+            "Who came on the trip?",
+        ],
+        "location": "Killington, VT",
+    }
+    mock_anthropic.messages.create.return_value.content = [
+        MagicMock(text=json.dumps(payload))
+    ]
+
+    events = [
+        {"id": 1, "date_start": "2024-03-12", "title": "JFK->BTV flight",
+         "description": "", "location": "", "source_id": "e1"},
+        {"id": 2, "date_start": "2024-03-13", "title": "Skiing Killington",
+         "description": "", "location": "Killington, VT", "source_id": "e2"},
+    ]
+    out = cluster_into_story(events, active_categories=["Vacation", "Skiing"])
+    assert out["story_type"] == "trip"
+    assert out["summary"].startswith("Vermont")
+    assert out["event_id_refs"] == [1, 2]
+
+
+def test_cluster_into_story_falls_back_to_singletons_on_parse_failure(mock_anthropic):
+    from ai_life_log import cluster_into_story
+
+    mock_anthropic.messages.create.return_value.content = [MagicMock(text="not json")]
+
+    events = [
+        {"id": 1, "date_start": "2024-03-12", "title": "Random event",
+         "description": "", "location": "", "source_id": "e1"},
+    ]
+    out = cluster_into_story(events, active_categories=[])
+    # Fall-through default: story_type="other"
+    assert out["story_type"] == "other"
+    assert out["event_id_refs"] == [1]
