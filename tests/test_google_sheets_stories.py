@@ -24,10 +24,10 @@ def test_build_stories_rows_emits_parent_then_children():
     assert rows[0][0] == "Type"  # header sentinel
     parent_row = rows[1]
     assert parent_row[0] == "trip"
-    assert "Vermont" in parent_row[3]
+    assert "Vermont" in parent_row[2]  # Summary col
     assert parent_row[4] == "2"  # # events
     assert parent_row[5] == "100"  # parent id
-    assert rows[2][3].startswith("  └")  # indent marker on child desc
+    assert rows[2][2].startswith("  └")  # indent marker on child desc, now in Summary col
     assert rows[4][0] == "other"
     assert rows[4][4] == "0"  # singleton has 0 children
 

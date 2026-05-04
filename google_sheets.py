@@ -604,7 +604,7 @@ def read_proposal_decisions() -> list:
 # ── Stories tab (story-driven proposals review surface) ──────────────────────
 
 _STORIES_HEADER = [
-    "Type", "Date Range", "Summary", "Description", "# Events", "ID", "Decision",
+    "Type", "Date Range", "Summary", "Highlights", "# Events", "ID", "Decision",
 ]
 
 
@@ -617,23 +617,23 @@ def _build_stories_rows(stories: list) -> list:
             date_range = f"{s['date_start']} → {s['date_end']}"
         children = s.get("children") or []
         rows.append([
-            s.get("story_type") or "other",
-            date_range,
-            "; ".join(s.get("highlights") or []),
-            s.get("description") or "",
-            str(len(children)),
-            str(s.get("id", "")),
-            "",  # Decision — user fills
+            s.get("story_type") or "other",            # 0 — Type
+            date_range,                                  # 1 — Date Range
+            s.get("description") or "",                  # 2 — Summary (the AI summary text)
+            "; ".join(s.get("highlights") or []),       # 3 — Highlights (joined bullets)
+            str(len(children)),                          # 4 — # Events
+            str(s.get("id", "")),                        # 5 — ID
+            "",                                          # 6 — Decision — user fills
         ])
         for ch in children:
             rows.append([
-                "",  # type blank on child
-                ch.get("date_start") or "",
-                "",
-                f"  └ {ch.get('description') or ''}",
-                "",
-                str(ch.get("id", "")),
-                "",  # Decision blank on child
+                "",                                              # 0 — type blank on child
+                ch.get("date_start") or "",                     # 1 — Date Range
+                f"  └ {ch.get('description') or ''}",           # 2 — Summary (indented child desc)
+                "",                                              # 3 — Highlights blank
+                "",                                              # 4 — # Events blank
+                str(ch.get("id", "")),                          # 5 — ID
+                "",                                              # 6 — Decision blank on child
             ])
     return rows
 
