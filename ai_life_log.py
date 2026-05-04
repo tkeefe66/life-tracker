@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 MODEL = "claude-haiku-4-5-20251001"
 
+# Recurring birthdays don't belong in the Life Log corpus — they swamp
+# real memoir events. A future "Birthdays" tab will let the user opt in
+# to tracking specific people's birthdays. For now: filter at ingest.
+_BIRTHDAY_RE = re.compile(r"\b(birthday|bday|b-day)\b|🎂", re.IGNORECASE)
+
 _client = None
 
 
@@ -76,6 +81,13 @@ def propose_from_calendar_event(
           "reason": str            # short human-readable reason
         }
     """
+    if title and _BIRTHDAY_RE.search(title):
+        return {
+            "confidence": "skip", "categories": [], "description": "",
+            "location": "", "people": [],
+            "reason": "Birthday — skipped (future Birthdays tab will opt-in).",
+        }
+
     cats_str = ", ".join(active_categories)
     attendees_str = ", ".join(attendees) if attendees else "none"
 
