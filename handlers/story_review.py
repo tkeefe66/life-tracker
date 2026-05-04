@@ -134,8 +134,22 @@ async def handle_story_confirming(text: str, reply):
         return
 
     if text_l.startswith("drop #"):
-        # Implemented in Task 15. Stub for now.
-        await reply("Drop handled in next task.")
+        try:
+            n = int(text_l.split("#", 1)[1].strip().split()[0])
+        except (ValueError, IndexError):
+            await reply("Reply: yes / edit summary: <text> / drop #N / skip")
+            return
+        children = _children_of(sid)
+        if n < 1 or n > len(children):
+            await reply(
+                f"Story only has {len(children)} events; valid drop targets "
+                f"are #1–{len(children)}."
+            )
+            return
+        child_id = children[n - 1]["id"]
+        db.drop_event_from_story(child_id)
+        await reply(f"✓ Dropped event #{n}. Story is now:")
+        await reply(_render_story(sid))
         return
 
     await reply("Reply: yes / edit summary: <text> / drop #N / skip")
@@ -162,3 +176,70 @@ async def handle_story_why_mattered(text: str, reply):
     await reply(
         f"\U0001f4cc Want to add more details?\n{qlist}\n\nReply yes to answer them, or skip."
     )
+
+
+async def handle_story_extras_optin(text: str, reply):
+    """yes → start Q&A loop; skip → confirm + advance."""
+    state = db.get_state()
+    temp = _temp(state)
+    sid = temp.get("current_story_id")
+    if not sid:
+        await reply("No active story.")
+        return
+
+    text_l = (text or "").strip().lower()
+    if text_l in ("skip", "no", "n"):
+        db.confirm_story(sid)
+        await _advance_queue(reply)
+        return
+
+    if text_l in ("yes", "y", "ok"):
+        parent = db.get_life_log_entry(sid)
+        questions = (parent.get("extras") or {}).get(
+            "_suggested_extras_questions"
+        ) or []
+        if not questions:
+            db.confirm_story(sid)
+            await _advance_queue(reply)
+            return
+        temp["extras_qa_remaining"] = list(questions[:3])
+        db.set_state(state="story_extras_qa", temp_data=temp)
+        await reply(temp["extras_qa_remaining"][0])
+        return
+
+    await reply("Reply yes to answer the optional details, or skip to move on.")
+
+
+async def handle_story_extras_qa(text: str, reply):
+    """One round of structured Q&A; loops until questions are exhausted."""
+    from ai_life_log import parse_extras_answer
+
+    state = db.get_state()
+    temp = _temp(state)
+    sid = temp.get("current_story_id")
+    questions = temp.get("extras_qa_remaining") or []
+    if not sid or not questions:
+        await reply("No active question.")
+        return
+
+    current_q = questions[0]
+    parent = db.get_life_log_entry(sid)
+    parsed = parse_extras_answer(parent.get("story_type") or "other", current_q, text)
+
+    # Merge parsed into existing extras, removing the internal questions key
+    existing = parent.get("extras") or {}
+    existing.pop("_suggested_extras_questions", None)
+    existing.update(parsed)
+    db.update_story_metadata(sid, extras=existing)
+
+    remaining = questions[1:]
+    if remaining:
+        temp["extras_qa_remaining"] = remaining
+        db.set_state(state="story_extras_qa", temp_data=temp)
+        await reply(remaining[0])
+        return
+
+    # Done with Q&A — confirm and advance
+    temp.pop("extras_qa_remaining", None)
+    db.confirm_story(sid)
+    await _advance_queue(reply)
