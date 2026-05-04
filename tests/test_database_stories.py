@@ -182,3 +182,29 @@ def test_update_story_metadata_writes_all_fields(temp_db_path):
     assert "reclaiming" in e["why_mattered"]
     assert e["highlights"] == ["JFK→BTV flight", "Pow day at Killington"]
     assert e["extras"]["travel_mode"] == "flight"
+
+
+def test_get_pending_proposals_excludes_story_parents_and_children(temp_db_path):
+    parent_id = database.save_story_parent(
+        date_start="2024-03-12", date_end="2024-03-17",
+        story_type="trip", summary="Vermont", highlights=[], location="VT",
+    )
+    child_id = database.save_proposal(
+        date_start="2024-03-13", date_end=None,
+        categories=["Skiing"], description="Ski day",
+        location="VT", source="calendar", source_id="evt-1",
+    )
+    database.assign_child_to_story(child_id, parent_id)
+
+    raw_proposal_id = database.save_proposal(
+        date_start="2024-04-15", date_end=None,
+        categories=["Concert"], description="Standalone",
+        location="NYC", source="calendar", source_id="evt-99",
+    )
+
+    pending = database.get_pending_proposals()
+    ids = {p["id"] for p in pending}
+    # Only the un-clustered raw proposal should appear
+    assert raw_proposal_id in ids
+    assert parent_id not in ids
+    assert child_id not in ids

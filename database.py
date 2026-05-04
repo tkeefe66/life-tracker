@@ -1245,10 +1245,16 @@ def assign_child_to_story(child_id: int, parent_id: int):
 
 
 def get_pending_proposals() -> list:
-    """Return all entries with status='proposed', ordered by ai_proposed_at."""
+    """Return un-clustered pending proposals.
+
+    Excludes story parents (story_type IS NOT NULL) and story children
+    (parent_id IS NOT NULL) so the legacy per-event flow only sees raw
+    calendar proposals that haven't been promoted into stories yet.
+    """
     with _cursor() as c:
         c.execute(
-            "SELECT * FROM life_log_entries WHERE status='proposed' "
+            "SELECT * FROM life_log_entries "
+            "WHERE status='proposed' AND parent_id IS NULL AND story_type IS NULL "
             "ORDER BY ai_proposed_at"
         )
         return [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]

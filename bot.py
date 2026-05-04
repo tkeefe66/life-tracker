@@ -465,9 +465,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _sync_to_sheets_with_ai(bot) -> tuple:
-    """Sync Life Log, People, Habits, and Proposals tabs."""
+    """Sync Life Log, People, and Habits tabs."""
     from google_sheets import (
-        sync_life_log_to_sheets, sync_habits_to_sheets, sync_proposals_to_sheet,
+        sync_life_log_to_sheets, sync_habits_to_sheets,
     )
 
     life_log_entries = db.get_all_life_log_entries()
@@ -481,9 +481,6 @@ async def _sync_to_sheets_with_ai(bot) -> tuple:
     all_habits = db.get_all_active_habits()
     all_habit_logs = db.get_all_habit_logs()
     sync_habits_to_sheets(all_habits, all_habit_logs)
-
-    pending = db.get_pending_proposals()
-    sync_proposals_to_sheet(pending)
 
     return url, 0  # second value retained for /sync caller signature
 
@@ -792,11 +789,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     async def _reply(msg):
         await update.message.reply_text(msg, parse_mode="Markdown")
-
-    # Proposal replies are stateless — handle in any state
-    from handlers.lifelog_proposals import handle_proposal_reply
-    if await handle_proposal_reply(update, context, text):
-        return
 
     if state == "lifelog_confirming":
         if await lifelog_handle_confirm(update, context, text):
