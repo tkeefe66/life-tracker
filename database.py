@@ -1547,3 +1547,68 @@ def get_pending_stories_with_children() -> list:
     for p in parents:
         p["children"] = by_parent[p["id"]]
     return parents
+
+
+def confirm_story(parent_id: int):
+    """Flip parent + all children to status='confirmed' atomically."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE life_log_entries SET status='confirmed', "
+            f"user_confirmed_at=CURRENT_TIMESTAMP "
+            f"WHERE id={p} OR parent_id={p}",
+            (parent_id, parent_id),
+        )
+
+
+def dismiss_story(parent_id: int):
+    """Flip parent + all children to status='dismissed' atomically."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE life_log_entries SET status='dismissed' "
+            f"WHERE id={p} OR parent_id={p}",
+            (parent_id, parent_id),
+        )
+
+
+def drop_event_from_story(child_id: int):
+    """Return a child event to the unclustered pool by nulling its parent_id."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE life_log_entries SET parent_id=NULL WHERE id={p}",
+            (child_id,),
+        )
+
+
+def update_story_metadata(
+    parent_id: int,
+    summary: str = None,
+    why_mattered: str = None,
+    highlights: list = None,
+    extras: dict = None,
+):
+    """Update any subset of summary/why_mattered/highlights/extras on a parent story."""
+    p = _p()
+    sets, params = [], []
+    if summary is not None:
+        sets.append(f"description={p}")
+        params.append(summary)
+    if why_mattered is not None:
+        sets.append(f"why_mattered={p}")
+        params.append(why_mattered)
+    if highlights is not None:
+        sets.append(f"highlights={p}")
+        params.append(json.dumps(highlights))
+    if extras is not None:
+        sets.append(f"extras={p}")
+        params.append(json.dumps(extras))
+    if not sets:
+        return
+    params.append(parent_id)
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE life_log_entries SET {', '.join(sets)} WHERE id={p}",
+            tuple(params),
+        )

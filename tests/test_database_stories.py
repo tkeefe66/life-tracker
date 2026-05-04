@@ -104,3 +104,81 @@ def _run_pending_stories_check():
     assert child_id not in by_id
     assert [c["id"] for c in by_id[parent_id]["children"]] == [child_id]
     assert by_id[singleton_id]["children"] == []
+
+
+def test_confirm_story_flips_parent_and_children(temp_db_path):
+    parent_id = database.save_story_parent(
+        date_start="2024-03-12", date_end="2024-03-17",
+        story_type="trip", summary="Vermont", highlights=[], location="VT",
+    )
+    child_id = database.save_proposal(
+        date_start="2024-03-13", date_end=None,
+        categories=["Skiing"], description="Ski",
+        location="VT", source="calendar", source_id="evt-x",
+    )
+    database.assign_child_to_story(child_id, parent_id)
+
+    database.confirm_story(parent_id)
+
+    parent = database.get_life_log_entry(parent_id)
+    child = database.get_life_log_entry(child_id)
+    assert parent["status"] == "confirmed"
+    assert child["status"] == "confirmed"
+
+
+def test_dismiss_story_flips_parent_and_children(temp_db_path):
+    parent_id = database.save_story_parent(
+        date_start="2024-03-12", date_end="2024-03-17",
+        story_type="trip", summary="Vermont", highlights=[], location="VT",
+    )
+    child_id = database.save_proposal(
+        date_start="2024-03-13", date_end=None,
+        categories=["Skiing"], description="Ski",
+        location="VT", source="calendar", source_id="evt-y",
+    )
+    database.assign_child_to_story(child_id, parent_id)
+
+    database.dismiss_story(parent_id)
+
+    parent = database.get_life_log_entry(parent_id)
+    child = database.get_life_log_entry(child_id)
+    assert parent["status"] == "dismissed"
+    assert child["status"] == "dismissed"
+
+
+def test_drop_event_from_story_returns_child_to_unclustered(temp_db_path):
+    parent_id = database.save_story_parent(
+        date_start="2024-03-12", date_end="2024-03-17",
+        story_type="trip", summary="Vermont", highlights=[], location="VT",
+    )
+    child_id = database.save_proposal(
+        date_start="2024-03-13", date_end=None,
+        categories=["Skiing"], description="Ski",
+        location="VT", source="calendar", source_id="evt-z",
+    )
+    database.assign_child_to_story(child_id, parent_id)
+
+    database.drop_event_from_story(child_id)
+
+    child = database.get_life_log_entry(child_id)
+    assert child["parent_id"] is None
+    assert child["status"] == "proposed"  # back in the unclustered pool
+
+
+def test_update_story_metadata_writes_all_fields(temp_db_path):
+    parent_id = database.save_story_parent(
+        date_start="2024-03-12", date_end="2024-03-17",
+        story_type="trip", summary="Vermont", highlights=["one"], location="VT",
+    )
+    database.update_story_metadata(
+        parent_id,
+        summary="Vermont ski trip — knee surgery comeback",
+        why_mattered="First trip after surgery — felt like reclaiming something.",
+        highlights=["JFK→BTV flight", "Pow day at Killington"],
+        extras={"travel_mode": "flight", "who_came": ["Sarah", "Tom"]},
+    )
+    e = database.get_life_log_entry(parent_id)
+    assert "knee surgery" in e["description"]
+    assert "reclaiming" in e["why_mattered"]
+    assert e["highlights"] == ["JFK→BTV flight", "Pow day at Killington"]
+    assert e["extras"]["travel_mode"] == "flight"
