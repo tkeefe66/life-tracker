@@ -75,6 +75,7 @@ def _ensure_sheets(spreadsheet: gspread.Spreadsheet):
     for name, cols in [
         (SHEET_WEEKLY, 6), (SHEET_LATER, 4), (SHEET_HABITS, 12),
         (SHEET_LIFE_LOG, 10), (SHEET_PEOPLE, 10), (SHEET_PROPOSALS, 8),
+        (SHEET_STORIES, 7),
     ]:
         if name not in existing:
             spreadsheet.add_worksheet(title=name, rows=5000, cols=cols)
@@ -642,8 +643,6 @@ def sync_stories_to_sheet(stories: list) -> str:
     """Full rebuild of the Stories tab."""
     spreadsheet = _get_spreadsheet()
     _ensure_sheets(spreadsheet)
-    if SHEET_STORIES not in {ws.title for ws in spreadsheet.worksheets()}:
-        spreadsheet.add_worksheet(title=SHEET_STORIES, rows=5000, cols=7)
     sheet = spreadsheet.worksheet(SHEET_STORIES)
     rows = _build_stories_rows(stories)
     sheet.clear()
