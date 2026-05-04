@@ -40,6 +40,7 @@ from handlers.log_command import (
 from handlers.people import people_command
 from handlers.lifelog_queries import ask_command
 from handlers.proposals_review import proposals_command
+from handlers.syncproposals import syncproposals_command
 try:
     from jobs.daily_calendar import run_daily_calendar_sync, run_bulk_calendar_sync
     from jobs.daily_ai_status import run_daily_ai_status
@@ -252,7 +253,8 @@ _COMMANDS_TEXT = (
     "• /log \\[text\\] — Log a memorable moment \\(AI extracts category, people, date\\)\n"
     "• /ask \\[question\\] — Natural\\-language query of your Life Log\n"
     "• /people — List people in your Life Log\n"
-    "• /proposals \\[page\\] — Review pending calendar proposals \\(paginated\\)\n\n"
+    "• /proposals \\[page\\] — Review pending calendar proposals in Telegram \\(paginated\\)\n"
+    "• /syncproposals — Apply decisions you made in the *Proposals* tab of your Sheet\n\n"
     "*📊 Viewing & Syncing*\n"
     "• /status — This week's logged data\n"
     "• /sync — Push Life Log \\+ People \\+ Habits to Google Sheets\n"
@@ -454,8 +456,10 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _sync_to_sheets_with_ai(bot) -> tuple:
-    """Sync Life Log, People, and Habits tabs."""
-    from google_sheets import sync_life_log_to_sheets, sync_habits_to_sheets
+    """Sync Life Log, People, Habits, and Proposals tabs."""
+    from google_sheets import (
+        sync_life_log_to_sheets, sync_habits_to_sheets, sync_proposals_to_sheet,
+    )
 
     life_log_entries = db.get_all_life_log_entries()
     all_people = db.get_all_people()
@@ -468,6 +472,9 @@ async def _sync_to_sheets_with_ai(bot) -> tuple:
     all_habits = db.get_all_active_habits()
     all_habit_logs = db.get_all_habit_logs()
     sync_habits_to_sheets(all_habits, all_habit_logs)
+
+    pending = db.get_pending_proposals()
+    sync_proposals_to_sheet(pending)
 
     return url, 0  # second value retained for /sync caller signature
 
@@ -1023,6 +1030,7 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("people", people_command))
     app.add_handler(CommandHandler("ask", ask_command))
     app.add_handler(CommandHandler("proposals", proposals_command))
+    app.add_handler(CommandHandler("syncproposals", syncproposals_command))
     app.add_handler(CommandHandler("habit", habit_command))
     app.add_handler(CommandHandler("habits", habits_command))
     app.add_handler(CommandHandler("habitstop", habitstop_command))

@@ -142,10 +142,23 @@ def main():
     logger.info("Done — %d total proposals", total)
 
     if total and not args.dry_run:
-        logger.info(
-            "Review them in Telegram with /proposals (paginated, %d per page) "
-            "or 'yes all' / 'skip all' to bulk-handle.", 10
-        )
+        # Push all pending proposals to the Proposals tab in Sheets for bulk review
+        try:
+            from google_sheets import sync_proposals_to_sheet
+            pending = db.get_pending_proposals()
+            sync_proposals_to_sheet(pending)
+            logger.info(
+                "Wrote %d pending proposals to the Proposals tab. "
+                "Open the sheet, fill in the Decision column "
+                "(yes / skip / new description), then run /syncproposals in Telegram.",
+                len(pending),
+            )
+        except Exception as e:
+            logger.warning("Could not write Proposals tab (non-fatal): %s", e)
+            logger.info(
+                "Fallback: review in Telegram with /proposals "
+                "or 'yes all' / 'skip all' to bulk-handle."
+            )
 
 
 if __name__ == "__main__":

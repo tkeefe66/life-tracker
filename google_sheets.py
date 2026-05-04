@@ -29,6 +29,7 @@ SHEET_LATER = "Later"
 SHEET_HABITS = "Habits"
 SHEET_LIFE_LOG = "Life Log"
 SHEET_PEOPLE = "People"
+SHEET_PROPOSALS = "Proposals"
 
 
 # ── Client ────────────────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ def _ensure_sheets(spreadsheet: gspread.Spreadsheet):
     existing = {ws.title for ws in spreadsheet.worksheets()}
     for name, cols in [
         (SHEET_WEEKLY, 6), (SHEET_LATER, 4), (SHEET_HABITS, 12),
-        (SHEET_LIFE_LOG, 10), (SHEET_PEOPLE, 10),
+        (SHEET_LIFE_LOG, 10), (SHEET_PEOPLE, 10), (SHEET_PROPOSALS, 8),
     ]:
         if name not in existing:
             spreadsheet.add_worksheet(title=name, rows=5000, cols=cols)
@@ -504,3 +505,96 @@ def sync_habits_to_sheets(all_habits: list, all_habit_logs: list) -> str:
         habits_sheet.update("A1", habits_rows)
     logger.info("Rebuilt Habits sheet (%d habits)", len(all_habits))
     return spreadsheet.url
+
+
+# ── Proposals tab (review surface for pending Life Log proposals) ─────────────
+
+_PROPOSALS_HEADER = [
+    "Date", "End Date", "Categories", "Description", "Location",
+    "Source", "ID", "Decision",
+]
+
+
+def _build_proposals_rows(proposals: list) -> list:
+    """Build sheet rows from a list of pending proposal entries."""
+    rows = [_PROPOSALS_HEADER]
+    for p in proposals:
+        cats = ", ".join(p.get("categories") or [])
+        rows.append([
+            p.get("date_start") or "",
+            p.get("date_end") or "",
+            cats,
+            p.get("description") or "",
+            p.get("location") or "",
+            p.get("source") or "",
+            str(p.get("id", "")),
+            "",  # Decision — user fills this in
+        ])
+    return rows
+
+
+def sync_proposals_to_sheet(proposals: list) -> str:
+    """
+    Full rebuild of the Proposals tab.
+
+    Writes one row per pending proposal with an empty Decision column.
+    Users fill 'yes' / 'skip' / new description text, then run /syncproposals
+    to apply.
+    """
+    spreadsheet = _get_spreadsheet()
+    _ensure_sheets(spreadsheet)
+    sheet = spreadsheet.worksheet(SHEET_PROPOSALS)
+    rows = _build_proposals_rows(proposals)
+    sheet.clear()
+    if rows:
+        sheet.update("A1", rows)
+        sheet.format("D:D", {"wrapStrategy": "WRAP"})
+    logger.info("Rebuilt Proposals sheet (%d pending)", len(proposals))
+    return spreadsheet.url
+
+
+def read_proposal_decisions() -> list:
+    """
+    Read the Proposals tab and return parsed decisions.
+
+    Returns a list of dicts:
+        {"id": int, "decision": "confirm"|"skip"|"edit", "new_description": str|None}
+
+    Decision values in the sheet:
+        - "yes" / "y" / "confirm" → confirm action
+        - "skip" / "n" / "no" / "dismiss" → skip action
+        - blank → ignored (still pending)
+        - any other text → edit action with that text as the new description
+    """
+    spreadsheet = _get_spreadsheet()
+    _ensure_sheets(spreadsheet)
+    sheet = spreadsheet.worksheet(SHEET_PROPOSALS)
+    all_rows = sheet.get_all_values()
+    if len(all_rows) < 2:
+        return []
+
+    decisions = []
+    for row in all_rows[1:]:  # skip header
+        if len(row) < 8:
+            continue
+        id_val = row[6].strip()
+        decision_val = row[7].strip()
+        if not id_val or not decision_val:
+            continue
+        try:
+            entry_id = int(id_val)
+        except ValueError:
+            continue
+
+        lc = decision_val.lower()
+        if lc in ("yes", "y", "confirm", "ok"):
+            decisions.append({"id": entry_id, "decision": "confirm", "new_description": None})
+        elif lc in ("skip", "n", "no", "dismiss"):
+            decisions.append({"id": entry_id, "decision": "skip", "new_description": None})
+        else:
+            decisions.append({
+                "id": entry_id, "decision": "edit",
+                "new_description": decision_val,
+            })
+
+    return decisions
