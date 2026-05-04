@@ -1209,6 +1209,7 @@ def save_story_parent(
     p = _p()
     extras_val = json.dumps(extras) if extras else None
     highlights_val = json.dumps(highlights or [])
+    cats = _serialize_categories([])  # Postgres expects [] (psycopg2 → '{}'), SQLite expects '[]'
     with _cursor(write=True) as c:
         if USE_POSTGRES:
             c.execute(
@@ -1218,7 +1219,7 @@ def save_story_parent(
                     VALUES ({p},{p},{p},{p},{p},'proposed',
                             NULL,{p},{p},{p}, CURRENT_TIMESTAMP)
                     RETURNING id""",
-                (date_start, date_end, "[]", summary, location,
+                (date_start, date_end, cats, summary, location,
                  story_type, highlights_val, extras_val),
             )
             return c.fetchone()["id"]
@@ -1228,7 +1229,7 @@ def save_story_parent(
                    (date_start, date_end, categories, description, location, status,
                     parent_id, story_type, highlights, extras, ai_proposed_at)
                    VALUES (?,?,?,?,?,'proposed', NULL,?,?,?, CURRENT_TIMESTAMP)""",
-                (date_start, date_end, "[]", summary, location,
+                (date_start, date_end, cats, summary, location,
                  story_type, highlights_val, extras_val),
             )
             return c.lastrowid
