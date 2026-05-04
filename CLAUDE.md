@@ -52,6 +52,9 @@ python -c "from bot import _sync_to_sheets_with_ai; import asyncio; asyncio.run(
 
 **Spec:** `docs/superpowers/specs/2026-05-02-life-log-design.md`
 
+**Stories design spec:** `docs/superpowers/specs/2026-05-04-story-driven-proposals-design.md`
+**Implementation plan:** `docs/superpowers/plans/2026-05-04-story-driven-proposals.md`
+
 ---
 
 ## Repo Layout
@@ -66,10 +69,18 @@ python -c "from bot import _sync_to_sheets_with_ai; import asyncio; asyncio.run(
 ├── config.py                       # All env vars — secrets and feature flags
 ├── google_sheets.py                # Writes Life Log, People, Habits tabs
 ├── handlers/
-│   ├── log_command.py              # /log command handler + lifelog_confirming state
-│   ├── lifelog_proposals.py        # Proposal reply handling (yes/skip/edit #N, yes all)
-│   ├── lifelog_queries.py          # /ask command handler
-│   └── people.py                  # /people command + merge flow
+│   ├── log_command.py              # /log command + lifelog_confirming state
+│   ├── lifelog_proposals.py        # Per-event proposal reply parser (still wired)
+│   ├── lifelog_queries.py          # /ask command
+│   ├── people.py                   # /people command + merge flow
+│   ├── buildstories.py             # /buildstories — cluster pending into stories
+│   ├── syncstories.py              # /syncstories — apply Stories sheet decisions, start review
+│   ├── story_review.py             # Telegram narrative state machine (multi-state)
+│   ├── pushstories.py              # /pushstories — retry sheet write
+│   ├── showstory.py                # /showstory <id> — debug dump
+│   ├── dismissbirthdays.py         # /dismissbirthdays — bulk dismiss birthday proposals
+│   ├── calendarbackfill.py         # /calendarbackfill — import calendar history
+│   └── (legacy, deregistered)      # syncproposals.py, pushproposals.py, proposals_review.py, showproposal.py
 ├── jobs/
 │   ├── lifelog_realtime.py         # Scheduled: every 15 min, high-confidence calendar proposals
 │   ├── lifelog_dayafter.py         # Scheduled: 9am daily, matched-confidence yesterday events
@@ -112,11 +123,16 @@ The bot uses a single-row `conversation_state` table to track where the user is 
 
 ```
 idle
- ├─► lifelog_confirming      (waiting for /log preview confirm/correct/cancel)
- ├─► lifelog_new_person      (asking relationship type for newly-detected person)
- ├─► confirming_habit        ┐
- ├─► collecting_habit_check  ├ habit flows
- └─► collecting_habit_reason ┘
+ ├─► lifelog_confirming        (waiting for /log preview confirm/correct/cancel)
+ ├─► lifelog_new_person        (asking relationship type for newly-detected person)
+ ├─► story_resume_prompt       (asks "resume queue? yes/clear")
+ ├─► story_confirming          (yes / edit summary / drop #N / skip)
+ ├─► story_why_mattered        (one-sentence "why mattered" capture)
+ ├─► story_extras_optin        (yes → Q&A loop / skip → confirm + advance)
+ ├─► story_extras_qa           (one structured question at a time)
+ ├─► confirming_habit          ┐
+ ├─► collecting_habit_check    ├ habit flows
+ └─► collecting_habit_reason   ┘
 ```
 
 **Persistence:** `db.set_state(state, ...)` writes to DB; `db.get_state()` reads it.
@@ -134,6 +150,10 @@ idle
 |---------|-------------|
 | `/log [text]` | Add a Life Log entry — AI extracts category, people, location, date |
 | `/ask [question]` | Natural-language query against your Life Log (e.g. "When did I last see Megan?") |
+| `/buildstories` | Cluster pending calendar events into stories (parents + children) and push to the *Stories* tab |
+| `/syncstories` | Apply Decision column from Stories tab; surviving stories enter a Telegram narrative review queue |
+| `/pushstories` | Re-push pending stories to the Sheet (retry after a failed write) |
+| `/showstory [id]` | Inspect a story (and its child events) by ID |
 | `/people` | List people in your Life Log; `/people merge <id> into <id>` to dedupe |
 | `/skip` | Skip the current prompt in any active flow |
 | `/status` | This week's logged data |
