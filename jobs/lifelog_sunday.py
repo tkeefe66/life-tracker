@@ -64,11 +64,15 @@ def _fetch_past_week_events() -> list:
 
 
 async def run_sunday_digest(bot: Bot):
-    """Classify past-week events and send a single digest for maybe-confidence ones."""
+    """
+    Classify past-week events for maybe-confidence proposals.
+    Silent — proposals appear in the Proposals tab; the next dayafter run
+    sends the consolidated nudge.
+    """
     events = _fetch_past_week_events()
     active_cats = [c["name"] for c in db.get_active_categories()]
 
-    proposals_made = []
+    new_proposals = 0
     for event in events:
         # Already promoted to a life log entry? skip
         seen = db.get_activity_by_source_id("calendar", event["event_id"])
@@ -99,7 +103,7 @@ async def run_sunday_digest(bot: Bot):
             continue
 
         date_start = event["start_datetime"][:10]
-        entry_id = db.save_proposal(
+        db.save_proposal(
             date_start=date_start,
             date_end=None,
             categories=parsed["categories"],
@@ -108,24 +112,13 @@ async def run_sunday_digest(bot: Bot):
             source="calendar",
             source_id=event["event_id"],
         )
-        proposals_made.append((entry_id, parsed, event))
+        new_proposals += 1
 
-    if not proposals_made:
-        logger.info("lifelog_sunday: no maybes to digest")
-        return
+    if new_proposals:
+        try:
+            from google_sheets import sync_proposals_to_sheet
+            sync_proposals_to_sheet(db.get_pending_proposals())
+        except Exception as e:
+            logger.warning("Proposals sheet sync failed (non-fatal): %s", e)
 
-    lines = ["📋 *Sunday digest — possibly Life Log–worthy this week:*", ""]
-    for entry_id, parsed, event in proposals_made:
-        cats = " + ".join(parsed["categories"]) or "?"
-        date = event["start_datetime"][:10]
-        desc = parsed.get("description") or event["title"]
-        lines.append(f"*#{entry_id}* — {desc}  ({cats}, {date})")
-    lines.append("")
-    lines.append("Reply *yes #N* / *skip #N* per item, or *yes all* / *skip all*.")
-
-    await bot.send_message(
-        chat_id=TELEGRAM_CHAT_ID,
-        text="\n".join(lines),
-        parse_mode="Markdown",
-    )
-    logger.info("lifelog_sunday: sent digest with %d items", len(proposals_made))
+    logger.info("lifelog_sunday: %d new (silent — review in Proposals tab)", new_proposals)

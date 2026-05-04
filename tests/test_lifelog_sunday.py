@@ -38,8 +38,9 @@ async def test_sunday_digest_batches_maybes(temp_db_path, mock_anthropic):
     import database as db
     proposals = db.get_pending_proposals()
     assert len(proposals) == 3
-    # One digest message, not 3 separate messages
-    assert bot.send_message.call_count == 1
+    # Sheet-first mode: sunday job is silent — proposals appear in the Proposals tab,
+    # the dayafter job (next morning) sends the consolidated nudge.
+    bot.send_message.assert_not_called()
 
 
 @pytest.mark.asyncio

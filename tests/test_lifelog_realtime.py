@@ -39,7 +39,8 @@ async def test_realtime_proposes_high_confidence(temp_db_path, mock_anthropic):
     assert len(proposals) == 1
     assert proposals[0]["categories"] == ["Wedding", "Vacation"]
 
-    bot.send_message.assert_called_once()
+    # Sheet-first mode: no per-event Telegram message; sheet sync happens silently
+    bot.send_message.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,6 @@ from telegram import Bot
 import database as db
 from ai_life_log import propose_from_calendar_event
 from config import TELEGRAM_CHAT_ID, TIMEZONE
-from jobs.lifelog_realtime import _format_proposal_message
 from services.calendar_service import GOOGLE_CALENDAR_ID, _get_service, is_configured
 
 logger = logging.getLogger(__name__)
@@ -66,7 +65,10 @@ def _fetch_yesterdays_events() -> list:
 
 
 async def run_dayafter_proposals(bot: Bot):
-    """Classify yesterday's events and send proposals for matched-confidence ones."""
+    """
+    Classify yesterday's events and create matched-confidence proposals.
+    Then send ONE daily nudge to Telegram if there are pending proposals.
+    """
     events = _fetch_yesterdays_events()
     active_cats = [c["name"] for c in db.get_active_categories()]
     new_proposals = 0
@@ -101,7 +103,7 @@ async def run_dayafter_proposals(bot: Bot):
             continue
 
         date_start = event["start_datetime"][:10]
-        entry_id = db.save_proposal(
+        db.save_proposal(
             date_start=date_start,
             date_end=None,
             categories=parsed["categories"],
@@ -110,11 +112,31 @@ async def run_dayafter_proposals(bot: Bot):
             source="calendar",
             source_id=event["event_id"],
         )
-        await bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID,
-            text=_format_proposal_message(parsed, event, entry_id),
-            parse_mode="Markdown",
-        )
         new_proposals += 1
 
-    logger.info("lifelog_dayafter: %d new proposals", new_proposals)
+    # Push current pending state to the Proposals tab
+    pending = db.get_pending_proposals()
+    if new_proposals or pending:
+        try:
+            from google_sheets import sync_proposals_to_sheet
+            sync_proposals_to_sheet(pending)
+        except Exception as e:
+            logger.warning("Proposals sheet sync failed (non-fatal): %s", e)
+
+    # Daily nudge — ONE message if there are unreviewed proposals
+    if pending:
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=(
+                f"📋 *{len(pending)} proposals pending review*\n\n"
+                f"Open the *Proposals* tab in your Google Sheet, fill in the "
+                f"Decision column (`yes` / `skip` / new description), then run "
+                f"`/syncproposals` to apply."
+            ),
+            parse_mode="Markdown",
+        )
+
+    logger.info(
+        "lifelog_dayafter: %d new (now %d total pending)",
+        new_proposals, len(pending),
+    )
