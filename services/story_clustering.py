@@ -1,6 +1,7 @@
 """Story clustering — pre-cluster events by date proximity, then call AI per cluster."""
 import datetime
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -40,3 +41,39 @@ def precluster_by_date(events: list, max_gap_days: int = 1) -> list:
             clusters.append([curr])
 
     return clusters
+
+
+_FLIGHT_RE = re.compile(
+    r"\b(flight|fly|flying|flew|airline)\b"
+    r"|\b[A-Z]{3}\s*[-→]\s*[A-Z]{3}\b"      # IATA code dash IATA code
+    r"|\b(?:AA|UA|DL|BA|AC|JB|WN|NK|F9)\s*\d{1,4}\b",  # carrier code + flight num
+    re.IGNORECASE,
+)
+
+
+def is_flight(title: str) -> bool:
+    """True if the event title looks like a flight."""
+    return bool(title and _FLIGHT_RE.search(title))
+
+
+def drop_orphan_highlights(candidate: dict, cluster_event_ids: set) -> dict:
+    """Drop highlights whose event_id_refs aren't in the cluster.
+
+    `candidate` is the AI's output for one cluster:
+      {"highlights": [...], "event_id_refs": [...]}
+    Highlights and refs are aligned by index; if there are more highlights than
+    refs, the extras are dropped (we cannot validate them).
+    """
+    highlights = candidate.get("highlights") or []
+    refs = candidate.get("event_id_refs") or []
+    pairs = list(zip(highlights, refs))  # truncates to shorter
+    kept = [(h, r) for h, r in pairs if r in cluster_event_ids]
+    if len(kept) < len(pairs):
+        logger.warning(
+            "Dropped %d orphan highlight(s) referencing events not in cluster",
+            len(pairs) - len(kept),
+        )
+    out = dict(candidate)
+    out["highlights"] = [h for h, _ in kept]
+    out["event_id_refs"] = [r for _, r in kept]
+    return out
