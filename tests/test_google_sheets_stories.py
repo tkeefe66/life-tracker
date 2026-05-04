@@ -53,3 +53,25 @@ def test_sync_stories_to_sheet_clears_and_writes():
     fake_sheet.clear.assert_called_once()
     fake_sheet.update.assert_called()
     assert url == "https://example/sheet"
+
+
+def test_read_story_decisions_only_picks_parent_rows():
+    from google_sheets import read_story_decisions
+    fake_sheet = MagicMock()
+    # Row 0 header, row 1 parent (decision yes), row 2 child (ignored even
+    # if user wrote in decision col), row 3 parent (decision skip)
+    fake_sheet.get_all_values.return_value = [
+        ["Type", "Date Range", "Summary", "Highlights", "# Events", "ID", "Decision"],
+        ["trip", "2024-03-12 → 2024-03-17", "Vermont", "...", "2", "100", "yes"],
+        ["", "2024-03-12", "  └ flight", "", "", "101", "yes"],   # child — ignore
+        ["other", "2024-04-01", "Phish", "", "0", "200", "skip"],
+    ]
+    fake_spreadsheet = MagicMock()
+    fake_spreadsheet.worksheet.return_value = fake_sheet
+    with patch("google_sheets._get_spreadsheet", return_value=fake_spreadsheet), \
+         patch("google_sheets._ensure_sheets"):
+        decisions = read_story_decisions()
+    assert decisions == [
+        {"id": 100, "decision": "confirm"},
+        {"id": 200, "decision": "skip"},
+    ]

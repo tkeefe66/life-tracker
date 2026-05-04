@@ -650,3 +650,43 @@ def sync_stories_to_sheet(stories: list) -> str:
         sheet.update("A1", rows)
     logger.info("Rebuilt Stories sheet (%d stories)", len(stories))
     return spreadsheet.url
+
+
+def read_story_decisions() -> list:
+    """Return parent-row decisions from the Stories sheet.
+
+    A row is a parent if its Type column (col 0) is non-empty. Child rows
+    have an empty Type and are ignored even if the user wrote in their
+    Decision column.
+
+    Returns: [{"id": int, "decision": "confirm" | "skip"}]
+    Anything other than yes/y/confirm/ok/skip/n/no/dismiss in the Decision col is
+    ignored (the row stays pending).
+    """
+    spreadsheet = _get_spreadsheet()
+    _ensure_sheets(spreadsheet)
+    sheet = spreadsheet.worksheet(SHEET_STORIES)
+    all_rows = sheet.get_all_values()
+    if len(all_rows) < 2:
+        return []
+
+    out = []
+    for row in all_rows[1:]:  # skip header
+        if len(row) < 7:
+            continue
+        type_cell = row[0].strip()
+        if not type_cell:
+            continue  # child row — ignore
+        id_cell, decision_cell = row[5].strip(), row[6].strip()
+        if not id_cell or not decision_cell:
+            continue
+        try:
+            entry_id = int(id_cell)
+        except ValueError:
+            continue
+        lc = decision_cell.lower()
+        if lc in ("yes", "y", "confirm", "ok"):
+            out.append({"id": entry_id, "decision": "confirm"})
+        elif lc in ("skip", "n", "no", "dismiss"):
+            out.append({"id": entry_id, "decision": "skip"})
+    return out
