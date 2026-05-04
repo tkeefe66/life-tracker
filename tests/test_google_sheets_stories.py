@@ -55,6 +55,41 @@ def test_sync_stories_to_sheet_clears_and_writes():
     assert url == "https://example/sheet"
 
 
+def test_sync_stories_applies_yes_skip_dropdown():
+    from google_sheets import sync_stories_to_sheet
+    fake_sheet = MagicMock()
+    fake_sheet.id = 12345
+    fake_spreadsheet = MagicMock()
+    fake_spreadsheet.worksheet.return_value = fake_sheet
+    fake_spreadsheet.url = "https://example/sheet"
+    fake_spreadsheet.batch_update = MagicMock()
+
+    with patch("google_sheets._get_spreadsheet", return_value=fake_spreadsheet), \
+         patch("google_sheets._ensure_sheets"):
+        sync_stories_to_sheet([
+            {"id": 1, "story_type": "trip", "date_start": "2024-03-12",
+             "date_end": "2024-03-17", "description": "Trip",
+             "highlights": [], "children": []},
+        ])
+
+    fake_spreadsheet.batch_update.assert_called_once()
+    call_arg = fake_spreadsheet.batch_update.call_args[0][0]
+    requests = call_arg["requests"]
+    assert len(requests) == 1
+
+    dv = requests[0]["setDataValidation"]
+    r = dv["range"]
+    assert r["startColumnIndex"] == 6
+    assert r["endColumnIndex"] == 7
+    assert r["sheetId"] == 12345
+
+    rule = dv["rule"]
+    assert rule["showCustomUi"] is True
+    assert rule["strict"] is False
+    values = [v["userEnteredValue"] for v in rule["condition"]["values"]]
+    assert values == ["yes", "skip"]
+
+
 def test_read_story_decisions_only_picks_parent_rows():
     from google_sheets import read_story_decisions
     fake_sheet = MagicMock()

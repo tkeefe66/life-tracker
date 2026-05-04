@@ -648,6 +648,39 @@ def sync_stories_to_sheet(stories: list) -> str:
     sheet.clear()
     if rows:
         sheet.update("A1", rows)
+        # Apply yes/skip dropdown to Decision column (col G, index 6) on parent rows only.
+        # Parent rows have a non-empty Type cell (col 0); child rows have empty Type.
+        parent_indices = [i for i, row in enumerate(rows) if i > 0 and row[0]]
+        if parent_indices:
+            requests = [
+                {
+                    "setDataValidation": {
+                        "range": {
+                            "sheetId": sheet.id,
+                            "startRowIndex": idx,
+                            "endRowIndex": idx + 1,
+                            "startColumnIndex": 6,
+                            "endColumnIndex": 7,
+                        },
+                        "rule": {
+                            "condition": {
+                                "type": "ONE_OF_LIST",
+                                "values": [
+                                    {"userEnteredValue": "yes"},
+                                    {"userEnteredValue": "skip"},
+                                ],
+                            },
+                            "showCustomUi": True,
+                            "strict": False,
+                        },
+                    }
+                }
+                for idx in parent_indices
+            ]
+            try:
+                spreadsheet.batch_update({"requests": requests})
+            except Exception as exc:
+                logger.warning("Stories dropdown validation failed (non-fatal): %s", exc)
     logger.info("Rebuilt Stories sheet (%d stories)", len(stories))
     return spreadsheet.url
 
