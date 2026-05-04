@@ -30,6 +30,7 @@ SHEET_HABITS = "Habits"
 SHEET_LIFE_LOG = "Life Log"
 SHEET_PEOPLE = "People"
 SHEET_PROPOSALS = "Proposals"
+SHEET_STORIES = "Stories"
 
 
 # ── Client ────────────────────────────────────────────────────────────────────
@@ -598,3 +599,55 @@ def read_proposal_decisions() -> list:
             })
 
     return decisions
+
+
+# ── Stories tab (story-driven proposals review surface) ──────────────────────
+
+_STORIES_HEADER = [
+    "Type", "Date Range", "Summary", "Description", "# Events", "ID", "Decision",
+]
+
+
+def _build_stories_rows(stories: list) -> list:
+    """Build sheet rows: parent row, then indented child rows; flat header at top."""
+    rows = [_STORIES_HEADER]
+    for s in stories:
+        date_range = s.get("date_start") or ""
+        if s.get("date_end"):
+            date_range = f"{s['date_start']} → {s['date_end']}"
+        children = s.get("children") or []
+        rows.append([
+            s.get("story_type") or "other",
+            date_range,
+            "; ".join(s.get("highlights") or []),
+            s.get("description") or "",
+            str(len(children)),
+            str(s.get("id", "")),
+            "",  # Decision — user fills
+        ])
+        for ch in children:
+            rows.append([
+                "",  # type blank on child
+                ch.get("date_start") or "",
+                "",
+                f"  └ {ch.get('description') or ''}",
+                "",
+                str(ch.get("id", "")),
+                "",  # Decision blank on child
+            ])
+    return rows
+
+
+def sync_stories_to_sheet(stories: list) -> str:
+    """Full rebuild of the Stories tab."""
+    spreadsheet = _get_spreadsheet()
+    _ensure_sheets(spreadsheet)
+    if SHEET_STORIES not in {ws.title for ws in spreadsheet.worksheets()}:
+        spreadsheet.add_worksheet(title=SHEET_STORIES, rows=5000, cols=7)
+    sheet = spreadsheet.worksheet(SHEET_STORIES)
+    rows = _build_stories_rows(stories)
+    sheet.clear()
+    if rows:
+        sheet.update("A1", rows)
+    logger.info("Rebuilt Stories sheet (%d stories)", len(stories))
+    return spreadsheet.url
