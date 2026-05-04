@@ -66,11 +66,13 @@ async def calendarbackfill_command(update: Update, context: ContextTypes.DEFAULT
     # Push everything to the Proposals tab
     pending = db.get_pending_proposals()
     sheet_url = ""
+    sheet_error = ""
     try:
         from google_sheets import sync_proposals_to_sheet
         sheet_url = sync_proposals_to_sheet(pending)
     except Exception as e:
-        logger.warning("Proposals sheet sync failed: %s", e)
+        logger.error("Proposals sheet sync failed: %s", e, exc_info=True)
+        sheet_error = f"{type(e).__name__}: {e}"
 
     msg = (
         f"✅ Backfill done!\n\n"
@@ -81,6 +83,13 @@ async def calendarbackfill_command(update: Update, context: ContextTypes.DEFAULT
         msg += f"\n⚠️ {len(failed_years)} year(s) failed — check Railway logs."
     if sheet_url:
         msg += f"\n\n📝 [Open Proposals tab]({sheet_url})\n\n"
-    msg += "Open the *Proposals* tab, fill the Decision column, then run /syncproposals."
+        msg += "Open the *Proposals* tab, fill the Decision column, then run /syncproposals."
+    elif sheet_error:
+        msg += (
+            f"\n\n⚠️ Sheet write failed: `{sheet_error}`\n"
+            f"Proposals are saved in the DB. Run /pushproposals to retry the Sheet write."
+        )
+    else:
+        msg += "\nOpen the *Proposals* tab, fill the Decision column, then run /syncproposals."
 
     await update.message.reply_text(msg, parse_mode="Markdown")

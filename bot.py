@@ -41,6 +41,7 @@ from handlers.people import people_command
 from handlers.lifelog_queries import ask_command
 from handlers.proposals_review import proposals_command
 from handlers.syncproposals import syncproposals_command
+from handlers.pushproposals import pushproposals_command
 from handlers.calendarbackfill import calendarbackfill_command
 try:
     from jobs.daily_calendar import run_daily_calendar_sync, run_bulk_calendar_sync
@@ -256,6 +257,7 @@ _COMMANDS_TEXT = (
     "• /people — List people in your Life Log\n"
     "• /proposals \\[page\\] — Review pending calendar proposals in Telegram \\(paginated\\)\n"
     "• /syncproposals — Apply decisions you made in the *Proposals* tab of your Sheet\n"
+    "• /pushproposals — Re\\-push pending proposals to the Sheet \\(retry after a failed sheet write\\)\n"
     "• /calendarbackfill \\[start\\_year\\] \\[end\\_year\\] — Import calendar history into Proposals\n\n"
     "*📊 Viewing & Syncing*\n"
     "• /status — This week's logged data\n"
@@ -1033,6 +1035,7 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("ask", ask_command))
     app.add_handler(CommandHandler("proposals", proposals_command))
     app.add_handler(CommandHandler("syncproposals", syncproposals_command))
+    app.add_handler(CommandHandler("pushproposals", pushproposals_command))
     app.add_handler(CommandHandler("calendarbackfill", calendarbackfill_command))
     app.add_handler(CommandHandler("habit", habit_command))
     app.add_handler(CommandHandler("habits", habits_command))
