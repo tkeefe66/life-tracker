@@ -480,6 +480,23 @@ def _rows(rs):
     return [dict(r) for r in rs]
 
 
+def _normalize_row_dates(row: dict) -> dict:
+    """Convert date/datetime values to ISO strings.
+
+    Postgres returns DATE/TIMESTAMP columns as native date/datetime objects;
+    SQLite returns them as strings. Downstream code (Sheets writers, JSON
+    serialization, /ask query layer) assumes strings — normalize here.
+    """
+    if row is None:
+        return row
+    for k, v in row.items():
+        if isinstance(v, datetime.datetime):
+            row[k] = v.isoformat()
+        elif isinstance(v, date):
+            row[k] = v.isoformat()
+    return row
+
+
 # ── Conversation state ────────────────────────────────────────────────────────
 
 def get_state() -> dict:
@@ -1033,7 +1050,7 @@ def _unpack_life_log_entry(row):
     if row is None:
         return None
     row["categories"] = _deserialize_categories(row.get("categories"))
-    return row
+    return _normalize_row_dates(row)
 
 
 def save_life_log_entry(
@@ -1190,7 +1207,7 @@ def _unpack_person(row):
         row["aliases"] = json.loads(raw)
     elif raw is None:
         row["aliases"] = []
-    return row
+    return _normalize_row_dates(row)
 
 
 def save_person(
