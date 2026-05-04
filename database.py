@@ -1353,7 +1353,9 @@ def merge_people(keep_id: int, merge_id: int):
 # ── Activity Log ──────────────────────────────────────────────────────────────
 
 def _serialize_payload(payload: dict):
-    return payload if USE_POSTGRES else json.dumps(payload)
+    # JSONB (Postgres) accepts a JSON string and parses it server-side.
+    # psycopg2 does NOT auto-adapt Python dicts, so always serialize.
+    return json.dumps(payload)
 
 
 def _deserialize_payload(raw):
