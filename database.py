@@ -1077,6 +1077,10 @@ def _unpack_life_log_entry(row):
     if row is None:
         return None
     row["categories"] = _deserialize_categories(row.get("categories"))
+    raw_h = row.get("highlights")
+    row["highlights"] = json.loads(raw_h) if isinstance(raw_h, str) and raw_h else []
+    raw_e = row.get("extras")
+    row["extras"] = json.loads(raw_e) if isinstance(raw_e, str) and raw_e else {}
     return _normalize_row_dates(row)
 
 
@@ -1191,6 +1195,53 @@ def save_proposal(
                 (date_start, date_end, cats, description, location, source, source_id),
             )
             return c.lastrowid
+
+
+def save_story_parent(
+    date_start: str, date_end, story_type: str,
+    summary: str, highlights: list, location,
+    extras: dict = None,
+) -> int:
+    """Insert a parent story row (status='proposed', parent_id NULL).
+
+    Children get attached separately via assign_child_to_story.
+    """
+    p = _p()
+    extras_val = json.dumps(extras) if extras else None
+    highlights_val = json.dumps(highlights or [])
+    with _cursor(write=True) as c:
+        if USE_POSTGRES:
+            c.execute(
+                f"""INSERT INTO life_log_entries
+                    (date_start, date_end, categories, description, location, status,
+                     parent_id, story_type, highlights, extras, ai_proposed_at)
+                    VALUES ({p},{p},{p},{p},{p},'proposed',
+                            NULL,{p},{p},{p}, CURRENT_TIMESTAMP)
+                    RETURNING id""",
+                (date_start, date_end, "[]", summary, location,
+                 story_type, highlights_val, extras_val),
+            )
+            return c.fetchone()["id"]
+        else:
+            c.execute(
+                """INSERT INTO life_log_entries
+                   (date_start, date_end, categories, description, location, status,
+                    parent_id, story_type, highlights, extras, ai_proposed_at)
+                   VALUES (?,?,?,?,?,'proposed', NULL,?,?,?, CURRENT_TIMESTAMP)""",
+                (date_start, date_end, "[]", summary, location,
+                 story_type, highlights_val, extras_val),
+            )
+            return c.lastrowid
+
+
+def assign_child_to_story(child_id: int, parent_id: int):
+    """Set parent_id on an existing entry, making it a child of the given story."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE life_log_entries SET parent_id={p} WHERE id={p}",
+            (parent_id, child_id),
+        )
 
 
 def get_pending_proposals() -> list:
