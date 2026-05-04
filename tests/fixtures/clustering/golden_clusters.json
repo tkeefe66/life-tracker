@@ -1,0 +1,111 @@
+[
+  {
+    "name": "vermont_ski_trip_with_flights",
+    "events": [
+      {"id": 1, "date_start": "2024-03-12", "title": "JFK->BTV flight",
+       "description": "JFK->BTV flight", "location": ""},
+      {"id": 2, "date_start": "2024-03-13", "title": "Skiing Killington",
+       "description": "Skiing Killington", "location": "Killington, VT"},
+      {"id": 3, "date_start": "2024-03-14", "title": "Skiing Killington",
+       "description": "Skiing Killington", "location": "Killington, VT"},
+      {"id": 4, "date_start": "2024-03-17", "title": "BTV->JFK flight",
+       "description": "BTV->JFK flight", "location": ""}
+    ],
+    "expected_clusters": 2,
+    "expected_story_type": "trip",
+    "expected_highlight_ref_subset_of": [1, 2, 3, 4],
+    "_note": "Outbound flight+skiing (Mar 12-14) and return flight (Mar 17) split into 2 clusters because the 3-day gap exceeds max_gap_days=1. V2 flight-bridging logic would merge them into one trip."
+  },
+  {
+    "name": "acme_interview_cycle",
+    "events": [
+      {"id": 10, "date_start": "2023-08-03", "title": "Acme phone screen — Jane",
+       "description": "Acme phone screen — Jane", "location": "Zoom"},
+      {"id": 11, "date_start": "2023-08-12", "title": "Acme onsite",
+       "description": "Acme onsite", "location": "Acme HQ"},
+      {"id": 12, "date_start": "2023-08-22", "title": "Acme final round",
+       "description": "Acme final round", "location": "Zoom"}
+    ],
+    "expected_clusters": 3,
+    "expected_story_type_in": ["interview_cycle", "other"],
+    "expected_highlight_ref_subset_of": [10, 11, 12],
+    "_note": "These events are 9-10 days apart so date-proximity preclustering correctly splits them. Clustering them as ONE interview cycle is a job for V2 keyword-based grouping."
+  },
+  {
+    "name": "papo_conference_three_day",
+    "events": [
+      {"id": 20, "date_start": "2023-09-25", "title": "PaPo Conference Day 1",
+       "description": "PaPo Conference Day 1", "location": "SF"},
+      {"id": 21, "date_start": "2023-09-26", "title": "PaPo Conference Day 2",
+       "description": "PaPo Conference Day 2", "location": "SF"},
+      {"id": 22, "date_start": "2023-09-27", "title": "PaPo Conference Day 3",
+       "description": "PaPo Conference Day 3", "location": "SF"}
+    ],
+    "expected_clusters": 1,
+    "expected_story_type_in": ["conference", "trip", "other"],
+    "expected_highlight_ref_subset_of": [20, 21, 22]
+  },
+  {
+    "name": "thanksgiving_weekend",
+    "events": [
+      {"id": 30, "date_start": "2023-11-22", "title": "Drive to Mom's",
+       "description": "Drive to Mom's", "location": "MA"},
+      {"id": 31, "date_start": "2023-11-23", "title": "Thanksgiving dinner",
+       "description": "Thanksgiving dinner with family", "location": "MA"},
+      {"id": 32, "date_start": "2023-11-24", "title": "Walk with Dad",
+       "description": "Walk with Dad", "location": "MA"}
+    ],
+    "expected_clusters": 1,
+    "expected_story_type_in": ["holiday_weekend", "family_visit", "trip", "other"],
+    "expected_highlight_ref_subset_of": [30, 31, 32]
+  },
+  {
+    "name": "phish_at_msg_singleton",
+    "events": [
+      {"id": 40, "date_start": "2024-04-15", "title": "Phish at MSG",
+       "description": "Phish at MSG", "location": "NYC"}
+    ],
+    "expected_clusters": 1,
+    "expected_story_type_in": ["other", "concert"],
+    "expected_highlight_ref_subset_of": [40]
+  },
+  {
+    "name": "two_unrelated_events_far_apart",
+    "events": [
+      {"id": 50, "date_start": "2024-05-01", "title": "Random meeting",
+       "description": "Random meeting", "location": ""},
+      {"id": 51, "date_start": "2024-08-15", "title": "Another random",
+       "description": "Another random", "location": ""}
+    ],
+    "expected_clusters": 2,
+    "expected_highlight_ref_subset_of": [50, 51]
+  },
+  {
+    "name": "two_day_gap_splits",
+    "events": [
+      {"id": 60, "date_start": "2024-06-10", "title": "Event A",
+       "description": "Event A", "location": ""},
+      {"id": 61, "date_start": "2024-06-11", "title": "Event B",
+       "description": "Event B", "location": ""},
+      {"id": 62, "date_start": "2024-06-13", "title": "Event C",
+       "description": "Event C", "location": ""}
+    ],
+    "expected_clusters": 2,
+    "expected_highlight_ref_subset_of": [60, 61, 62],
+    "_note": "60→61 (gap=1) same cluster; 61→62 (gap=2) splits."
+  },
+  {
+    "name": "all_same_day",
+    "events": [
+      {"id": 70, "date_start": "2024-07-04", "title": "BBQ",
+       "description": "BBQ", "location": "yard"},
+      {"id": 71, "date_start": "2024-07-04", "title": "Fireworks",
+       "description": "Fireworks viewing", "location": "park"},
+      {"id": 72, "date_start": "2024-07-04", "title": "Late dinner",
+       "description": "Late dinner", "location": "home"}
+    ],
+    "expected_clusters": 1,
+    "expected_story_type_in": ["holiday_weekend", "family_visit", "other"],
+    "expected_highlight_ref_subset_of": [70, 71, 72]
+  }
+]
