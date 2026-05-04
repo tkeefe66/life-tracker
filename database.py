@@ -1506,3 +1506,44 @@ def mark_activity_promoted(activity_id: int):
             f"UPDATE activity_log SET promoted_to_life_log={val} WHERE id={p}",
             (activity_id,),
         )
+
+
+def get_pending_stories_with_children() -> list:
+    """Return all pending parent stories, each with `children` list attached.
+
+    A "pending parent" is a row with status='proposed' AND parent_id IS NULL.
+    Children are rows whose parent_id == that row's id, ordered by date_start.
+    """
+    with _cursor() as c:
+        c.execute(
+            "SELECT * FROM life_log_entries "
+            "WHERE status='proposed' AND parent_id IS NULL "
+            "ORDER BY date_start, id"
+        )
+        parents = [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
+        if not parents:
+            return []
+        parent_ids = [p["id"] for p in parents]
+
+        # Fetch all children in one query
+        if USE_POSTGRES:
+            c.execute(
+                "SELECT * FROM life_log_entries WHERE parent_id = ANY(%s) "
+                "ORDER BY date_start, id",
+                (parent_ids,),
+            )
+        else:
+            qs = ",".join("?" for _ in parent_ids)
+            c.execute(
+                f"SELECT * FROM life_log_entries WHERE parent_id IN ({qs}) "
+                f"ORDER BY date_start, id",
+                parent_ids,
+            )
+        children = [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
+
+    by_parent = {p["id"]: [] for p in parents}
+    for ch in children:
+        by_parent[ch["parent_id"]].append(ch)
+    for p in parents:
+        p["children"] = by_parent[p["id"]]
+    return parents

@@ -73,3 +73,34 @@ def test_assign_child_to_story(temp_db_path):
     child = database.get_life_log_entry(child_id)
     assert child["parent_id"] == parent_id
     assert child["status"] == "proposed"
+
+
+def test_get_pending_stories_with_children_sqlite(temp_db_path):
+    _run_pending_stories_check()
+
+
+def test_get_pending_stories_with_children_postgres(postgres_db):
+    _run_pending_stories_check()
+
+
+def _run_pending_stories_check():
+    parent_id = database.save_story_parent(
+        date_start="2024-03-12", date_end="2024-03-17",
+        story_type="trip", summary="Vermont", highlights=[], location="VT",
+    )
+    child_id = database.save_proposal(
+        date_start="2024-03-13", date_end=None,
+        categories=["Skiing"], description="Ski day",
+        location="Killington", source="calendar", source_id="evt-1",
+    )
+    database.assign_child_to_story(child_id, parent_id)
+    singleton_id = database.save_story_parent(
+        date_start="2024-04-01", date_end=None,
+        story_type="other", summary="Random", highlights=[], location=None,
+    )
+    stories = database.get_pending_stories_with_children()
+    by_id = {s["id"]: s for s in stories}
+    assert parent_id in by_id and singleton_id in by_id
+    assert child_id not in by_id
+    assert [c["id"] for c in by_id[parent_id]["children"]] == [child_id]
+    assert by_id[singleton_id]["children"] == []
