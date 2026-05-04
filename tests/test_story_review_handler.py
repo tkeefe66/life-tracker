@@ -224,3 +224,24 @@ async def test_extras_optin_yes_starts_qa_loop(temp_db_path, mock_anthropic):
 
     e = database.get_life_log_entry(sid)
     assert e["extras"].get("travel_mode") == "flight"
+
+
+@pytest.mark.asyncio
+async def test_resume_prompt_when_queue_present(temp_db_path):
+    import database
+    from handlers.story_review import maybe_offer_resume
+
+    sid = database.save_story_parent(
+        date_start="2024-03-12", date_end=None,
+        story_type="trip", summary="X", highlights=[], location=None,
+    )
+    database.set_state(
+        state="idle",  # user closed app; state was idle
+        temp_data={"pending_story_ids": [sid], "current_story_id": None},
+    )
+
+    reply = AsyncMock()
+    handled = await maybe_offer_resume(reply)
+    assert handled is True
+    msg = reply.call_args.args[0]
+    assert "Resume" in msg or "resume" in msg

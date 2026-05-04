@@ -242,3 +242,37 @@ async def handle_story_extras_qa(text: str, reply):
     temp.pop("extras_qa_remaining", None)
     db.confirm_story(sid)
     await _advance_queue(reply)
+
+
+async def maybe_offer_resume(reply) -> bool:
+    """If a story queue is non-empty but state was idled, prompt to resume.
+
+    Returns True if a resume prompt was sent (caller should not process the
+    message further). Returns False to let the caller's normal handler run.
+    """
+    state = db.get_state()
+    if state["state"] != "idle":
+        return False
+    temp = _temp(state)
+    queue = temp.get("pending_story_ids") or []
+    if not queue:
+        return False
+    db.set_state(state="story_resume_prompt", temp_data=temp)
+    await reply(
+        f"📚 You have {len(queue)} story review(s) in progress. "
+        f"Resume? Reply *yes* to continue or *clear* to drop the queue."
+    )
+    return True
+
+
+async def handle_story_resume_prompt(text: str, reply):
+    """Handle the 'yes/clear' reply after a resume prompt."""
+    text_l = (text or "").strip().lower()
+    if text_l in ("yes", "y", "resume"):
+        await present_next_story(reply)
+        return
+    if text_l in ("clear", "no", "n", "cancel"):
+        db.set_state(state="idle", temp_data={})
+        await reply("Queue cleared.")
+        return
+    await reply("Reply *yes* to resume or *clear* to drop the queue.")
