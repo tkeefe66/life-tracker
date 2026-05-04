@@ -107,8 +107,7 @@ async def _advance_queue(reply) -> None:
 
 
 async def handle_story_confirming(text: str, reply):
-    """User reply during story_confirming. Handles yes / edit summary / skip;
-    drop #N is stubbed (Task 15 wires it)."""
+    """User reply during story_confirming: yes / edit summary: <text> / drop #N / skip."""
     text_l = (text or "").strip().lower()
     state = db.get_state()
     temp = _temp(state)
