@@ -269,6 +269,18 @@ def _init_postgres(serial, bool_t):
             ("recurrence_config", "TEXT DEFAULT '{}'"),
         ]:
             c.execute(f"ALTER TABLE habits ADD COLUMN IF NOT EXISTS {col} {defn}")
+        for col, defn in [
+            ("parent_id", "INTEGER REFERENCES life_log_entries(id) ON DELETE SET NULL"),
+            ("story_type", "TEXT"),
+            ("why_mattered", "TEXT"),
+            ("highlights", "TEXT"),  # JSON-encoded list
+            ("extras", "TEXT"),       # JSON-encoded dict
+        ]:
+            c.execute(f"ALTER TABLE life_log_entries ADD COLUMN IF NOT EXISTS {col} {defn}")
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS ix_life_log_entries_parent_id "
+            "ON life_log_entries(parent_id)"
+        )
         # Migrate Archie Meds to monthly_date (1st of every month)
         c.execute(
             "UPDATE habits SET recurrence_type='monthly_date', "
@@ -459,6 +471,21 @@ def _init_sqlite(bool_t):
             _add_col(c, table, "sheet_deleted", "INTEGER DEFAULT 0")
         _add_col(c, "habits", "recurrence_type", "TEXT DEFAULT 'weekly'")
         _add_col(c, "habits", "recurrence_config", "TEXT DEFAULT '{}'")
+        for col, defn in [
+            ("parent_id", "INTEGER REFERENCES life_log_entries(id)"),
+            ("story_type", "TEXT"),
+            ("why_mattered", "TEXT"),
+            ("highlights", "TEXT"),
+            ("extras", "TEXT"),
+        ]:
+            _add_col(c, "life_log_entries", col, defn)
+        try:
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS ix_life_log_entries_parent_id "
+                "ON life_log_entries(parent_id)"
+            )
+        except Exception:
+            pass
         # Migrate Archie Meds to monthly_date (1st of every month)
         c.execute(
             "UPDATE habits SET recurrence_type='monthly_date', "
