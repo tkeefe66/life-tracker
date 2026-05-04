@@ -156,3 +156,61 @@ def test_cluster_into_story_falls_back_to_singletons_on_parse_failure(mock_anthr
     # Fall-through default: story_type="other"
     assert out["story_type"] == "other"
     assert out["event_id_refs"] == [1]
+
+
+def test_run_clustering_pipeline_writes_parents_and_assigns_children(
+    temp_db_path, mock_anthropic
+):
+    import database
+    from services.story_clustering import run_clustering
+
+    # Two events 1 day apart -> same cluster; one event a month later -> separate cluster
+    e1 = database.save_proposal(
+        date_start="2024-03-12", date_end=None,
+        categories=["Vacation"], description="Vermont arrival",
+        location="VT", source="calendar", source_id="evt-1",
+    )
+    e2 = database.save_proposal(
+        date_start="2024-03-13", date_end=None,
+        categories=["Skiing"], description="Skiing Killington",
+        location="VT", source="calendar", source_id="evt-2",
+    )
+    e3 = database.save_proposal(
+        date_start="2024-04-15", date_end=None,
+        categories=["Concert"], description="Phish at MSG",
+        location="NYC", source="calendar", source_id="evt-3",
+    )
+
+    # Configure mock_anthropic to return a different shape for each call
+    responses = [
+        # Cluster 1 (e1 + e2)
+        json.dumps({
+            "story_type": "trip", "summary": "Vermont weekend",
+            "highlights": ["Vermont arrival", "Skied Killington"],
+            "event_id_refs": [e1, e2],
+            "suggested_extras_questions": ["mode of travel?"],
+            "location": "VT",
+        }),
+        # Cluster 2 (e3)
+        json.dumps({
+            "story_type": "other", "summary": "Phish at MSG",
+            "highlights": ["Phish at MSG"], "event_id_refs": [e3],
+            "suggested_extras_questions": [], "location": "NYC",
+        }),
+    ]
+    iter_responses = iter(responses)
+    def _next(*a, **kw):
+        m = MagicMock()
+        m.content = [MagicMock(text=next(iter_responses))]
+        return m
+    mock_anthropic.messages.create.side_effect = _next
+
+    n_stories = run_clustering()
+    assert n_stories == 2
+
+    stories = database.get_pending_stories_with_children()
+    assert len(stories) == 2
+    by_type = {s["story_type"]: s for s in stories}
+    assert "trip" in by_type and "other" in by_type
+    assert {c["id"] for c in by_type["trip"]["children"]} == {e1, e2}
+    assert {c["id"] for c in by_type["other"]["children"]} == {e3}

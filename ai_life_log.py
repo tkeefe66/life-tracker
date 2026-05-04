@@ -370,3 +370,33 @@ CRITICAL rules:
         "location": (events[0].get("location") or "") if events else "",
     }
     return _call_json(prompt, max_tokens=800, default=fallback)
+
+
+def parse_extras_answer(story_type: str, question: str, answer: str) -> dict:
+    """Turn a free-text answer into a small dict that fits the story_type's extras schema.
+
+    The schema varies by type; this is a soft contract — the caller merges the
+    returned dict into the story's existing `extras`. Returns {} on parse failure.
+    """
+    prompt = f"""You are extracting structured data from a one-sentence answer
+in a Telegram chat about a personal Life Log entry.
+
+Story type: {story_type}
+Question we asked: "{question}"
+User's answer: "{answer}"
+
+Return ONLY a JSON object — no markdown fences. Use lowercase_with_underscore keys.
+Examples per story type:
+
+  trip: {{"travel_mode": "flight"}}, {{"who_came": ["Sarah", "Tom"]}}, {{"most_memorable": "..."}}
+  interview_cycle: {{"outcome": "no_offer"}}, {{"role": "PM"}}, {{"company": "Acme"}}, {{"rounds": 4}}
+  conference: {{"event_name": "..."}}, {{"role": "speaker"}}, {{"who_with": [...]}}
+  holiday_weekend: {{"host": "Mom"}}, {{"key_meal": "..."}}, {{"who_with": [...]}}
+  dating_arc: {{"partner": "..."}}, {{"started_or_ended": "start"}}, {{"notes": "..."}}
+  project_milestone: {{"project": "..."}}, {{"milestone": "..."}}, {{"outcome": "..."}}
+  family_visit: {{"host": "..."}}, {{"who_with": [...]}}, {{"occasion": "..."}}
+  other: {{"notes": "..."}}
+
+Pick ONE key/value that best captures the answer. Return {{}} if the answer
+doesn't add structured information."""
+    return _call_json(prompt, max_tokens=200, default={})

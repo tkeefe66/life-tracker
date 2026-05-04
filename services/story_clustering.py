@@ -3,6 +3,9 @@ import datetime
 import logging
 import re
 
+import database
+from ai_life_log import cluster_into_story
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,3 +80,69 @@ def drop_orphan_highlights(candidate: dict, cluster_event_ids: set) -> dict:
     out["highlights"] = [h for h, _ in kept]
     out["event_id_refs"] = [r for _, r in kept]
     return out
+
+
+def run_clustering() -> int:
+    """Run a full clustering pass over all currently-pending un-assigned events.
+
+    For every event with status='proposed' AND parent_id IS NULL, assemble
+    date-proximity clusters, classify each via Claude, persist parents + assign
+    children. Returns the number of parent stories created.
+
+    Re-running is safe: events already attached to a parent (parent_id NOT NULL)
+    are excluded; existing parent rows (story_type IS NOT NULL) are also
+    excluded — no duplicate parents.
+    """
+    with database._cursor() as c:
+        c.execute(
+            "SELECT * FROM life_log_entries "
+            "WHERE status='proposed' AND parent_id IS NULL "
+            "AND story_type IS NULL "  # exclude existing parents
+            "ORDER BY date_start, id"
+        )
+        rows = database._rows(c.fetchall())
+    events = [database._unpack_life_log_entry(r) for r in rows]
+    if not events:
+        return 0
+
+    # Pre-cluster, then AI-classify each
+    clusters = precluster_by_date(events)
+    active = [cat["name"] for cat in database.get_active_categories()]
+    n_parents = 0
+
+    for cluster in clusters:
+        # Hand the AI a normalized view (id, date_start, title, description, location)
+        ai_input = [
+            {"id": e["id"], "date_start": e["date_start"],
+             "title": e.get("description") or "",
+             "description": e.get("description") or "",
+             "location": e.get("location") or ""}
+            for e in cluster
+        ]
+        candidate = cluster_into_story(ai_input, active_categories=active)
+        cluster_ids = {e["id"] for e in cluster}
+        candidate = drop_orphan_highlights(candidate, cluster_ids)
+
+        # Persist parent
+        date_start = min(e["date_start"] for e in cluster)
+        date_end = max(e["date_start"] for e in cluster)
+        if date_end == date_start:
+            date_end = None
+        parent_id = database.save_story_parent(
+            date_start=date_start, date_end=date_end,
+            story_type=candidate.get("story_type") or "other",
+            summary=candidate.get("summary") or "(untitled)",
+            highlights=candidate.get("highlights") or [],
+            location=candidate.get("location") or None,
+            extras={
+                "_suggested_extras_questions":
+                    candidate.get("suggested_extras_questions") or []
+            },
+        )
+        # Attach children
+        for e in cluster:
+            database.assign_child_to_story(e["id"], parent_id)
+        n_parents += 1
+
+    logger.info("run_clustering: created %d parent stories", n_parents)
+    return n_parents
