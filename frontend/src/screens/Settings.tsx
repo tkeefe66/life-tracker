@@ -14,11 +14,20 @@ interface SettingsData {
 }
 
 const LABELS: Record<string, string> = {
-  gym: "Gym sessions / week",
-  social: "Social events / week",
-  delivery: "Delivery orders / week",
-  alcohol: "Alcohol days / week",
+  gym: "Gym sessions",
+  social: "Social events",
+  delivery: "Delivery orders",
+  alcohol: "Alcohol days",
 };
+
+function statusLine(status: string | null, run: string | null): string {
+  if (!status) return "Hasn't run yet";
+  const when = run ? new Date(run) : null;
+  const at = when && !isNaN(when.getTime())
+    ? when.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : "";
+  return status === "ok" ? `OK${at ? ` · ${at}` : ""}` : status;
+}
 
 export default function Settings() {
   const [targets, setTargets] = useState<Record<string, Target> | null>(null);
@@ -63,46 +72,80 @@ export default function Settings() {
 
   return (
     <div>
-      <h2>Settings</h2>
+      <div className="screen-head">
+        <h2>Settings</h2>
+      </div>
+
       {saveError && <p className="error">{saveError}</p>}
       {googleBroken && (
         <div className="banner">
-          ⚠️ Google disconnected — passive tracking is degraded. Re-run{" "}
+          Google is disconnected, so passive tracking is degraded. Re-run{" "}
           <code>python scripts/calendar_auth.py</code> and update the refresh token.
         </div>
       )}
 
-      <div className="card">
-        <h3>Weekly targets</h3>
+      <p className="section-label">Weekly targets</p>
+      <div className="group">
         {Object.keys(LABELS).map((key) => (
-          <label key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0" }}>
-            <span>
-              {LABELS[key]} <span className="muted">({targetLabel(targets[key].direction, targets[key].value)})</span>
+          <label className="row" key={key}>
+            <span className="grow">
+              {LABELS[key]}
+              <span className="hint">
+                {targets[key].direction === "ceiling" ? "At most" : "At least"}{" "}
+                {targetLabel(targets[key].direction, targets[key].value).slice(1)} per week
+              </span>
             </span>
             <input
+              className="field-num"
               type="number" min={0} step={1} value={targets[key].value}
-              style={{ width: 64, padding: 8, fontSize: 16 }}
               onChange={(e) => updateTarget(key, Number(e.target.value))}
             />
           </label>
         ))}
       </div>
 
-      <div className="card">
-        <h3>Telegram weekly push</h3>
+      <p className="section-label">Weekly summary</p>
+      <div className="group">
         {settings.telegram_configured ? (
-          <button className="big-btn" style={{ marginBottom: 0 }} onClick={togglePush}>
-            {settings.telegram_push === "on" ? "On — Mondays (tap to turn off)" : "Off (tap to turn on)"}
-          </button>
+          <label className="row">
+            <span className="grow">
+              Telegram push
+              <span className="hint">One scorecard message, Monday mornings</span>
+            </span>
+            <span className="switch">
+              <input
+                type="checkbox"
+                checked={settings.telegram_push === "on"}
+                onChange={togglePush}
+                aria-label="Telegram weekly push"
+              />
+              <span className="knob" />
+            </span>
+          </label>
         ) : (
-          <p className="muted">Telegram not configured (TELEGRAM_BOT_TOKEN unset).</p>
+          <div className="row">
+            <span className="grow">
+              Telegram push
+              <span className="hint">Not configured — TELEGRAM_BOT_TOKEN is unset</span>
+            </span>
+          </div>
         )}
       </div>
 
-      <div className="card">
-        <h3>Sync status</h3>
-        <p className="muted">Gmail: {settings.gmail_last_status ?? "never run"} ({settings.gmail_last_run ?? "—"})</p>
-        <p className="muted">Calendar: {settings.calendar_last_status ?? "never run"} ({settings.calendar_last_run ?? "—"})</p>
+      <p className="section-label">Sync</p>
+      <div className="group">
+        <div className="row">
+          <span className="grow">
+            Gmail receipts
+            <span className="hint">{statusLine(settings.gmail_last_status, settings.gmail_last_run)}</span>
+          </span>
+        </div>
+        <div className="row">
+          <span className="grow">
+            Calendar events
+            <span className="hint">{statusLine(settings.calendar_last_status, settings.calendar_last_run)}</span>
+          </span>
+        </div>
       </div>
     </div>
   );

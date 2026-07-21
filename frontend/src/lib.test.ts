@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { targetLabel, weekLabel } from "./lib";
+import { dayLabel, targetLabel, weekLabel } from "./lib";
 
 describe("weekLabel", () => {
   it("formats a Monday week start as a Mon–Sun range", () => {
@@ -14,5 +14,11 @@ describe("targetLabel", () => {
   it("renders ceiling and floor", () => {
     expect(targetLabel("ceiling", 1)).toBe("≤1");
     expect(targetLabel("floor", 3)).toBe("≥3");
+  });
+});
+
+describe("dayLabel", () => {
+  it("formats a date with weekday and full month", () => {
+    expect(dayLabel("2026-07-20")).toBe("Monday, July 20");
   });
 });

@@ -24,42 +24,56 @@ export default function Scorecard() {
 
   return (
     <div>
-      <h2>This week</h2>
-      <p className="muted">{weekLabel(card.week_start)}</p>
-      {ORDER.map((key) => {
-        const m = card.metrics[key];
-        return (
-          <div className="card" key={key}>
-            <strong className={m.hit ? "hit" : "miss"}>{m.hit ? "✅" : "❌"} {m.label}</strong>
-            <p>
-              {m.count} <span className="muted">(target {targetLabel(m.direction, m.target)})</span>
-              {history && history.streaks[key] > 0 && (
-                <span className="muted"> · {history.streaks[key]}-week streak</span>
-              )}
-            </p>
-            {history && (
-              <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
-                {history.weeks.map((w) => (
-                  <div
-                    key={w.week_start}
-                    title={`${weekLabel(w.week_start)}: ${w.metrics[key].count}`}
-                    style={{
-                      flex: 1, height: 24, borderRadius: 4,
-                      background: w.metrics[key].hit ? "#16a34a" : "#dc2626",
-                      opacity: 0.35 + 0.65 * (history.weeks.indexOf(w) + 1) / history.weeks.length,
-                    }}
-                  />
-                ))}
+      <div className="screen-head">
+        <h2>This week</h2>
+        <p className="sub">{weekLabel(card.week_start)}</p>
+      </div>
+
+      <div className="ledger">
+        {ORDER.map((key) => {
+          const m = card.metrics[key];
+          const ratio = m.target > 0 ? Math.min(m.count / m.target, 1) : m.count > 0 ? 1 : 0;
+          const over = m.direction === "ceiling" && m.count > m.target;
+          const streak = history?.streaks[key] ?? 0;
+          return (
+            <section className="metric" key={key}>
+              <header>
+                <span className={`mark ${m.hit ? "hit" : "miss"}`} aria-hidden="true" />
+                <span className="m-name">{m.label}</span>
+                <span className="m-count num">
+                  {m.count}<span className="of"> of {targetLabel(m.direction, m.target)}</span>
+                </span>
+              </header>
+              <div className={`meter${over ? " over" : ""}`}>
+                <i style={{ width: `${(over ? 1 : ratio) * 100}%` }} />
               </div>
-            )}
-          </div>
-        );
-      })}
-      {historyFailed ? (
-        <p className="muted">History unavailable.</p>
-      ) : (
-        <p className="muted">History: last 8 completed weeks, oldest → newest. Green = hit, red = miss.</p>
-      )}
+              <p className="m-sub">
+                {m.hit
+                  ? m.direction === "ceiling" ? "Within target" : "Target met"
+                  : m.direction === "ceiling" ? "Over target" : "Not there yet"}
+                {streak > 0 && ` · ${streak}-week streak`}
+              </p>
+              {history && (
+                <div className="hist">
+                  {history.weeks.map((w) => (
+                    <i
+                      key={w.week_start}
+                      className={w.metrics[key].hit ? "hit" : "miss"}
+                      title={`${weekLabel(w.week_start)}: ${w.metrics[key].count}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
+
+      <p className="footnote">
+        {historyFailed
+          ? "History unavailable."
+          : "Small bars are the last 8 completed weeks, oldest first. Filled = hit, outlined = missed."}
+      </p>
     </div>
   );
 }

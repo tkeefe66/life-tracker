@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
+import { dayLabel, targetLabel } from "../lib";
 
 interface TodayData {
   date: string;
@@ -9,15 +10,28 @@ interface TodayData {
   social_events: { title: string; start_at: string; end_at: string }[];
 }
 
-const LEVELS = ["1 — a drink or two", "2 — solid night", "3 — blackout"];
+interface Metric { label: string; count: number; target: number; direction: string; hit: boolean }
+interface Card { metrics: Record<string, Metric> }
+
+const LEVEL_HINTS = ["a drink or two", "a solid night", "a heavy one"];
+const STRIP_ORDER = ["gym", "social", "delivery", "alcohol"];
+const STRIP_LABELS: Record<string, string> = {
+  gym: "Gym", social: "Social", delivery: "Delivery", alcohol: "Alcohol",
+};
+
+function timeLabel(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
 
 export default function Today() {
   const [data, setData] = useState<TodayData | null>(null);
-  const [level, setLevel] = useState(1);
+  const [week, setWeek] = useState<Card | null>(null);
   const [error, setError] = useState("");
 
   const refresh = useCallback(() => {
     apiGet<TodayData>("/today").then(setData).catch((e) => setError(e.message));
+    apiGet<Card>("/scorecard").then(setWeek).catch(() => setWeek(null));
   }, []);
   useEffect(refresh, [refresh]);
 
@@ -34,48 +48,107 @@ export default function Today() {
     }
   };
 
-  const toggleAlcohol = async () => {
+  const logAlcohol = async (level: number) => {
     try {
-      if (data.alcohol_level !== null) await apiSend("DELETE", "/checkins/alcohol");
-      else await apiSend("POST", "/checkins", { type: "alcohol", level });
+      await apiSend("POST", "/checkins", { type: "alcohol", level });
       refresh();
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
+  const undoAlcohol = async () => {
+    try {
+      await apiSend("DELETE", "/checkins/alcohol");
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const detections = data.deliveries.length + data.social_events.length;
+
   return (
     <div>
-      <h2>{data.date}</h2>
-      <button className="big-btn" style={{ background: data.gym ? "#16a34a" : "#e5e7eb", color: data.gym ? "#fff" : "#111" }} onClick={toggleGym}>
-        {data.gym ? "Gym ✓ (tap to undo)" : "I went to the gym"}
-      </button>
+      <div className="screen-head">
+        <h2>Today</h2>
+        <p className="sub">{dayLabel(data.date)}</p>
+      </div>
 
-      <div className="card">
-        {data.alcohol_level === null && (
-          <select value={level} onChange={(e) => setLevel(Number(e.target.value))} style={{ width: "100%", padding: 10, marginBottom: 8 }}>
-            {LEVELS.map((label, i) => (
-              <option key={i} value={i + 1}>{label}</option>
-            ))}
-          </select>
-        )}
-        <button className="big-btn" style={{ marginBottom: 0, background: data.alcohol_level !== null ? "#b45309" : "#e5e7eb", color: data.alcohol_level !== null ? "#fff" : "#111" }} onClick={toggleAlcohol}>
-          {data.alcohol_level !== null ? `Drank — level ${data.alcohol_level} (tap to undo)` : "I drank today"}
+      <div className="stack">
+        <button className={`item${data.gym ? " done" : ""}`} onClick={toggleGym}>
+          <span className="dot">{data.gym ? "✓" : ""}</span>
+          <span className="txt">
+            <span className="t">Gym</span>
+            <span className="s">{data.gym ? "Logged today — tap to undo" : "Tap when you've been"}</span>
+          </span>
         </button>
+
+        {data.alcohol_level === null ? (
+          <div className="item">
+            <span className="dot"></span>
+            <span className="txt">
+              <span className="t">Alcohol</span>
+              <span className="s">Tap a level if you drank · 1 light — 3 heavy</span>
+            </span>
+            <span className="chips">
+              {[1, 2, 3].map((lvl) => (
+                <button key={lvl} aria-label={`Log alcohol, level ${lvl} — ${LEVEL_HINTS[lvl - 1]}`} onClick={() => logAlcohol(lvl)}>
+                  {lvl}
+                </button>
+              ))}
+            </span>
+          </div>
+        ) : (
+          <button className="item done" onClick={undoAlcohol}>
+            <span className="dot num">{data.alcohol_level}</span>
+            <span className="txt">
+              <span className="t">Alcohol</span>
+              <span className="s">Logged {LEVEL_HINTS[data.alcohol_level - 1]} — tap to undo</span>
+            </span>
+          </button>
+        )}
       </div>
 
-      <div className="card">
-        <h3>Detected today</h3>
-        {data.deliveries.length === 0 && data.social_events.length === 0 && (
-          <p className="muted">Nothing yet — that's a good sign.</p>
-        )}
-        {data.deliveries.map((d) => (
-          <p key={d.ordered_at}>🥡 {d.service}: {d.subject}</p>
-        ))}
-        {data.social_events.map((e) => (
-          <p key={e.start_at}>🎉 {e.title}</p>
-        ))}
-      </div>
+      <p className="section-label">Noticed quietly</p>
+      {detections === 0 && <p className="quiet empty">Nothing today.</p>}
+      {data.deliveries.map((d) => (
+        <p className="quiet" key={d.ordered_at}>
+          <span>{d.service} order</span>
+          <span className="when">{timeLabel(d.ordered_at)}</span>
+        </p>
+      ))}
+      {data.social_events.map((e) => (
+        <p className="quiet" key={e.start_at}>
+          <span>{e.title}</span>
+          <span className="when">counted as social</span>
+        </p>
+      ))}
+
+      {week && (
+        <>
+          <p className="section-label">This week</p>
+          <div className="week-strip">
+            {STRIP_ORDER.map((key) => {
+              const m = week.metrics[key];
+              if (!m) return null;
+              const ratio = m.target > 0 ? Math.min(m.count / m.target, 1) : m.count > 0 ? 1 : 0;
+              const over = m.direction === "ceiling" && m.count > m.target;
+              return (
+                <div key={key}>
+                  <span className="wl">
+                    <span>{STRIP_LABELS[key]}</span>
+                    <span className="num">{m.count}/{targetLabel(m.direction, m.target).slice(1)}</span>
+                  </span>
+                  <span className={`meter${over ? " over" : ""}`}>
+                    <i style={{ width: `${(over ? 1 : ratio) * 100}%` }} />
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
