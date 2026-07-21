@@ -8,8 +8,12 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const [error, setError] = useState("");
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (await login(password)) onLogin();
-    else setError("Wrong password");
+    try {
+      if (await login(password)) onLogin();
+      else setError("Wrong password");
+    } catch {
+      setError("Can't reach the server.");
+    }
   };
   return (
     <form className="login" onSubmit={submit}>
@@ -40,13 +44,31 @@ function Settings() {
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
+  const [probeError, setProbeError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("today");
 
-  useEffect(() => {
+  const probe = () => {
+    setProbeError(null);
     apiGet("/targets")
       .then(() => setAuthed(true))
-      .catch((e) => setAuthed(e instanceof UnauthorizedError ? false : true));
+      .catch((e) => {
+        if (e instanceof UnauthorizedError) setAuthed(false);
+        else setProbeError("Can't reach the server.");
+      });
+  };
+
+  useEffect(() => {
+    probe();
   }, []);
+
+  if (probeError) {
+    return (
+      <div className="center">
+        <p className="error">{probeError}</p>
+        <button onClick={probe}>Retry</button>
+      </div>
+    );
+  }
 
   if (authed === null) return <p className="center">Loading…</p>;
   if (!authed) return <LoginScreen onLogin={() => setAuthed(true)} />;
