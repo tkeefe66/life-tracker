@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { apiGet, login, UnauthorizedError } from "./api";
 import Today from "./screens/Today";
 import Scorecard from "./screens/Scorecard";
+import Settings from "./screens/Settings";
 
 type Tab = "today" | "scorecard" | "settings";
 
@@ -31,11 +32,6 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
       {error && <p className="error">{error}</p>}
     </form>
   );
-}
-
-// Placeholder screens — replaced in Tasks 14-16
-function Settings() {
-  return <p>Settings (coming soon)</p>;
 }
 
 export default function App() {
