@@ -1,0 +1,31 @@
+* { box-sizing: border-box; margin: 0; }
+:root { color-scheme: light dark; }
+body {
+  font-family: -apple-system, system-ui, sans-serif;
+  background: light-dark(#f6f6f4, #111);
+  color: light-dark(#1a1a1a, #eee);
+}
+.app { display: flex; flex-direction: column; min-height: 100dvh; }
+main { flex: 1; padding: 16px; max-width: 480px; width: 100%; margin: 0 auto; padding-bottom: 80px; }
+.tabs {
+  position: fixed; bottom: 0; left: 0; right: 0; display: flex;
+  border-top: 1px solid light-dark(#ddd, #333);
+  background: light-dark(#fff, #1a1a1a);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tabs button {
+  flex: 1; padding: 14px 0; border: none; background: none; font-size: 15px;
+  color: light-dark(#888, #999);
+}
+.tabs button.active { color: light-dark(#111, #fff); font-weight: 600; }
+.login { display: flex; flex-direction: column; gap: 12px; max-width: 320px; margin: 30dvh auto 0; padding: 16px; }
+.login input, .login button { padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid light-dark(#ccc, #444); }
+.login button { background: #2563eb; color: white; border: none; }
+.error { color: #dc2626; }
+.center { text-align: center; margin-top: 40dvh; }
+.card { background: light-dark(#fff, #1e1e1e); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+.big-btn { width: 100%; padding: 20px; font-size: 18px; border-radius: 12px; border: none; margin-bottom: 12px; }
+.hit { color: #16a34a; }
+.miss { color: #dc2626; }
+.muted { color: light-dark(#777, #999); font-size: 14px; }
+.banner { background: #fef3c7; color: #92400e; padding: 12px; border-radius: 8px; margin-bottom: 12px; }
