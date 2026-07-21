@@ -8,7 +8,9 @@ Prerequisites:
     1. Go to console.cloud.google.com → your project → APIs & Services → Credentials
     2. Create an OAuth 2.0 Client ID (type: Desktop app)
     3. Download the JSON → save as client_secret.json in the project root
-    4. Enable the Google Calendar API in the project
+    4. Enable the Google Calendar API AND the Gmail API in the project. Re-run this
+       script after the scope change and update GOOGLE_CALENDAR_REFRESH_TOKEN in
+       Railway — the old token lacks the Gmail scope.
 
 After running, copy the printed GOOGLE_CALENDAR_REFRESH_TOKEN value into Railway env vars.
 """
@@ -22,7 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+from services.google_auth import SCOPES  # calendar.readonly + gmail.readonly
+
 CLIENT_SECRET_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "client_secret.json")
 
 
