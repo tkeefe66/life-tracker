@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet, login, UnauthorizedError } from "./api";
+import Today from "./screens/Today";
 
 type Tab = "today" | "scorecard" | "settings";
 
@@ -32,9 +33,6 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
 }
 
 // Placeholder screens — replaced in Tasks 14-16
-function Today() {
-  return <p>Today (coming soon)</p>;
-}
 function Scorecard() {
   return <p>Scorecard (coming soon)</p>;
 }
