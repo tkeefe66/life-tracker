@@ -19,7 +19,6 @@ def _today() -> date:
 
 logger = logging.getLogger(__name__)
 
-MAX_MISSED_DAYS = 30
 USE_POSTGRES = bool(DATABASE_URL)
 
 # ── Connection helpers ────────────────────────────────────────────────────────
@@ -79,6 +78,8 @@ def initialize_db():
         _init_postgres(serial, bool_t)
     else:
         _init_sqlite(bool_t)
+
+    _init_v2_tables()
 
     logger.info("Database initialized (%s)", "PostgreSQL" if USE_POSTGRES else "SQLite")
 
@@ -499,1123 +500,221 @@ def _init_sqlite(bool_t):
         )
 
 
-def _row(r):
-    return dict(r) if r else None
+# ── v2 schema ─────────────────────────────────────────────────────────────────
 
-
-def _rows(rs):
-    return [dict(r) for r in rs]
-
-
-def _normalize_row_dates(row: dict) -> dict:
-    """Convert date/datetime values to ISO strings.
-
-    Postgres returns DATE/TIMESTAMP columns as native date/datetime objects;
-    SQLite returns them as strings. Downstream code (Sheets writers, JSON
-    serialization, /ask query layer) assumes strings — normalize here.
-    """
-    if row is None:
-        return row
-    for k, v in row.items():
-        if isinstance(v, datetime.datetime):
-            row[k] = v.isoformat()
-        elif isinstance(v, date):
-            row[k] = v.isoformat()
-    return row
-
-
-# ── Conversation state ────────────────────────────────────────────────────────
-
-def get_state() -> dict:
-    p = _p()
-    with _cursor() as c:
-        c.execute("SELECT * FROM conversation_state WHERE id = 1")
-        return _row(c.fetchone()) or {}
-
-
-def set_state(state: str, current_date: str = None, pending_dates: list = None,
-              later_item_draft: str = None, temp_data: dict = None):
-    p = _p()
-    pending_json = json.dumps(pending_dates if pending_dates is not None else [])
-    temp_json = json.dumps(temp_data) if temp_data is not None else "{}"
+def _init_v2_tables():
+    serial = _serial()
+    bool_t = _bool_type()
     with _cursor(write=True) as c:
-        c.execute(
-            f"""UPDATE conversation_state
-               SET state={p}, entry_date={p}, pending_dates={p},
-                   later_item_draft={p}, temp_data={p}, updated_at=CURRENT_TIMESTAMP
-               WHERE id=1""",
-            (state, current_date, pending_json, later_item_draft, temp_json),
-        )
-
-
-# ── Accomplishments ───────────────────────────────────────────────────────────
-
-def save_accomplishment(entry_date: str, category: str, content: str):
-    p = _p()
-    with _cursor(write=True) as c:
-        c.execute(
-            f"INSERT INTO accomplishments (date, category, content) VALUES ({p},{p},{p})",
-            (entry_date, category, content),
-        )
-
-
-def has_any_entry_for_date(entry_date: str) -> bool:
-    p = _p()
-    with _cursor() as c:
-        c.execute(f"SELECT COUNT(*) FROM accomplishments WHERE date={p}", (entry_date,))
-        row = c.fetchone()
-        count = row[0] if not USE_POSTGRES else row["count"]
-        return count > 0
-
-
-def get_accomplishments_for_week(week_start: str) -> list:
-    p = _p()
-    start = date.fromisoformat(week_start)
-    end = (start + timedelta(days=6)).isoformat()
-    with _cursor() as c:
-        c.execute(
-            f"SELECT * FROM accomplishments WHERE date>={p} AND date<={p} ORDER BY date, category",
-            (week_start, end),
-        )
-        return _rows(c.fetchall())
-
-
-def get_all_accomplishments() -> list:
-    with _cursor() as c:
-        c.execute("SELECT * FROM accomplishments ORDER BY date, category")
-        return _rows(c.fetchall())
-
-
-def get_missed_dates() -> list:
-    state = get_state()
-    bot_start = date.fromisoformat(state.get("bot_start_date") or _today().isoformat())
-    cutoff = _today() - timedelta(days=MAX_MISSED_DAYS)
-    start = max(bot_start, cutoff)
-    yesterday = _today() - timedelta(days=1)
-    missed = []
-    current = start
-    while current <= yesterday:
-        if not has_any_entry_for_date(current.isoformat()):
-            missed.append(current.isoformat())
-        current += timedelta(days=1)
-    return missed
-
-
-# ── Weekly focus ──────────────────────────────────────────────────────────────
-
-def save_weekly_focus(week_start: str, content: str):
-    p = _p()
-    with _cursor(write=True) as c:
-        c.execute(
-            f"INSERT INTO weekly_focus (week_start, content) VALUES ({p},{p})",
-            (week_start, content),
-        )
-
-
-def get_weekly_focus(week_start: str) -> list:
-    p = _p()
-    with _cursor() as c:
-        c.execute(
-            f"SELECT * FROM weekly_focus WHERE week_start={p} ORDER BY created_at DESC",
-            (week_start,),
-        )
-        return _rows(c.fetchall())
-
-
-def get_all_focus_entries() -> list:
-    with _cursor() as c:
-        c.execute("SELECT * FROM weekly_focus ORDER BY week_start")
-        return _rows(c.fetchall())
-
-
-# ── Sheet sync tracking ───────────────────────────────────────────────────────
-
-def get_all_accomplishments_for_sync() -> list:
-    """All accomplishments not deleted from Sheets, ordered for sync."""
-    with _cursor() as c:
-        if USE_POSTGRES:
-            c.execute("SELECT * FROM accomplishments WHERE sheet_deleted=FALSE ORDER BY date, category")
-        else:
-            c.execute("SELECT * FROM accomplishments WHERE sheet_deleted=0 ORDER BY date, category")
-        return _rows(c.fetchall())
-
-
-def get_all_focus_for_sync() -> list:
-    """All focus entries not deleted from Sheets, ordered for sync."""
-    with _cursor() as c:
-        if USE_POSTGRES:
-            c.execute("SELECT * FROM weekly_focus WHERE sheet_deleted=FALSE ORDER BY week_start, created_at")
-        else:
-            c.execute("SELECT * FROM weekly_focus WHERE sheet_deleted=0 ORDER BY week_start, created_at")
-        return _rows(c.fetchall())
-
-
-def _bulk_update(table: str, column: str, set_true: bool, ids: list):
-    if not ids:
-        return
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            pg_val = "TRUE" if set_true else "FALSE"
-            c.execute(f"UPDATE {table} SET {column}={pg_val} WHERE id = ANY(%s)", (ids,))
-        else:
-            sqlite_val = 1 if set_true else 0
-            placeholders = ",".join(["?"] * len(ids))
-            c.execute(
-                f"UPDATE {table} SET {column}={sqlite_val} WHERE id IN ({placeholders})",
-                list(ids),
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS checkins (
+                id {serial} PRIMARY KEY,
+                date TEXT NOT NULL,
+                type TEXT NOT NULL,
+                level INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(date, type)
             )
+        """)
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS delivery_orders (
+                id {serial} PRIMARY KEY,
+                gmail_message_id TEXT NOT NULL UNIQUE,
+                service TEXT NOT NULL,
+                subject TEXT DEFAULT '',
+                ordered_at TEXT NOT NULL,
+                detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS calendar_events (
+                id {serial} PRIMARY KEY,
+                gcal_event_id TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                start_at TEXT NOT NULL,
+                end_at TEXT NOT NULL,
+                is_social {bool_t},
+                confidence REAL,
+                classified_at TIMESTAMP
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS targets (
+                metric TEXT PRIMARY KEY,
+                direction TEXT NOT NULL,
+                value INTEGER NOT NULL
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
 
 
-def mark_accomplishments_synced(ids: list):
-    _bulk_update("accomplishments", "sheet_synced", True, ids)
+# ── Check-ins ─────────────────────────────────────────────────────────────────
 
-
-def mark_accomplishments_sheet_deleted(ids: list):
-    _bulk_update("accomplishments", "sheet_deleted", True, ids)
-
-
-def mark_focus_synced(ids: list):
-    _bulk_update("weekly_focus", "sheet_synced", True, ids)
-
-
-def mark_focus_sheet_deleted(ids: list):
-    _bulk_update("weekly_focus", "sheet_deleted", True, ids)
-
-
-def update_accomplishment_fields(entry_id: int, category: str, content: str):
+def record_checkin(day, type_, level=None):
     p = _p()
     with _cursor(write=True) as c:
         c.execute(
-            f"UPDATE accomplishments SET category={p}, content={p} WHERE id={p}",
-            (category, content, entry_id),
+            f"""INSERT INTO checkins (date, type, level) VALUES ({p}, {p}, {p})
+                ON CONFLICT(date, type) DO UPDATE SET level = excluded.level""",
+            (day, type_, level),
         )
 
 
-def update_focus_content(entry_id: int, content: str):
+def delete_checkin(day, type_):
     p = _p()
     with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE weekly_focus SET content={p} WHERE id={p}",
-            (content, entry_id),
-        )
+        c.execute(f"DELETE FROM checkins WHERE date = {p} AND type = {p}", (day, type_))
 
 
-# ── Focus summary cache ───────────────────────────────────────────────────────
-
-def get_cached_summary(week_start: str):
+def get_checkins_range(start, end):
     p = _p()
-    with _cursor() as c:
-        c.execute(f"SELECT * FROM focus_summary_cache WHERE week_start={p}", (week_start,))
-        return _row(c.fetchone())
-
-
-def save_cached_summary(week_start: str, summary_text: str, entry_count: int):
-    p = _p()
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"""INSERT INTO focus_summary_cache (week_start, summary_text, entry_count)
-                    VALUES ({p},{p},{p})
-                    ON CONFLICT(week_start) DO UPDATE SET
-                        summary_text=EXCLUDED.summary_text,
-                        entry_count=EXCLUDED.entry_count,
-                        generated_at=CURRENT_TIMESTAMP""",
-                (week_start, summary_text, entry_count),
-            )
-        else:
-            c.execute(
-                """INSERT INTO focus_summary_cache (week_start, summary_text, entry_count)
-                   VALUES (?,?,?)
-                   ON CONFLICT(week_start) DO UPDATE SET
-                       summary_text=excluded.summary_text,
-                       entry_count=excluded.entry_count,
-                       generated_at=CURRENT_TIMESTAMP""",
-                (week_start, summary_text, entry_count),
-            )
-
-
-# ── Later items ───────────────────────────────────────────────────────────────
-
-def save_later_item(content: str, target_date: str, source: str = "manual"):
-    p = _p()
-    with _cursor(write=True) as c:
-        c.execute(
-            f"INSERT INTO later_items (content, target_date, source) VALUES ({p},{p},{p})",
-            (content, target_date, source),
-        )
-
-
-def get_all_later_items() -> list:
-    with _cursor() as c:
-        c.execute("SELECT * FROM later_items ORDER BY created_at")
-        return _rows(c.fetchall())
-
-
-def get_later_item_count() -> int:
-    with _cursor() as c:
-        c.execute("SELECT COUNT(*) FROM later_items")
-        row = c.fetchone()
-        return row[0] if not USE_POSTGRES else row["count"]
-
-
-# ── Later org cache ───────────────────────────────────────────────────────────
-
-def get_cached_later_org():
-    with _cursor() as c:
-        c.execute("SELECT * FROM later_org_cache WHERE id=1")
-        return _row(c.fetchone())
-
-
-def save_cached_later_org(groups_json: str, item_count: int):
-    p = _p()
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"""INSERT INTO later_org_cache (id, groups_json, item_count)
-                    VALUES (1,{p},{p})
-                    ON CONFLICT(id) DO UPDATE SET
-                        groups_json=EXCLUDED.groups_json,
-                        item_count=EXCLUDED.item_count,
-                        generated_at=CURRENT_TIMESTAMP""",
-                (groups_json, item_count),
-            )
-        else:
-            c.execute(
-                """INSERT INTO later_org_cache (id, groups_json, item_count)
-                   VALUES (1,?,?)
-                   ON CONFLICT(id) DO UPDATE SET
-                       groups_json=excluded.groups_json,
-                       item_count=excluded.item_count,
-                       generated_at=CURRENT_TIMESTAMP""",
-                (groups_json, item_count),
-            )
-
-
-# ── Habits ────────────────────────────────────────────────────────────────────
-
-def _unpack_habit(row: dict) -> dict:
-    if row:
-        if isinstance(row.get("days_of_week"), str):
-            row["days_of_week"] = json.loads(row["days_of_week"])
-        if isinstance(row.get("recurrence_config"), str):
-            row["recurrence_config"] = json.loads(row["recurrence_config"] or "{}")
-        elif not row.get("recurrence_config"):
-            row["recurrence_config"] = {}
-        if not row.get("recurrence_type"):
-            row["recurrence_type"] = "weekly"
-    return row
-
-
-def _habit_scheduled_for_date(habit: dict, d: date) -> bool:
-    """Return True if the habit is scheduled to occur on the given date."""
-    rtype = habit.get("recurrence_type") or "weekly"
-    config = habit.get("recurrence_config") or {}
-    if rtype == "weekly":
-        return d.weekday() in (habit.get("days_of_week") or [])
-    elif rtype == "monthly_date":
-        return d.day == config.get("day", 1)
-    elif rtype == "monthly_weekday":
-        if d.weekday() != config.get("weekday", 0):
-            return False
-        return (d.day - 1) // 7 + 1 == config.get("week", 1)
-    return False
-
-
-def save_habit(name: str, description: str, days_of_week: list,
-               recurrence_type: str = "weekly", recurrence_config: dict = None) -> int:
-    p = _p()
-    recurrence_config = recurrence_config or {}
-    with _cursor(write=True) as c:
-        c.execute(
-            f"INSERT INTO habits (name, description, days_of_week, recurrence_type, recurrence_config) "
-            f"VALUES ({p},{p},{p},{p},{p}) RETURNING id",
-            (name, description, json.dumps(days_of_week), recurrence_type, json.dumps(recurrence_config)),
-        ) if USE_POSTGRES else c.execute(
-            "INSERT INTO habits (name, description, days_of_week, recurrence_type, recurrence_config) "
-            "VALUES (?,?,?,?,?)",
-            (name, description, json.dumps(days_of_week), recurrence_type, json.dumps(recurrence_config)),
-        )
-        if USE_POSTGRES:
-            return c.fetchone()["id"]
-        else:
-            return c.lastrowid
-
-
-def get_habit(habit_id: int):
-    p = _p()
-    with _cursor() as c:
-        c.execute(f"SELECT * FROM habits WHERE id={p}", (habit_id,))
-        return _unpack_habit(_row(c.fetchone()))
-
-
-def get_all_active_habits() -> list:
-    with _cursor() as c:
-        c.execute("SELECT * FROM habits WHERE active=TRUE ORDER BY created_at"
-                  if USE_POSTGRES else
-                  "SELECT * FROM habits WHERE active=1 ORDER BY created_at")
-        return [_unpack_habit(r) for r in _rows(c.fetchall())]
-
-
-def get_active_habits_for_weekday(weekday: int) -> list:
-    """Legacy: filter by weekday only. Use get_habits_scheduled_for_date for full recurrence support."""
-    return [h for h in get_all_active_habits() if weekday in (h.get("days_of_week") or [])]
-
-
-def get_habits_scheduled_for_date(date_str: str) -> list:
-    """Return all active habits scheduled for the given date, supporting all recurrence types."""
-    d = date.fromisoformat(date_str)
-    return [h for h in get_all_active_habits() if _habit_scheduled_for_date(h, d)]
-
-
-def get_unlogged_habits_for_date(date_str: str) -> list:
-    d = date.fromisoformat(date_str)
-    scheduled = get_habits_scheduled_for_date(date_str)
-    if not scheduled:
-        return []
-    p = _p()
-    with _cursor() as c:
-        c.execute(f"SELECT habit_id FROM habit_logs WHERE date={p}", (date_str,))
-        logged_ids = {r["habit_id"] for r in _rows(c.fetchall())}
-    return [h for h in scheduled if h["id"] not in logged_ids]
-
-
-def log_habit(habit_id: int, date_str: str, completed: bool, miss_reason: str = None):
-    p = _p()
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"""INSERT INTO habit_logs (habit_id, date, completed, miss_reason)
-                    VALUES ({p},{p},{p},{p})
-                    ON CONFLICT(habit_id, date) DO UPDATE SET
-                        completed=EXCLUDED.completed, miss_reason=EXCLUDED.miss_reason""",
-                (habit_id, date_str, completed, miss_reason),
-            )
-        else:
-            c.execute(
-                """INSERT INTO habit_logs (habit_id, date, completed, miss_reason)
-                   VALUES (?,?,?,?)
-                   ON CONFLICT(habit_id, date) DO UPDATE SET
-                       completed=excluded.completed, miss_reason=excluded.miss_reason""",
-                (habit_id, date_str, 1 if completed else 0, miss_reason),
-            )
-
-
-def get_habit_logs_for_week(week_start: str) -> list:
-    p = _p()
-    start = date.fromisoformat(week_start)
-    end = (start + timedelta(days=6)).isoformat()
     with _cursor() as c:
         c.execute(
-            f"SELECT * FROM habit_logs WHERE date>={p} AND date<={p} ORDER BY date",
-            (week_start, end),
+            f"SELECT date, type, level FROM checkins WHERE date >= {p} AND date <= {p} ORDER BY date",
+            (start, end),
         )
-        return _rows(c.fetchall())
+        return [dict(r) for r in c.fetchall()]
 
 
-def get_all_habit_logs() -> list:
-    with _cursor() as c:
-        c.execute("SELECT * FROM habit_logs ORDER BY date")
-        return _rows(c.fetchall())
+# ── Delivery orders ───────────────────────────────────────────────────────────
 
-
-def deactivate_habit(habit_id: int):
-    p = _p()
-    with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE habits SET active={'FALSE' if USE_POSTGRES else '0'} WHERE id={p}",
-            (habit_id,),
-        )
-
-
-# ── Later items (extended) ────────────────────────────────────────────────────
-
-def save_later_item_full(content: str, target_date: str, source: str = "manual",
-                          event_id: str = None, end_date: str = None) -> int:
-    p = _p()
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"""INSERT INTO later_items (content, target_date, source, event_id, end_date)
-                    VALUES ({p},{p},{p},{p},{p}) RETURNING id""",
-                (content, target_date, source, event_id, end_date),
-            )
-            return c.fetchone()["id"]
-        else:
-            c.execute(
-                "INSERT INTO later_items (content, target_date, source, event_id, end_date) VALUES (?,?,?,?,?)",
-                (content, target_date, source, event_id, end_date),
-            )
-            return c.lastrowid
-
-
-def update_later_item_ai(item_id: int, ai_status: str, ai_notes: str):
-    p = _p()
-    with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE later_items SET ai_status={p}, ai_notes={p} WHERE id={p}",
-            (ai_status, ai_notes, item_id),
-        )
-
-
-def get_later_items_pending_ai() -> list:
-    """Return later items that have no AI assessment yet."""
-    with _cursor() as c:
-        c.execute(
-            "SELECT * FROM later_items WHERE ai_status IS NULL ORDER BY created_at"
-        )
-        return _rows(c.fetchall())
-
-
-def delete_later_items_matching(keywords: list) -> int:
-    """Delete later items whose content matches any of the given keywords (case-insensitive).
-    Returns the number of rows deleted."""
-    if not keywords:
-        return 0
-    p = _p()
-    with _cursor(write=True) as c:
-        deleted = 0
-        for kw in keywords:
-            if USE_POSTGRES:
-                c.execute(
-                    f"DELETE FROM later_items WHERE LOWER(content) LIKE {p}",
-                    (f"%{kw.lower()}%",),
-                )
-            else:
-                c.execute(
-                    "DELETE FROM later_items WHERE LOWER(content) LIKE ?",
-                    (f"%{kw.lower()}%",),
-                )
-            deleted += c.rowcount
-        return deleted
-
-
-# ── Calendar sync log ─────────────────────────────────────────────────────────
-
-def is_event_synced(event_id: str) -> bool:
+def has_delivery_order(gmail_message_id):
     p = _p()
     with _cursor() as c:
-        c.execute(f"SELECT 1 FROM calendar_sync_log WHERE event_id={p}", (event_id,))
+        c.execute(f"SELECT 1 FROM delivery_orders WHERE gmail_message_id = {p}", (gmail_message_id,))
         return c.fetchone() is not None
 
 
-def mark_event_synced(event_id: str):
-    p = _p()
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"INSERT INTO calendar_sync_log (event_id) VALUES ({p}) ON CONFLICT DO NOTHING",
-                (event_id,),
-            )
-        else:
-            c.execute(
-                "INSERT OR IGNORE INTO calendar_sync_log (event_id) VALUES (?)",
-                (event_id,),
-            )
-
-
-# ── Life Log: Categories ──────────────────────────────────────────────────────
-
-def get_active_categories() -> list:
-    """Return all categories currently active, ordered by name."""
-    with _cursor() as c:
-        if USE_POSTGRES:
-            c.execute("SELECT * FROM categories WHERE active=TRUE ORDER BY name")
-        else:
-            c.execute("SELECT * FROM categories WHERE active=1 ORDER BY name")
-        return _rows(c.fetchall())
-
-
-def add_category(name: str):
-    p = _p()
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"INSERT INTO categories (name) VALUES ({p}) ON CONFLICT DO NOTHING",
-                (name,),
-            )
-        else:
-            c.execute(
-                "INSERT OR IGNORE INTO categories (name) VALUES (?)",
-                (name,),
-            )
-
-
-def deactivate_category(name: str):
+def add_delivery_order(gmail_message_id, service, ordered_at, subject):
     p = _p()
     with _cursor(write=True) as c:
         c.execute(
-            f"UPDATE categories SET active={'FALSE' if USE_POSTGRES else '0'} WHERE name={p}",
-            (name,),
+            f"""INSERT INTO delivery_orders (gmail_message_id, service, ordered_at, subject)
+                VALUES ({p}, {p}, {p}, {p}) ON CONFLICT(gmail_message_id) DO NOTHING""",
+            (gmail_message_id, service, ordered_at, subject),
         )
+        return c.rowcount > 0
 
 
-def increment_category_usage(name: str):
-    p = _p()
-    with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE categories SET usage_count = usage_count + 1 WHERE name={p}",
-            (name,),
-        )
-
-
-# ── Life Log: Entries ─────────────────────────────────────────────────────────
-
-def _serialize_categories(categories: list):
-    """Postgres uses array; SQLite stores JSON."""
-    return categories if USE_POSTGRES else json.dumps(categories)
-
-
-def _deserialize_categories(raw) -> list:
-    if raw is None:
-        return []
-    if isinstance(raw, list):
-        return raw
-    return json.loads(raw)
-
-
-def _unpack_life_log_entry(row):
-    if row is None:
-        return None
-    row["categories"] = _deserialize_categories(row.get("categories"))
-    raw_h = row.get("highlights")
-    row["highlights"] = json.loads(raw_h) if isinstance(raw_h, str) and raw_h else []
-    raw_e = row.get("extras")
-    row["extras"] = json.loads(raw_e) if isinstance(raw_e, str) and raw_e else {}
-    return _normalize_row_dates(row)
-
-
-def save_life_log_entry(
-    date_start, date_end, categories, description,
-    location, notes, status, source, source_id,
-) -> int:
-    p = _p()
-    cats = _serialize_categories(categories)
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"""INSERT INTO life_log_entries
-                    (date_start, date_end, categories, description, location, notes,
-                     status, source, source_id, user_confirmed_at)
-                    VALUES ({p},{p},{p},{p},{p},{p},{p},{p},{p}, CURRENT_TIMESTAMP)
-                    RETURNING id""",
-                (date_start, date_end, cats, description, location, notes,
-                 status, source, source_id),
-            )
-            return c.fetchone()["id"]
-        else:
-            c.execute(
-                """INSERT INTO life_log_entries
-                   (date_start, date_end, categories, description, location, notes,
-                    status, source, source_id, user_confirmed_at)
-                   VALUES (?,?,?,?,?,?,?,?,?, CURRENT_TIMESTAMP)""",
-                (date_start, date_end, cats, description, location, notes,
-                 status, source, source_id),
-            )
-            return c.lastrowid
-
-
-def get_life_log_entry(entry_id: int):
-    p = _p()
-    with _cursor() as c:
-        c.execute(f"SELECT * FROM life_log_entries WHERE id={p}", (entry_id,))
-        return _unpack_life_log_entry(_row(c.fetchone()))
-
-
-def get_life_log_entries_in_range(date_from: str, date_to: str) -> list:
+def get_delivery_orders_range(start_day, end_day):
     p = _p()
     with _cursor() as c:
         c.execute(
-            f"SELECT * FROM life_log_entries "
-            f"WHERE date_start>={p} AND date_start<={p} AND status='confirmed' "
-            f"ORDER BY date_start, id",
-            (date_from, date_to),
+            f"""SELECT gmail_message_id, service, subject, ordered_at FROM delivery_orders
+                WHERE substr(ordered_at, 1, 10) >= {p} AND substr(ordered_at, 1, 10) <= {p}
+                ORDER BY ordered_at""",
+            (start_day, end_day),
         )
-        return [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
+        return [dict(r) for r in c.fetchall()]
 
 
-def get_all_life_log_entries() -> list:
-    """All confirmed/upcoming entries across all time, ordered by date."""
-    with _cursor() as c:
-        c.execute(
-            "SELECT * FROM life_log_entries WHERE status IN ('confirmed','upcoming') "
-            "ORDER BY date_start, id"
-        )
-        return [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
+# ── Calendar events ───────────────────────────────────────────────────────────
 
-
-def update_life_log_entry(
-    entry_id: int, categories: list, description: str,
-    location, notes,
-):
-    p = _p()
-    cats = _serialize_categories(categories)
-    with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE life_log_entries SET categories={p}, description={p}, "
-            f"location={p}, notes={p} WHERE id={p}",
-            (cats, description, location, notes, entry_id),
-        )
-
-
-def set_entry_status(entry_id: int, status: str):
+def upsert_calendar_event(gcal_event_id, title, start_at, end_at):
     p = _p()
     with _cursor(write=True) as c:
         c.execute(
-            f"UPDATE life_log_entries SET status={p} WHERE id={p}",
-            (status, entry_id),
+            f"""INSERT INTO calendar_events (gcal_event_id, title, start_at, end_at)
+                VALUES ({p}, {p}, {p}, {p})
+                ON CONFLICT(gcal_event_id) DO UPDATE
+                SET title = excluded.title, start_at = excluded.start_at, end_at = excluded.end_at""",
+            (gcal_event_id, title, start_at, end_at),
         )
 
 
-# ── Life Log: Proposal Queue ──────────────────────────────────────────────────
-
-def save_proposal(
-    date_start: str, date_end, categories: list, description: str,
-    location, source: str, source_id,
-) -> int:
-    """Save a Life Log entry proposal with status='proposed' and ai_proposed_at set."""
-    p = _p()
-    cats = _serialize_categories(categories)
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"""INSERT INTO life_log_entries
-                    (date_start, date_end, categories, description, location, status,
-                     source, source_id, ai_proposed_at)
-                    VALUES ({p},{p},{p},{p},{p}, 'proposed', {p},{p}, CURRENT_TIMESTAMP)
-                    RETURNING id""",
-                (date_start, date_end, cats, description, location, source, source_id),
-            )
-            return c.fetchone()["id"]
-        else:
-            c.execute(
-                """INSERT INTO life_log_entries
-                   (date_start, date_end, categories, description, location, status,
-                    source, source_id, ai_proposed_at)
-                   VALUES (?,?,?,?,?, 'proposed', ?,?, CURRENT_TIMESTAMP)""",
-                (date_start, date_end, cats, description, location, source, source_id),
-            )
-            return c.lastrowid
-
-
-def save_story_parent(
-    date_start: str, date_end, story_type: str,
-    summary: str, highlights: list, location,
-    extras: dict = None,
-) -> int:
-    """Insert a parent story row (status='proposed', parent_id NULL).
-
-    Children get attached separately via assign_child_to_story.
-    """
-    p = _p()
-    extras_val = json.dumps(extras) if extras else None
-    highlights_val = json.dumps(highlights or [])
-    cats = _serialize_categories([])  # Postgres expects [] (psycopg2 → '{}'), SQLite expects '[]'
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"""INSERT INTO life_log_entries
-                    (date_start, date_end, categories, description, location, status,
-                     parent_id, story_type, highlights, extras, ai_proposed_at)
-                    VALUES ({p},{p},{p},{p},{p},'proposed',
-                            NULL,{p},{p},{p}, CURRENT_TIMESTAMP)
-                    RETURNING id""",
-                (date_start, date_end, cats, summary, location,
-                 story_type, highlights_val, extras_val),
-            )
-            return c.fetchone()["id"]
-        else:
-            c.execute(
-                """INSERT INTO life_log_entries
-                   (date_start, date_end, categories, description, location, status,
-                    parent_id, story_type, highlights, extras, ai_proposed_at)
-                   VALUES (?,?,?,?,?,'proposed', NULL,?,?,?, CURRENT_TIMESTAMP)""",
-                (date_start, date_end, cats, summary, location,
-                 story_type, highlights_val, extras_val),
-            )
-            return c.lastrowid
-
-
-def assign_child_to_story(child_id: int, parent_id: int):
-    """Set parent_id on an existing entry, making it a child of the given story."""
-    p = _p()
-    with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE life_log_entries SET parent_id={p} WHERE id={p}",
-            (parent_id, child_id),
-        )
-
-
-def get_pending_proposals() -> list:
-    """Return un-clustered pending proposals.
-
-    Excludes story parents (story_type IS NOT NULL) and story children
-    (parent_id IS NOT NULL) so the legacy per-event flow only sees raw
-    calendar proposals that haven't been promoted into stories yet.
-    """
-    with _cursor() as c:
-        c.execute(
-            "SELECT * FROM life_log_entries "
-            "WHERE status='proposed' AND parent_id IS NULL AND story_type IS NULL "
-            "ORDER BY ai_proposed_at"
-        )
-        return [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
-
-
-def confirm_proposal(entry_id: int):
-    """Set a proposed entry to 'confirmed' and stamp user_confirmed_at."""
-    p = _p()
-    with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE life_log_entries SET status='confirmed', "
-            f"user_confirmed_at=CURRENT_TIMESTAMP WHERE id={p}",
-            (entry_id,),
-        )
-
-
-def dismiss_proposal(entry_id: int):
-    """Set a proposed entry to 'dismissed'."""
-    p = _p()
-    with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE life_log_entries SET status='dismissed' WHERE id={p}",
-            (entry_id,),
-        )
-
-
-# ── Life Log: People ──────────────────────────────────────────────────────────
-
-def _unpack_person(row):
-    if row is None:
-        return None
-    raw = row.get("aliases")
-    if isinstance(raw, str):
-        row["aliases"] = json.loads(raw)
-    elif raw is None:
-        row["aliases"] = []
-    return _normalize_row_dates(row)
-
-
-def save_person(
-    name: str, aliases: list, relationship_type, first_seen, notes,
-) -> int:
-    p = _p()
-    aliases_val = aliases if USE_POSTGRES else json.dumps(aliases)
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"""INSERT INTO people (name, aliases, relationship_type, first_seen,
-                    last_seen, notes, status)
-                    VALUES ({p},{p},{p},{p},{p},{p},'active') RETURNING id""",
-                (name, aliases_val, relationship_type, first_seen, first_seen, notes),
-            )
-            return c.fetchone()["id"]
-        else:
-            c.execute(
-                """INSERT INTO people (name, aliases, relationship_type, first_seen,
-                   last_seen, notes, status)
-                   VALUES (?,?,?,?,?,?,'active')""",
-                (name, aliases_val, relationship_type, first_seen, first_seen, notes),
-            )
-            return c.lastrowid
-
-
-def get_person(person_id: int):
+def event_needs_classification(gcal_event_id):
     p = _p()
     with _cursor() as c:
-        c.execute(f"SELECT * FROM people WHERE id={p}", (person_id,))
-        return _unpack_person(_row(c.fetchone()))
+        c.execute(f"SELECT is_social FROM calendar_events WHERE gcal_event_id = {p}", (gcal_event_id,))
+        row = c.fetchone()
+        return row is not None and row["is_social"] is None
 
 
-def find_person_by_name(name: str):
-    """Match by name OR alias, case-insensitive, trimmed."""
-    name = (name or "").strip()
-    if not name:
-        return None
-    p = _p()
-    with _cursor() as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"SELECT * FROM people WHERE LOWER(name)=LOWER({p})",
-                (name,),
-            )
-            row = c.fetchone()
-            if row:
-                return _unpack_person(_row(row))
-            # case-insensitive alias check
-            c.execute(
-                "SELECT * FROM people WHERE EXISTS "
-                "(SELECT 1 FROM unnest(aliases) a WHERE LOWER(a)=LOWER(%s))",
-                (name,),
-            )
-            return _unpack_person(_row(c.fetchone()))
-        else:
-            c.execute("SELECT * FROM people")
-            for row in _rows(c.fetchall()):
-                p_row = _unpack_person(row)
-                if p_row["name"].lower() == name.lower():
-                    return p_row
-                if any(a.lower() == name.lower() for a in p_row["aliases"]):
-                    return p_row
-            return None
-
-
-def get_all_people() -> list:
-    with _cursor() as c:
-        c.execute("SELECT * FROM people ORDER BY name")
-        return [_unpack_person(r) for r in _rows(c.fetchall())]
-
-
-def link_entry_to_people(entry_id: int, person_ids: list):
+def set_event_classification(gcal_event_id, is_social, confidence):
     p = _p()
     with _cursor(write=True) as c:
-        for pid in person_ids:
-            if USE_POSTGRES:
-                c.execute(
-                    f"INSERT INTO life_log_people (entry_id, person_id) VALUES ({p},{p}) "
-                    f"ON CONFLICT DO NOTHING",
-                    (entry_id, pid),
-                )
-            else:
-                c.execute(
-                    "INSERT OR IGNORE INTO life_log_people (entry_id, person_id) VALUES (?,?)",
-                    (entry_id, pid),
-                )
+        c.execute(
+            f"""UPDATE calendar_events
+                SET is_social = {p}, confidence = {p}, classified_at = CURRENT_TIMESTAMP
+                WHERE gcal_event_id = {p}""",
+            (is_social, confidence, gcal_event_id),
+        )
 
 
-def get_people_for_entry(entry_id: int) -> list:
+def _social_true():
+    return "TRUE" if USE_POSTGRES else "1"
+
+
+def get_social_events_range(start_day, end_day):
     p = _p()
     with _cursor() as c:
         c.execute(
-            f"SELECT p.* FROM people p "
-            f"JOIN life_log_people lp ON lp.person_id = p.id "
-            f"WHERE lp.entry_id = {p} ORDER BY p.name",
-            (entry_id,),
+            f"""SELECT gcal_event_id, title, start_at, end_at FROM calendar_events
+                WHERE is_social = {_social_true()}
+                  AND substr(end_at, 1, 10) >= {p} AND substr(end_at, 1, 10) <= {p}
+                ORDER BY start_at""",
+            (start_day, end_day),
         )
-        return [_unpack_person(r) for r in _rows(c.fetchall())]
+        return [dict(r) for r in c.fetchall()]
 
 
-def get_entries_for_person(person_id: int) -> list:
+def get_events_for_day(day):
     p = _p()
     with _cursor() as c:
         c.execute(
-            f"SELECT e.* FROM life_log_entries e "
-            f"JOIN life_log_people lp ON lp.entry_id = e.id "
-            f"WHERE lp.person_id = {p} ORDER BY e.date_start",
-            (person_id,),
+            f"""SELECT gcal_event_id, title, start_at, end_at FROM calendar_events
+                WHERE is_social = {_social_true()} AND substr(start_at, 1, 10) = {p}
+                ORDER BY start_at""",
+            (day,),
         )
-        return [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
+        return [dict(r) for r in c.fetchall()]
 
 
-def update_person_last_seen(person_id: int, last_seen: str):
+# ── Targets & settings ────────────────────────────────────────────────────────
+
+def seed_default_targets():
+    from metrics import METRICS
     p = _p()
     with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE people SET last_seen={p} WHERE id={p} "
-            f"AND (last_seen IS NULL OR last_seen < {p})",
-            (last_seen, person_id, last_seen),
-        )
+        for key, meta in METRICS.items():
+            c.execute(
+                f"""INSERT INTO targets (metric, direction, value) VALUES ({p}, {p}, {p})
+                    ON CONFLICT(metric) DO NOTHING""",
+                (key, meta["direction"], meta["default_target"]),
+            )
 
 
-def set_person_relationship_status(person_id: int, status: str, end_date=None):
+def get_targets():
+    with _cursor() as c:
+        c.execute("SELECT metric, direction, value FROM targets")
+        return {r["metric"]: {"direction": r["direction"], "value": r["value"]} for r in c.fetchall()}
+
+
+def set_target(metric, value):
     p = _p()
     with _cursor(write=True) as c:
-        if end_date:
-            c.execute(
-                f"UPDATE people SET status={p}, end_date={p} WHERE id={p}",
-                (status, end_date, person_id),
-            )
-        else:
-            c.execute(
-                f"UPDATE people SET status={p} WHERE id={p}",
-                (status, person_id),
-            )
+        c.execute(f"UPDATE targets SET value = {p} WHERE metric = {p}", (value, metric))
 
 
-def merge_people(keep_id: int, merge_id: int):
-    """Move all entry links from merge_id to keep_id, then delete merge_id."""
-    p = _p()
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"UPDATE life_log_people SET person_id={p} WHERE person_id={p} "
-                f"AND entry_id NOT IN (SELECT entry_id FROM life_log_people WHERE person_id={p})",
-                (keep_id, merge_id, keep_id),
-            )
-            c.execute(f"DELETE FROM life_log_people WHERE person_id={p}", (merge_id,))
-            c.execute(f"DELETE FROM people WHERE id={p}", (merge_id,))
-        else:
-            c.execute(
-                "UPDATE OR IGNORE life_log_people SET person_id=? WHERE person_id=?",
-                (keep_id, merge_id),
-            )
-            c.execute("DELETE FROM life_log_people WHERE person_id=?", (merge_id,))
-            c.execute("DELETE FROM people WHERE id=?", (merge_id,))
-
-
-# ── Activity Log ──────────────────────────────────────────────────────────────
-
-def _serialize_payload(payload: dict):
-    # JSONB (Postgres) accepts a JSON string and parses it server-side.
-    # psycopg2 does NOT auto-adapt Python dicts, so always serialize.
-    return json.dumps(payload)
-
-
-def _deserialize_payload(raw):
-    if raw is None:
-        return {}
-    if isinstance(raw, dict):
-        return raw
-    return json.loads(raw)
-
-
-def record_activity(
-    source: str, source_id: str, event_type: str,
-    occurred_at, payload: dict,
-):
-    """Idempotent insert — first write wins per (source, source_id)."""
-    p = _p()
-    payload_val = _serialize_payload(payload)
-    with _cursor(write=True) as c:
-        if USE_POSTGRES:
-            c.execute(
-                f"""INSERT INTO activity_log
-                    (source, source_id, event_type, occurred_at, payload)
-                    VALUES ({p},{p},{p},{p},{p}) ON CONFLICT DO NOTHING""",
-                (source, source_id, event_type, occurred_at, payload_val),
-            )
-        else:
-            c.execute(
-                """INSERT OR IGNORE INTO activity_log
-                   (source, source_id, event_type, occurred_at, payload)
-                   VALUES (?,?,?,?,?)""",
-                (source, source_id, event_type, occurred_at, payload_val),
-            )
-
-
-def get_activity_by_source_id(source: str, source_id: str) -> list:
+def get_setting(key, default=None):
     p = _p()
     with _cursor() as c:
-        c.execute(
-            f"SELECT * FROM activity_log WHERE source={p} AND source_id={p}",
-            (source, source_id),
-        )
-        rows = _rows(c.fetchall())
-        for r in rows:
-            r["payload"] = _deserialize_payload(r.get("payload"))
-        return rows
+        c.execute(f"SELECT value FROM app_settings WHERE key = {p}", (key,))
+        row = c.fetchone()
+        return row["value"] if row else default
 
 
-def mark_activity_promoted(activity_id: int):
-    p = _p()
-    val = "TRUE" if USE_POSTGRES else "1"
-    with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE activity_log SET promoted_to_life_log={val} WHERE id={p}",
-            (activity_id,),
-        )
-
-
-def get_pending_stories_with_children() -> list:
-    """Return all pending parent stories, each with `children` list attached.
-
-    A "pending parent" is a row with status='proposed' AND parent_id IS NULL.
-    Children are rows whose parent_id == that row's id, ordered by date_start.
-    """
-    with _cursor() as c:
-        c.execute(
-            "SELECT * FROM life_log_entries "
-            "WHERE status='proposed' AND parent_id IS NULL "
-            "ORDER BY date_start, id"
-        )
-        parents = [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
-        if not parents:
-            return []
-        parent_ids = [p["id"] for p in parents]
-
-        # Fetch all children in one query
-        if USE_POSTGRES:
-            c.execute(
-                "SELECT * FROM life_log_entries WHERE parent_id = ANY(%s) "
-                "ORDER BY date_start, id",
-                (parent_ids,),
-            )
-        else:
-            qs = ",".join("?" for _ in parent_ids)
-            c.execute(
-                f"SELECT * FROM life_log_entries WHERE parent_id IN ({qs}) "
-                f"ORDER BY date_start, id",
-                parent_ids,
-            )
-        children = [_unpack_life_log_entry(r) for r in _rows(c.fetchall())]
-
-    by_parent = {p["id"]: [] for p in parents}
-    for ch in children:
-        by_parent[ch["parent_id"]].append(ch)
-    for p in parents:
-        p["children"] = by_parent[p["id"]]
-    return parents
-
-
-def confirm_story(parent_id: int):
-    """Flip parent + all children to status='confirmed' atomically."""
+def set_setting(key, value):
     p = _p()
     with _cursor(write=True) as c:
         c.execute(
-            f"UPDATE life_log_entries SET status='confirmed', "
-            f"user_confirmed_at=CURRENT_TIMESTAMP "
-            f"WHERE id={p} OR parent_id={p}",
-            (parent_id, parent_id),
+            f"""INSERT INTO app_settings (key, value) VALUES ({p}, {p})
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            (key, value),
         )
 
-
-def dismiss_story(parent_id: int):
-    """Flip parent + all children to status='dismissed' atomically."""
-    p = _p()
-    with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE life_log_entries SET status='dismissed' "
-            f"WHERE id={p} OR parent_id={p}",
-            (parent_id, parent_id),
-        )
-
-
-def drop_event_from_story(child_id: int):
-    """Return a child event to the unclustered pool by nulling its parent_id."""
-    p = _p()
-    with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE life_log_entries SET parent_id=NULL WHERE id={p}",
-            (child_id,),
-        )
-
-
-def update_story_metadata(
-    parent_id: int,
-    summary: str = None,
-    why_mattered: str = None,
-    highlights: list = None,
-    extras: dict = None,
-):
-    """Update any subset of summary/why_mattered/highlights/extras on a parent story."""
-    p = _p()
-    sets, params = [], []
-    if summary is not None:
-        sets.append(f"description={p}")
-        params.append(summary)
-    if why_mattered is not None:
-        sets.append(f"why_mattered={p}")
-        params.append(why_mattered)
-    if highlights is not None:
-        sets.append(f"highlights={p}")
-        params.append(json.dumps(highlights))
-    if extras is not None:
-        sets.append(f"extras={p}")
-        params.append(json.dumps(extras))
-    if not sets:
-        return
-    params.append(parent_id)
-    with _cursor(write=True) as c:
-        c.execute(
-            f"UPDATE life_log_entries SET {', '.join(sets)} WHERE id={p}",
-            tuple(params),
-        )
