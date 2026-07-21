@@ -5,28 +5,16 @@ load_dotenv()
 
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-TELEGRAM_CHAT_ID = int(os.environ["TELEGRAM_CHAT_ID"])
+# Web app login password (single-user). Required.
+APP_PASSWORD = os.environ["APP_PASSWORD"]
 
-# Webhook URL for Railway production. If blank, bot falls back to polling (local dev).
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
+# Telegram is now an OPTIONAL send-only notification channel.
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "0") or "0")
 
-HABIT_REMINDER_HOUR = int(os.getenv("HABIT_REMINDER_HOUR", "7"))
-HABIT_REMINDER_MINUTE = int(os.getenv("HABIT_REMINDER_MINUTE", "0"))
-
-DAILY_PROMPT_HOUR = int(os.getenv("DAILY_PROMPT_HOUR", "18"))
-DAILY_PROMPT_MINUTE = int(os.getenv("DAILY_PROMPT_MINUTE", "0"))
-WEEKLY_SUMMARY_HOUR = int(os.getenv("WEEKLY_SUMMARY_HOUR", "17"))
 TIMEZONE = os.getenv("TIMEZONE", "America/Denver")
 
-GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "")
-GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json")
-_gsheets_creds_b64 = os.getenv("GSHEETS_CREDS", "")
-GOOGLE_SERVICE_ACCOUNT_JSON = (
-    __import__("base64").b64decode(_gsheets_creds_b64).decode() if _gsheets_creds_b64 else ""
-)
-
-# Google Calendar OAuth2
+# Google OAuth2 (shared by Calendar + Gmail; refresh token must carry both scopes)
 GOOGLE_CALENDAR_CLIENT_ID = os.getenv("GOOGLE_CALENDAR_CLIENT_ID", "")
 GOOGLE_CALENDAR_CLIENT_SECRET = os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET", "")
 GOOGLE_CALENDAR_REFRESH_TOKEN = os.getenv("GOOGLE_CALENDAR_REFRESH_TOKEN", "")
@@ -35,15 +23,11 @@ GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
 # Database: PostgreSQL if DATABASE_URL is set, otherwise SQLite (local dev fallback)
 _raw_db_url = os.getenv("DATABASE_URL", "")
 if _raw_db_url.startswith("postgres://"):
-    # Railway sometimes uses the older postgres:// prefix; psycopg2 requires postgresql://
     _raw_db_url = _raw_db_url.replace("postgres://", "postgresql://", 1)
 DATABASE_URL = _raw_db_url
-
-# SQLite path used only when DATABASE_URL is not set
 DATABASE_PATH = os.getenv("DATABASE_PATH", "weekly_updates.db")
 
-LIFELOG_REALTIME_INTERVAL_MIN = int(os.getenv("LIFELOG_REALTIME_INTERVAL_MIN", "360"))
-LIFELOG_DAYAFTER_HOUR = int(os.getenv("LIFELOG_DAYAFTER_HOUR", "9"))
-LIFELOG_SUNDAY_HOUR = int(os.getenv("LIFELOG_SUNDAY_HOUR", "17"))
-
-LIFE_LOG_IMPORT_SHEET_ID = os.getenv("LIFE_LOG_IMPORT_SHEET_ID", "")
+# Job schedules
+GMAIL_SCAN_INTERVAL_HOURS = int(os.getenv("GMAIL_SCAN_INTERVAL_HOURS", "4"))
+CALENDAR_SCAN_HOUR = int(os.getenv("CALENDAR_SCAN_HOUR", "6"))
+WEEKLY_PUSH_HOUR = int(os.getenv("WEEKLY_PUSH_HOUR", "9"))

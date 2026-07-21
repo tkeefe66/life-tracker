@@ -1,57 +1,34 @@
-"""
-Clear all data from the database and reinitialize the schema.
-Run from the project root: python scripts/cleardb.py
-"""
-import sys
+"""Wipe all DB data. Prompts for CONFIRM. Works on SQLite and Postgres."""
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import DATABASE_URL, DATABASE_PATH
+import database as db
 
 TABLES = [
-    "habit_logs",
-    "habits",
-    "accomplishments",
-    "weekly_focus",
-    "later_items",
-    "focus_summary_cache",
-    "later_org_cache",
-    "calendar_sync_log",
-    "conversation_state",
+    "checkins", "delivery_orders", "calendar_events", "targets", "app_settings",
+    # v1 archive tables
+    "life_log_entries", "life_log_people", "people", "activity_log", "categories",
+    "habits", "habit_logs", "accomplishments", "weekly_focus", "later_items",
+    "focus_summary_cache", "later_org_cache", "conversation_state",
 ]
 
 
-def cleardb():
-    confirm = input("This will DELETE ALL DATA. Type 'yes' to confirm: ").strip()
-    if confirm != "yes":
+def main():
+    answer = input("This deletes ALL data. Type CONFIRM to proceed: ")
+    if answer.strip() != "CONFIRM":
         print("Aborted.")
         return
-
-    if DATABASE_URL:
-        import psycopg2
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        for table in TABLES:
-            cur.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("PostgreSQL tables dropped.")
-    else:
-        import sqlite3
-        if os.path.exists(DATABASE_PATH):
-            conn = sqlite3.connect(DATABASE_PATH)
-            for table in TABLES:
-                conn.execute(f"DROP TABLE IF EXISTS {table}")
-            conn.commit()
-            conn.close()
-        print(f"SQLite tables dropped ({DATABASE_PATH}).")
-
-    import database as db
     db.initialize_db()
-    print("Database reinitialized.")
+    with db._cursor(write=True) as c:
+        for table in TABLES:
+            try:
+                c.execute(f"DELETE FROM {table}")
+            except Exception as e:
+                print(f"  skip {table}: {e}")
+    print("Done.")
 
 
 if __name__ == "__main__":
-    cleardb()
+    main()
