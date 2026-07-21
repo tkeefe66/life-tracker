@@ -12,10 +12,11 @@ export default function Scorecard() {
   const [card, setCard] = useState<Card | null>(null);
   const [history, setHistory] = useState<History | null>(null);
   const [error, setError] = useState("");
+  const [historyFailed, setHistoryFailed] = useState(false);
 
   useEffect(() => {
     apiGet<Card>("/scorecard").then(setCard).catch((e) => setError(e.message));
-    apiGet<History>("/history?weeks=8").then(setHistory).catch((e) => setError(e.message));
+    apiGet<History>("/history?weeks=8").then(setHistory).catch(() => setHistoryFailed(true));
   }, []);
 
   if (error) return <p className="error">{error}</p>;
@@ -54,7 +55,11 @@ export default function Scorecard() {
           </div>
         );
       })}
-      <p className="muted">History: last 8 completed weeks, oldest → newest. Green = hit, red = miss.</p>
+      {historyFailed ? (
+        <p className="muted">History unavailable.</p>
+      ) : (
+        <p className="muted">History: last 8 completed weeks, oldest → newest. Green = hit, red = miss.</p>
+      )}
     </div>
   );
 }
