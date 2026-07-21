@@ -76,7 +76,14 @@ Attendees: {", ".join(attendees) if attendees else "(none listed)"}
 
 Reply with only JSON: {{"is_social": true|false, "confidence": 0.0-1.0}}"""
     result = _call_json(prompt, default={"is_social": False, "confidence": 0.0})
+
+    # Guard confidence coercion: if confidence is non-numeric, default to 0.0
+    try:
+        confidence = float(result.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+
     return {
         "is_social": bool(result.get("is_social", False)),
-        "confidence": float(result.get("confidence", 0.0)),
+        "confidence": confidence,
     }

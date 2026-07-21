@@ -32,3 +32,10 @@ def test_classify_social_event_failure_defaults(mock_anthropic):
     _set_response(mock_anthropic, "garbage")
     out = ai_metrics.classify_social_event("Dentist", "", "", [])
     assert out == {"is_social": False, "confidence": 0.0}
+
+
+def test_classify_social_event_non_numeric_confidence(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"is_social": true, "confidence": "high"}')
+    out = ai_metrics.classify_social_event("Dinner w/ friends", "", "Restaurant", ["Alice", "Bob"])
+    assert out == {"is_social": True, "confidence": 0.0}
