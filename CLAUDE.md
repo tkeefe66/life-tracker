@@ -1,59 +1,55 @@
-# Weekly Updates Bot — Claude Code Guide
+# On Track — Claude Code Guide
 
-A Telegram bot that builds a 30-year personal Life Log — a memoir substrate captured passively from Google Calendar and actively via the `/log` command, with people as first-class entities, habit tracking, and natural-language queries via `/ask`. Syncs to Google Sheets.
+A single-user web app that answers one question weekly: **are you doing the things you
+said you'd do?** Four metrics — delivery orders, gym sessions, social events, alcohol
+days — tracked mostly passively (Gmail receipts, Google Calendar) plus two manual
+check-in buttons. Pull-based: you open the app, nothing pushes proposals at you.
+Telegram survives only as an optional send-only weekly scorecard push.
 
 ---
 
 ## Quick Commands
 
 ```bash
-# Local dev
+# Backend — local dev
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-python main.py                  # polling mode — no WEBHOOK_URL needed
+uvicorn main:app --reload --port 8080
 
-# Lint & type check
-ruff check .                    # linting
-mypy .                          # type checking (if configured)
+# Frontend — local dev (separate terminal; Vite proxies /api to :8080)
+cd frontend && npm install && npm run dev
 
-# DB ops
-python scripts/cleardb.py       # wipe DB (prompts CONFIRM)
-python scripts/calendar_auth.py # re-auth Google Calendar OAuth2
+# Tests
+pytest tests/ -v
+cd frontend && npm test
 
-# One-time Life Log backfill from existing memory spreadsheet
-LIFE_LOG_IMPORT_SHEET_ID=<source_sheet_id> python -m scripts.import_life_log_spreadsheet
+# Frontend build (also runs at deploy time via nixpacks)
+cd frontend && npm run build
 
-# Optional: specify a tab name
-python -m scripts.import_life_log_spreadsheet --tab "Memory Log"
+# Re-auth Google (Calendar + Gmail scopes)
+python scripts/calendar_auth.py
 
-# Calendar history backfill — creates Life Log proposals you can confirm via Telegram
-python -m scripts.import_calendar_history --start-year 2018  # all years from 2018-now
-python -m scripts.import_calendar_history --year 2024        # one year
-python -m scripts.import_calendar_history --start-year 2024 --dry-run  # preview
-
-# Force a sync without Telegram
-python -c "from bot import _sync_to_sheets_with_ai; import asyncio; asyncio.run(_sync_to_sheets_with_ai(None))"
+# DB wipe (prompts CONFIRM)
+python scripts/cleardb.py
 ```
-
-**Never run `python main.py` with `WEBHOOK_URL` set locally** — it will try to register a webhook pointing at your Railway URL and break the production bot.
 
 ---
 
-## Life Log Architecture
+## Metrics
 
-**Goal:** A 30-year memoir substrate — every meaningful moment captured, queryable, and owned.
+Week runs Monday–Sunday. Each metric has a user-set weekly target in the `targets`
+table; a count `hit`s if it's on the right side of `direction`.
 
-**Two streams:**
-- **`life_log_entries`** — curated memoir entries (confirmed by the user, written to Sheets)
-- **`activity_log`** — raw calendar activity (used for proposal generation and insights)
+| Metric | Direction | Signal | Source |
+|---|---|---|---|
+| Delivery orders | Ceiling (≤ N/week) | Gmail receipts | `receipts.py` sender/subject rules, ambiguous cases → `ai_metrics.classify_receipt` |
+| Gym sessions | Floor (≥ N/week) | Manual check-in | One tap on Today screen, one per day |
+| Social events | Floor (≥ N/week) | Google Calendar | `jobs/scan_calendar.py` pulls events, `ai_metrics.classify_social_event` scores social/not; counts once the event has occurred and wasn't declined |
+| Alcohol days | Ceiling (≤ N/week) | Manual check-in + level (1–3) | Level shown as trend only, not scored |
 
-**People as first-class entities:** Every entry can link to named people. Each person has a relationship type (friend, family, partner, colleague, other), status (active / ended / lost_touch), and can have aliases for fuzzy matching.
-
-**Spec:** `docs/superpowers/specs/2026-05-02-life-log-design.md`
-
-**Stories design spec:** `docs/superpowers/specs/2026-05-04-story-driven-proposals-design.md`
-**Implementation plan:** `docs/superpowers/plans/2026-05-04-story-driven-proposals.md`
+`metrics.py` is pure computation (no DB, no I/O): `week_bounds`, `is_hit`,
+`build_scorecard`, `streaks`. `app/scorecard.py` wires DB counts into it.
 
 ---
 
@@ -61,230 +57,108 @@ python -c "from bot import _sync_to_sheets_with_ai; import asyncio; asyncio.run(
 
 ```
 .
-├── main.py                         # Entry point: DB init, health checks, webhook vs polling
-├── bot.py                          # Telegram handlers + state machine + sheet sync orchestration
-├── ai_life_log.py                  # All Life Log Claude API calls
-├── ai_summarize.py                 # Archive: old weekly-summary Claude calls (no longer actively called)
-├── database.py                     # DB layer: PostgreSQL (prod) / SQLite (local)
-├── config.py                       # All env vars — secrets and feature flags
-├── google_sheets.py                # Writes Life Log, People, Habits tabs
-├── handlers/
-│   ├── log_command.py              # /log command + lifelog_confirming state
-│   ├── lifelog_proposals.py        # Per-event proposal reply parser (still wired)
-│   ├── lifelog_queries.py          # /ask command
-│   ├── people.py                   # /people command + merge flow
-│   ├── buildstories.py             # /buildstories — cluster pending into stories
-│   ├── syncstories.py              # /syncstories — apply Stories sheet decisions, start review
-│   ├── story_review.py             # Telegram narrative state machine (multi-state)
-│   ├── pushstories.py              # /pushstories — retry sheet write
-│   ├── showstory.py                # /showstory <id> — debug dump
-│   ├── dismissbirthdays.py         # /dismissbirthdays — bulk dismiss birthday proposals
-│   ├── calendarbackfill.py         # /calendarbackfill — import calendar history
-│   └── (legacy, deregistered)      # syncproposals.py, pushproposals.py, proposals_review.py, showproposal.py
+├── main.py                # Entry point: FastAPI app + in-process APScheduler (lifespan)
+├── config.py               # All env vars — secrets and feature flags
+├── database.py              # DB layer: PostgreSQL (prod) / SQLite (local dev)
+├── metrics.py               # Pure metric math (week bounds, hit/miss, streaks)
+├── receipts.py               # Rule-based delivery-receipt sender/subject matching
+├── ai_metrics.py              # All Claude calls (receipt + calendar-event classification)
+├── app/
+│   ├── api.py               # FastAPI app factory: /api/health, /api/login, static SPA mount
+│   ├── auth.py               # Single-user password → HMAC session cookie
+│   ├── routes.py              # Protected API routes (checkins, scorecard, targets, settings)
+│   └── scorecard.py            # Assembles weekly scorecards from DB counts
 ├── jobs/
-│   ├── lifelog_realtime.py         # Scheduled: every 15 min, high-confidence calendar proposals
-│   ├── lifelog_dayafter.py         # Scheduled: 9am daily, matched-confidence yesterday events
-│   ├── lifelog_sunday.py           # Scheduled: 5pm Sunday, weekly digest of "maybe" candidates
-│   └── monthly_forward.py         # Scheduled: roll unfinished Later items forward (archive)
+│   ├── scan_gmail.py          # Scheduled every GMAIL_SCAN_INTERVAL_HOURS: delivery receipts
+│   ├── scan_calendar.py         # Scheduled daily @ CALENDAR_SCAN_HOUR: social event classification
+│   └── weekly_push.py           # Scheduled Mon @ WEEKLY_PUSH_HOUR: optional Telegram scorecard push
 ├── services/
-│   ├── calendar_service.py         # Google Calendar OAuth2 integration
-│   └── lifelog_query_service.py    # Natural-language query layer (tool-using LLM)
-└── scripts/
-    ├── calendar_auth.py            # One-off: obtain/refresh Calendar credentials
-    ├── cleardb.py                  # One-off: wipe all DB data
-    ├── import_life_log_spreadsheet.py  # One-off: backfill from existing memory spreadsheet
-    └── import_calendar_history.py  # One-off: batch-import calendar history as proposals
+│   ├── google_auth.py           # Shared OAuth2 credentials (Calendar + Gmail scopes)
+│   ├── calendar_service.py        # Google Calendar event fetch
+│   ├── gmail_service.py           # Gmail message fetch
+│   └── telegram_notify.py         # notify(text) — send-only, no inbound handling
+├── frontend/                # React + Vite SPA (Today / Scorecard / Settings), built to dist/
+├── scripts/
+│   ├── calendar_auth.py          # One-off: OAuth2 setup, prints refresh token
+│   └── cleardb.py               # One-off: wipe all DB data
+└── tests/                   # pytest — metrics, receipts, routes, jobs, services
 ```
-
----
-
-## Architecture
-
-| File | Role |
-|------|------|
-| `main.py` | Entry point — initializes DB, runs startup health checks, starts bot in webhook (production) or polling (local dev) mode |
-| `bot.py` | All Telegram command handlers and the central state machine (`handle_message`) |
-| `ai_life_log.py` | All Life Log Claude calls — propose from calendar, parse /log, recommend categories, backfill extraction |
-| `ai_summarize.py` | Archive — old focus summarization and later-item organization calls; retained for reference, no longer actively called |
-| `database.py` | DB layer — supports PostgreSQL (Railway prod) and SQLite (local dev); switches on `DATABASE_URL` |
-| `config.py` | Env var loading — all secrets and feature flags come from here |
-| `google_sheets.py` | Writes Life Log, People, and Habits tabs |
-| `handlers/` | Life Log command and state handlers (log, proposals, queries, people) |
-| `services/lifelog_query_service.py` | Natural-language query layer — tool-using Claude for `/ask` |
-| `jobs/` | Scheduled background jobs: lifelog_realtime, lifelog_dayafter, lifelog_sunday, monthly_forward |
-| `services/calendar_service.py` | Google Calendar OAuth2 integration |
-| `scripts/` | One-off utility scripts |
-
----
-
-## State Machine
-
-The bot uses a single-row `conversation_state` table to track where the user is in a flow. All states live in `bot.py` and `handlers/`.
-
-```
-idle
- ├─► lifelog_confirming        (waiting for /log preview confirm/correct/cancel)
- ├─► lifelog_new_person        (asking relationship type for newly-detected person)
- ├─► story_resume_prompt       (asks "resume queue? yes/clear")
- ├─► story_confirming          (yes / edit summary / drop #N / skip)
- ├─► story_why_mattered        (one-sentence "why mattered" capture)
- ├─► story_extras_optin        (yes → Q&A loop / skip → confirm + advance)
- ├─► story_extras_qa           (one structured question at a time)
- ├─► confirming_habit          ┐
- ├─► collecting_habit_check    ├ habit flows
- └─► collecting_habit_reason   ┘
-```
-
-**Persistence:** `db.set_state(state, ...)` writes to DB; `db.get_state()` reads it.
-**Scratch data:** `temp_data` is a JSON dict stored in the state row for mid-flow data.
-
-**Rule:** Every state transition must explicitly call `db.set_state()`. Never assume state changed because a message was sent.
-
-**Idle text:** Free-form text sent while idle returns a hint pointing to `/log` and `/ask`. Nothing is auto-parsed from idle input.
-
----
-
-## Telegram Commands
-
-| Command | What it does |
-|---------|-------------|
-| `/log [text]` | Add a Life Log entry — AI extracts category, people, location, date |
-| `/ask [question]` | Natural-language query against your Life Log (e.g. "When did I last see Megan?") |
-| `/buildstories` | Cluster pending calendar events into stories (parents + children) and push to the *Stories* tab |
-| `/syncstories` | Apply Decision column from Stories tab; surviving stories enter a Telegram narrative review queue |
-| `/pushstories` | Re-push pending stories to the Sheet (retry after a failed write) |
-| `/showstory [id]` | Inspect a story (and its child events) by ID |
-| `/people` | List people in your Life Log; `/people merge <id> into <id>` to dedupe |
-| `/skip` | Skip the current prompt in any active flow |
-| `/status` | This week's logged data |
-| `/sync` | Push Life Log + People + Habits tabs to Google Sheets |
-| `/summary` | Trigger the weekly summary now |
-| `/habit [description]` | Add a habit via natural language |
-| `/habits` | List active habits |
-| `/habitstop [name]` | Deactivate a habit |
-| `/cleardb` | Delete all data (requires `CONFIRM` reply) |
-| `/start` | Show the command list |
-
-**Calendar passive ingestion:** New events on your Google Calendar are watched continuously by `jobs/lifelog_realtime.py` (every 15 min, high-confidence proposals), `jobs/lifelog_dayafter.py` (9am daily, matched-confidence yesterday's events), and `jobs/lifelog_sunday.py` (5pm Sunday, weekly digest of "maybe" candidates). Each proposal arrives in Telegram with `Reply yes #N to confirm, skip #N to dismiss, edit #N <text> to revise`. Use `yes all` / `skip all` for batches.
-
----
-
-## AI Layer (`ai_life_log.py`)
-
-All Claude calls use **`claude-haiku-4-5-20251001`** via the `_call()` helper. Do not change the model without testing cost impact — this bot can run many calls per day.
-
-| Function | Purpose | Cached? |
-|----------|---------|---------|
-| `propose_from_calendar_event` | Classify a calendar event for Life Log promotion (high/matched/maybe/skip) | ❌ |
-| `parse_log_command` | Parse a /log message into a structured Life Log entry; detects relationship events | ❌ |
-| `recommend_category_changes` | Suggest merges/drops/adds to the category list (periodic) | ❌ |
-| `extract_entry_from_existing_text` | One-time spreadsheet backfill — extract structured data from messy text | ❌ |
-
-Note: `ai_summarize.py` and its functions are retained for archive purposes but no longer actively called.
-
----
-
-## Google Sheets Sync
-
-`_sync_to_sheets_with_ai()` in `bot.py` orchestrates:
-
-1. `sync_life_log_to_sheets` — full rebuild of **Life Log** and **People** tabs
-2. `sync_habits_to_sheets` — full rebuild of **Habits** tab
-
-Old tabs (*Weekly Reviews*, *Later*) are kept for archive but no longer written to.
-
-Tabs: **Life Log** | **People** | **Habits**
 
 ---
 
 ## Environment Variables
+
+Matches `.env.example`.
 
 ### Required
 
 | Var | Description |
 |-----|-------------|
 | `ANTHROPIC_API_KEY` | Claude API key |
-| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | Your personal chat ID (bot is single-user) |
+| `APP_PASSWORD` | Single-user login password; exchanged for a session cookie |
 
 ### Optional
 
 | Var | Description |
 |-----|-------------|
-| `DATABASE_URL` | PostgreSQL URL (Railway sets this automatically); falls back to SQLite |
-| `WEBHOOK_URL` | Railway app URL; presence switches bot from polling → webhook mode |
-| `GOOGLE_SHEETS_ID` | Spreadsheet ID from the Sheets URL |
-| `GSHEETS_CREDS` | Service account JSON, base64-encoded |
-| `GOOGLE_CALENDAR_*` | OAuth2 tokens for Calendar integration |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Send-only weekly scorecard push, toggled in Settings (default off) |
+| `DATABASE_URL` | Postgres URL (Railway sets automatically); blank = local SQLite |
+| `GOOGLE_CALENDAR_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` / `_ID` | OAuth2 for Calendar + Gmail — one refresh token must carry both scopes; generate via `scripts/calendar_auth.py` |
+| `TIMEZONE` | Local timezone for week boundaries and job schedule times (default `America/Denver`) |
+| `GMAIL_SCAN_INTERVAL_HOURS` | Gmail receipt scan interval (default 4) |
+| `CALENDAR_SCAN_HOUR` | Daily calendar scan hour, local time (default 6) |
+| `WEEKLY_PUSH_HOUR` | Monday scorecard push hour, local time (default 9) |
 
 ---
 
 ## Database
 
 `database.py` auto-selects engine:
-- **`DATABASE_URL` set** → PostgreSQL (Railway prod)
-- **No `DATABASE_URL`** → SQLite at `./local.db` (local dev)
+- `DATABASE_URL` set → PostgreSQL (Railway prod)
+- Not set → SQLite at `./weekly_updates.db` (local dev)
 
-Schema lives in `database.py`. If you add a column, add a migration — do not rely on `CREATE TABLE IF NOT EXISTS` to catch schema changes in production.
+**Active v2 tables:** `checkins` (gym/alcohol, unique per date+type), `delivery_orders`
+(unique on `gmail_message_id`), `calendar_events` (unique on `gcal_event_id`), `targets`
+(per-metric direction + value), `app_settings` (key/value, e.g. Telegram push toggle).
 
-**Active tables:**
-- `conversation_state` — single row, tracks current state + `temp_data` JSON
-- `life_log_entries` — curated memoir entries
-- `people` — person entities with relationship type and status
-- `life_log_people` — many-to-many join between entries and people
-- `activity_log` — raw calendar activity (source for proposals)
-- `categories` — Life Log categories (seeded, user-editable)
-- `habits` — habit definitions + active flag
-- `habit_logs` — per-habit daily check-ins
+**Archive tables (v1, no new writes):** `life_log_entries`, `people`, `life_log_people`,
+`activity_log`, `habits`, `habit_logs`, `categories`, `conversation_state`,
+`accomplishments`, `weekly_focus`, `later_items`, and their caches. Kept for data, not
+read or written by any v2 code path.
 
-**Archive tables (no new writes):** `accomplishments`, `weekly_focus`, `later_items`
+If you add a column, add a migration — do not rely on `CREATE TABLE IF NOT EXISTS` to
+catch schema changes in production.
 
 ---
 
 ## Deployment (Railway)
 
-- `Procfile` and `nixpacks.toml` configure the build
-- Set `WEBHOOK_URL` → Railway URL; bot auto-switches to webhook mode
-- Railway's Postgres plugin sets `DATABASE_URL`
-- `GSHEETS_CREDS` = service account JSON, base64-encoded (`base64 -i creds.json | tr -d '\n'`)
+- One Railway service, one deploy. `Procfile` runs `uvicorn main:app --host 0.0.0.0 --port $PORT`.
+- `nixpacks.toml` builds the frontend during the build phase (`cd frontend && npm ci && npm run build`) so `app/api.py` can mount `frontend/dist/` as the SPA at `/`.
+- Railway's Postgres plugin sets `DATABASE_URL`.
 
 **Deploy checklist:**
-- [ ] All required env vars set in Railway dashboard
-- [ ] `WEBHOOK_URL` points to this app's Railway domain
+- [ ] `ANTHROPIC_API_KEY` and `APP_PASSWORD` set in Railway
 - [ ] PostgreSQL plugin attached
-- [ ] `GSHEETS_CREDS` is base64 of valid service account with Sheets editor access
+- [ ] Google OAuth vars set, refresh token carries both Calendar + Gmail scopes
+- [ ] `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` set if using the weekly push
 
 ---
 
 ## Code Conventions
 
-- **One responsibility per file** — Life Log Claude calls go in `ai_life_log.py`; no Claude calls outside AI modules; no DB calls outside `database.py`
-- **All config via `config.py`** — never hardcode secrets or read `os.environ` directly outside `config.py`
-- **Async throughout** — all Telegram handlers are `async def`; all DB calls should be awaited or run in executor if using a sync driver
-- **Fail loudly in dev, gracefully in prod** — use `config.py` feature flags to distinguish; never silently swallow exceptions in prod without logging
-- **State transitions are explicit** — always call `db.set_state()` before sending a Telegram message that depends on the new state
-
----
-
-## Common Failure Modes
-
-| Symptom | Likely Cause | Fix |
-|---------|-------------|-----|
-| Bot responds but doesn't save | State not persisted before handler returns | Check `db.set_state()` call order |
-| Sheets sync silently skips | `GOOGLE_SHEETS_ID` or `GSHEETS_CREDS` missing/malformed | Verify env vars; check base64 decode |
-| Webhook not receiving messages | `WEBHOOK_URL` set incorrectly or Railway URL changed | Re-register webhook via Telegram API |
-| SQLite in prod | `DATABASE_URL` env var missing in Railway | Attach Postgres plugin; redeploy |
-| Proposals not arriving | Calendar OAuth expired or `_CALENDAR_JOBS_AVAILABLE` false | Run `scripts/calendar_auth.py`; check startup logs |
-| `/ask` returns no results | No life_log_entries in DB yet | Confirm some proposals or use `/log` to add entries |
+- **`config.py`** is the only place that reads `os.environ` — never hardcode secrets or read env vars elsewhere
+- **`database.py`** is the only place with SQL — no DB calls from `app/`, `jobs/`, or `services/`
+- **`ai_metrics.py`** is the only place with Claude calls — uses `claude-haiku-4-5-20251001` via `_call_json()`. **Never change `MODEL` without checking cost impact** — jobs run multiple times per day
+- Ingestion jobs (`jobs/scan_gmail.py`, `jobs/scan_calendar.py`) must never crash the web app on failure — log and record status in `app_settings`, don't raise
+- Google auth expiry surfaces as a visible banner in the app, never silent missing data
 
 ---
 
 ## Adding a New Feature — Checklist
 
-1. **New command?** Add handler in `bot.py` or `handlers/`, register in `create_application()`, update `_COMMANDS_TEXT` in `bot.py`, send updated command list to user, and document here
-2. **New AI task?** Add function to `ai_life_log.py` only — keep the `_call()` pattern
-3. **New DB table/column?** Add to `database.py` schema + write a migration; test local SQLite and prod Postgres
-4. **New env var?** Add to `config.py`, document in the table above, add to `.env.example`
-5. **New scheduled job?** Add to `jobs/`, wire into `main.py`, document the schedule
-
-> **Rule — keep `/start` current:** Whenever a command is added, removed, or its description changes, update `_COMMANDS_TEXT` in `bot.py` AND send the updated list to the user via Telegram (call `await _send(bot, _COMMANDS_TEXT)` or ask the user to run `/start`).
+1. **New metric?** Add to `METRICS` in `metrics.py`, a DB source table + query in `database.py`, wire counting into `app/scorecard.py`, add a target row via `db.seed_default_targets()`
+2. **New AI task?** Add to `ai_metrics.py` only — keep the `_call_json()` pattern
+3. **New DB table/column?** Add to `database.py` schema + a migration; test local SQLite and prod Postgres
+4. **New env var?** Add to `config.py`, document above, add to `.env.example`
+5. **New scheduled job?** Add to `jobs/`, wire into the `lifespan()` scheduler in `main.py`
