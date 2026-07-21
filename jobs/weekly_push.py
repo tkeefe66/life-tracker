@@ -1,0 +1,28 @@
+"""Scheduled job: Monday-morning Telegram scorecard for the completed week (opt-in)."""
+import logging
+from datetime import timedelta
+
+import database as db
+import metrics
+from app.scorecard import _local_today, scorecard_for_week
+from services.telegram_notify import notify
+
+logger = logging.getLogger(__name__)
+
+
+def format_scorecard_text(card: dict) -> str:
+    lines = [f"On Track — week of {card['week_start']}"]
+    for m in card["metrics"].values():
+        mark = "✅" if m["hit"] else "❌"
+        sign = "≤" if m["direction"] == "ceiling" else "≥"
+        lines.append(f"{mark} {m['label']}: {m['count']} (target {sign}{m['target']})")
+    return "\n".join(lines)
+
+
+def run():
+    if db.get_setting("telegram_push", "off") != "on":
+        logger.info("Weekly push skipped: toggle off")
+        return
+    last_monday = metrics.week_bounds(_local_today())[0] - timedelta(weeks=1)
+    card = scorecard_for_week(last_monday)
+    notify(format_scorecard_text(card))
