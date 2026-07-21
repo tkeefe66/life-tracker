@@ -1,0 +1,42 @@
+"""FastAPI app factory."""
+import logging
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from app.auth import COOKIE_NAME, session_token, verify_password
+
+logger = logging.getLogger(__name__)
+
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+
+class LoginBody(BaseModel):
+    password: str
+
+
+def create_app(lifespan=None) -> FastAPI:
+    app = FastAPI(title="On Track", lifespan=lifespan)
+
+    @app.get("/api/health")
+    def health():
+        return {"status": "ok"}
+
+    @app.post("/api/login")
+    def login(body: LoginBody, response: Response):
+        if not verify_password(body.password):
+            raise HTTPException(status_code=401, detail="Wrong password")
+        response.set_cookie(
+            COOKIE_NAME, session_token(),
+            httponly=True, samesite="lax", max_age=365 * 24 * 3600,
+        )
+        return {"ok": True}
+
+    from app.routes import router  # imported late so routes can import database freely
+    app.include_router(router, prefix="/api")
+
+    if FRONTEND_DIST.exists():
+        app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="spa")
+    return app
