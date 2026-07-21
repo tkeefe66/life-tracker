@@ -1,6 +1,6 @@
 """Pure metric computation — no DB, no I/O."""
 
-from datetime import date, timedelta
+from datetime import timedelta
 
 METRICS = {
     "delivery": {"label": "Delivery orders", "direction": "ceiling", "default_target": 1},

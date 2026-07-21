@@ -31,6 +31,8 @@ def counts_for_week(week_start: date) -> dict:
     ws, we = metrics.week_bounds(week_start)
     start, end = ws.isoformat(), we.isoformat()
     checkins = db.get_checkins_range(start, end)
+    # Deliberate split: scorecard counts social events by end_at (event has occurred),
+    # while Today displays by start_at (see db.get_events_for_day) — do not "unify" these.
     social = [e for e in db.get_social_events_range(start, end) if _occurred(e["end_at"])]
     return {
         "gym": sum(1 for c in checkins if c["type"] == "gym"),

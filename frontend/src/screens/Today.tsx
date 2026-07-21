@@ -25,15 +25,23 @@ export default function Today() {
   if (!data) return <p className="center">Loading…</p>;
 
   const toggleGym = async () => {
-    if (data.gym) await apiSend("DELETE", "/checkins/gym");
-    else await apiSend("POST", "/checkins", { type: "gym" });
-    refresh();
+    try {
+      if (data.gym) await apiSend("DELETE", "/checkins/gym");
+      else await apiSend("POST", "/checkins", { type: "gym" });
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
 
   const toggleAlcohol = async () => {
-    if (data.alcohol_level !== null) await apiSend("DELETE", "/checkins/alcohol");
-    else await apiSend("POST", "/checkins", { type: "alcohol", level });
-    refresh();
+    try {
+      if (data.alcohol_level !== null) await apiSend("DELETE", "/checkins/alcohol");
+      else await apiSend("POST", "/checkins", { type: "alcohol", level });
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
 
   return (

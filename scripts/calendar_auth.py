@@ -49,7 +49,7 @@ def main():
     print(f"GOOGLE_CALENDAR_CLIENT_ID     = {client_data.get('client_id', '')}")
     print(f"GOOGLE_CALENDAR_CLIENT_SECRET = {client_data.get('client_secret', '')}")
     print(f"GOOGLE_CALENDAR_REFRESH_TOKEN = {creds.refresh_token}")
-    print(f"GOOGLE_CALENDAR_ID            = primary")
+    print("GOOGLE_CALENDAR_ID            = primary")
     print("=" * 60)
 
 

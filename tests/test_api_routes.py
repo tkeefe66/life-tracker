@@ -5,7 +5,8 @@ def _client(temp_db_path):
     import database as db
     from app.api import create_app
     db.seed_default_targets()
-    client = TestClient(create_app())
+    # https base_url so the login cookie's Secure flag round-trips in TestClient
+    client = TestClient(create_app(), base_url="https://testserver")
     client.post("/api/login", json={"password": "test-password"})
     return client
 
@@ -41,6 +42,7 @@ def test_targets_update(temp_db_path):
     assert client.get("/api/targets").json()["gym"]["value"] == 4
     assert client.put("/api/targets", json={"nope": 1}).status_code == 400
     assert client.put("/api/targets", json={"gym": -1}).status_code == 400
+    assert client.put("/api/targets", json={"gym": True}).status_code == 400
 
 
 def test_settings_roundtrip(temp_db_path):

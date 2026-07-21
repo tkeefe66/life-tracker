@@ -28,3 +28,4 @@ def test_push_respects_toggle(temp_db_path, monkeypatch):
     db.set_setting("telegram_push", "on")
     weekly_push.run()
     assert len(sent) == 1 and "On Track" in sent[0]
+    assert db.get_setting("push_last_status") == "ok"

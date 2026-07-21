@@ -3,7 +3,8 @@ from fastapi.testclient import TestClient
 
 def _client(temp_db_path):
     from app.api import create_app
-    return TestClient(create_app())
+    # https base_url so the login cookie's Secure flag round-trips in TestClient
+    return TestClient(create_app(), base_url="https://testserver")
 
 
 def test_health_is_public(temp_db_path):

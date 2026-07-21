@@ -1,5 +1,4 @@
 """FastAPI app factory."""
-import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response
@@ -7,8 +6,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.auth import COOKIE_NAME, session_token, verify_password
-
-logger = logging.getLogger(__name__)
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
@@ -30,7 +27,7 @@ def create_app(lifespan=None) -> FastAPI:
             raise HTTPException(status_code=401, detail="Wrong password")
         response.set_cookie(
             COOKIE_NAME, session_token(),
-            httponly=True, samesite="lax", max_age=365 * 24 * 3600,
+            httponly=True, samesite="lax", secure=True, max_age=365 * 24 * 3600,
         )
         return {"ok": True}
 

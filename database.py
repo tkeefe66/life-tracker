@@ -4,10 +4,9 @@ Set DATABASE_URL to use PostgreSQL. Leave it blank to fall back to SQLite.
 """
 
 import datetime
-import json
 import logging
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date
 
 import pytz
 
@@ -133,7 +132,7 @@ def _init_postgres(serial, bool_t):
                 UNIQUE(habit_id, date)
             )
         """)
-        c.execute(f"""
+        c.execute("""
             CREATE TABLE IF NOT EXISTS focus_summary_cache (
                 week_start TEXT PRIMARY KEY,
                 summary_text TEXT NOT NULL,
@@ -141,7 +140,7 @@ def _init_postgres(serial, bool_t):
                 generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        c.execute(f"""
+        c.execute("""
             CREATE TABLE IF NOT EXISTS later_org_cache (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 groups_json TEXT NOT NULL,
@@ -149,14 +148,14 @@ def _init_postgres(serial, bool_t):
                 generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        c.execute(f"""
+        c.execute("""
             CREATE TABLE IF NOT EXISTS conversation_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 state TEXT NOT NULL DEFAULT 'idle',
                 entry_date TEXT,
                 pending_dates TEXT DEFAULT '[]',
                 later_item_draft TEXT,
-                temp_data TEXT DEFAULT '{{}}',
+                temp_data TEXT DEFAULT '{}',
                 bot_start_date TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -212,7 +211,7 @@ def _init_postgres(serial, bool_t):
             )
         """)
         c.execute("CREATE INDEX IF NOT EXISTS ix_people_name_lower ON people(LOWER(name))")
-        c.execute(f"""
+        c.execute("""
             CREATE TABLE IF NOT EXISTS life_log_people (
                 entry_id INTEGER NOT NULL REFERENCES life_log_entries(id) ON DELETE CASCADE,
                 person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
@@ -298,8 +297,6 @@ def _init_postgres(serial, bool_t):
 
 
 def _init_sqlite(bool_t):
-    import sqlite3
-
     def _add_col(c, table, col, defn):
         try:
             c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {defn}")
@@ -307,7 +304,7 @@ def _init_sqlite(bool_t):
             pass
 
     with _cursor(write=True) as c:
-        c.execute(f"""
+        c.execute("""
             CREATE TABLE IF NOT EXISTS accomplishments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT NOT NULL, category TEXT NOT NULL,
@@ -315,14 +312,14 @@ def _init_sqlite(bool_t):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        c.execute(f"""
+        c.execute("""
             CREATE TABLE IF NOT EXISTS weekly_focus (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 week_start TEXT NOT NULL, content TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        c.execute(f"""
+        c.execute("""
             CREATE TABLE IF NOT EXISTS later_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 content TEXT NOT NULL, target_date TEXT,

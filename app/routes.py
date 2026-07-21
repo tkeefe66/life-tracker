@@ -67,7 +67,7 @@ def put_targets(body: dict):
     for metric, value in body.items():
         if metric not in metrics.METRICS:
             raise HTTPException(status_code=400, detail=f"unknown metric: {metric}")
-        if not isinstance(value, int) or value < 0:
+        if type(value) is not int or value < 0:
             raise HTTPException(status_code=400, detail=f"invalid value for {metric}")
     for metric, value in body.items():
         db.set_target(metric, value)
