@@ -24,6 +24,7 @@ export default function Settings() {
   const [targets, setTargets] = useState<Record<string, Target> | null>(null);
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [error, setError] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     apiGet<Record<string, Target>>("/targets").then(setTargets).catch((e) => setError(e.message));
@@ -39,20 +40,31 @@ export default function Settings() {
     settings.calendar_last_status?.startsWith("error");
 
   const updateTarget = async (metric: string, value: number) => {
-    if (Number.isNaN(value) || value < 0) return;
-    const updated = await apiSend<Record<string, Target>>("PUT", "/targets", { [metric]: value });
-    setTargets(updated);
+    setSaveError("");
+    if (Number.isNaN(value) || value < 0 || !Number.isInteger(value)) return;
+    try {
+      const updated = await apiSend<Record<string, Target>>("PUT", "/targets", { [metric]: value });
+      setTargets(updated);
+    } catch (e) {
+      setSaveError((e as Error).message);
+    }
   };
 
   const togglePush = async () => {
+    setSaveError("");
     const next = settings.telegram_push === "on" ? "off" : "on";
-    await apiSend("PUT", "/settings", { telegram_push: next });
-    setSettings({ ...settings, telegram_push: next });
+    try {
+      await apiSend("PUT", "/settings", { telegram_push: next });
+      setSettings({ ...settings, telegram_push: next });
+    } catch (e) {
+      setSaveError((e as Error).message);
+    }
   };
 
   return (
     <div>
       <h2>Settings</h2>
+      {saveError && <p className="error">{saveError}</p>}
       {googleBroken && (
         <div className="banner">
           ⚠️ Google disconnected — passive tracking is degraded. Re-run{" "}
@@ -68,7 +80,7 @@ export default function Settings() {
               {LABELS[key]} <span className="muted">({targetLabel(targets[key].direction, targets[key].value)})</span>
             </span>
             <input
-              type="number" min={0} value={targets[key].value}
+              type="number" min={0} step={1} value={targets[key].value}
               style={{ width: 64, padding: 8, fontSize: 16 }}
               onChange={(e) => updateTarget(key, Number(e.target.value))}
             />
