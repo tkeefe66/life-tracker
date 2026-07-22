@@ -465,3 +465,14 @@ button.item:active { transform: scale(0.985); }
 .trend rect.hit { fill: var(--accent); }
 .trend rect.miss { fill: var(--over); }
 .trend line.target { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+
+/* ── Weekday heatmap ── */
+.heatmap { display: grid; gap: 6px; }
+.hm-row { display: grid; grid-template-columns: minmax(90px, 1fr) repeat(7, 28px); gap: 6px; align-items: center; }
+.hm-day { font-size: 11px; color: var(--muted); text-align: center; }
+.hm-label { font-size: 13px; color: var(--ink-2); }
+.hm-cell {
+  height: 28px; border-radius: 6px; border: 1px solid var(--line);
+  background: color-mix(in oklch, var(--accent) var(--pct, 0%), var(--surface-2));
+}
+.hm-cell.over { background: color-mix(in oklch, var(--over) var(--pct, 0%), var(--surface-2)); }

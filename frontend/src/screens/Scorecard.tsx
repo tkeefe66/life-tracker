@@ -3,6 +3,7 @@ import { apiGet } from "../api";
 import { addDays, targetLabel } from "../lib";
 import WeekNav from "../components/WeekNav";
 import TrendChart from "../components/TrendChart";
+import WeekdayHeatmap from "../components/WeekdayHeatmap";
 
 interface Metric { label: string; count: number; target: number; direction: string; hit: boolean }
 interface Card { week_start: string; week_end: string; metrics: Record<string, Metric> }
@@ -99,6 +100,24 @@ export default function Scorecard() {
               </div>
             ))}
           </div>
+
+          <p className="section-label">Patterns · by weekday, last 8 weeks</p>
+          <WeekdayHeatmap
+            rows={ORDER.map((key) => ({
+              label: card.metrics[key].label,
+              counts: insights.weekday_counts[key] ?? [0, 0, 0, 0, 0, 0, 0],
+              caution: card.metrics[key].direction === "ceiling",
+            }))}
+          />
+
+          {insights.noticings.length > 0 && (
+            <>
+              <p className="section-label">Noticings</p>
+              {insights.noticings.map((n) => (
+                <p className="quiet" key={n}><span>{n}</span></p>
+              ))}
+            </>
+          )}
         </>
       )}
       {insights && !hasAnyData(insights) && (
