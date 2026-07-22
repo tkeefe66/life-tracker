@@ -1,4 +1,4 @@
-from receipts import classify_candidate
+from receipts import classify_candidate, is_followup
 
 
 def test_uber_eats_order():
@@ -30,3 +30,14 @@ def test_known_sender_odd_subject_is_ambiguous():
     verdict, service = classify_candidate("Uber <noreply@uber.com>", "Update on your recent request")
     assert verdict == "ambiguous"
     assert service == "Uber Eats"
+
+
+def test_is_followup_markers():
+    assert is_followup("Tip Jul 20 Thanks for tipping, Tom Here's your receipt")
+    assert is_followup("Refunded Just a quick update, Tom")
+    assert is_followup("We adjusted the total for your recent order")
+    assert is_followup("Your order from Popeyes has been canceled")
+    assert is_followup("Your order has been cancelled")
+    assert not is_followup("Thanks for ordering, Tom Here's your receipt for Sonic")
+    assert not is_followup("")
+    assert not is_followup(None)

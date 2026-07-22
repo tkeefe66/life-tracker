@@ -20,7 +20,7 @@ def test_scan_stores_orders_and_uses_ai_for_ambiguous(temp_db_path, monkeypatch)
     monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
     ai_calls = []
     monkeypatch.setattr(scan_gmail.ai_metrics, "classify_receipt",
-                        lambda s, subj: ai_calls.append(subj) or True)
+                        lambda s, subj, snip="": ai_calls.append(subj) or True)
 
     scan_gmail.run()
 
@@ -39,7 +39,7 @@ def test_scan_skips_already_seen(temp_db_path, monkeypatch):
     monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
     ai_calls = []
     monkeypatch.setattr(scan_gmail.ai_metrics, "classify_receipt",
-                        lambda s, subj: ai_calls.append(subj) or False)
+                        lambda s, subj, snip="": ai_calls.append(subj) or False)
 
     scan_gmail.run()
     assert len(db.get_delivery_orders_range("2026-07-13", "2026-07-19")) == 1  # no dupes
@@ -89,3 +89,74 @@ def test_scan_writes_last_result(temp_db_path, mock_anthropic, monkeypatch):
     assert result is not None
     assert result.startswith("1 candidates")
     assert "new orders" in result
+
+
+def test_scan_skips_followup_emails(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import scan_gmail
+
+    triplet = [
+        {"gmail_message_id": "o1", "sender": "noreply@uber.com",
+         "subject": "Your Monday evening order with Uber Eats",
+         "ordered_at": "2026-07-15T21:01:00-06:00",
+         "snippet": "Thanks for ordering, Tom Here's your receipt for Oblio's"},
+        {"gmail_message_id": "o2", "sender": "noreply@uber.com",
+         "subject": "Your Monday evening order with Uber Eats",
+         "ordered_at": "2026-07-15T22:01:00-06:00",
+         "snippet": "Tip Thanks for tipping, Tom Here's your receipt for Oblio's"},
+        {"gmail_message_id": "o3", "sender": "noreply@uber.com",
+         "subject": "Your Monday evening order with Uber Eats",
+         "ordered_at": "2026-07-15T22:30:00-06:00",
+         "snippet": "Refunded Just a quick update, Tom We adjusted the total"},
+    ]
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: triplet)
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    ai_calls = []
+    monkeypatch.setattr(scan_gmail.ai_metrics, "classify_receipt",
+                        lambda s, subj, snip="": ai_calls.append(subj) or True)
+
+    scan_gmail.run()
+    stored = db.get_delivery_orders_range("2026-07-14", "2026-07-16")
+    assert [r["gmail_message_id"] for r in stored] == ["o1"]
+    assert ai_calls == []  # follow-ups skipped by rules; o1's subject rule-matches "order"
+
+
+def test_fetch_includes_trash_and_snippet(monkeypatch):
+    from services import gmail_service
+
+    captured = {}
+
+    class FakeReq:
+        def __init__(self, result):
+            self._r = result
+
+        def execute(self):
+            return self._r
+
+    class FakeMessages:
+        def list(self, **kw):
+            captured.update(kw)
+            return FakeReq({"messages": [{"id": "x1"}]})
+
+        def get(self, **kw):
+            return FakeReq({
+                "payload": {"headers": [
+                    {"name": "From", "value": "noreply@uber.com"},
+                    {"name": "Subject", "value": "Your order"},
+                ]},
+                "internalDate": "1753200000000",
+                "snippet": "Thanks for ordering",
+            })
+
+    class FakeUsers:
+        def messages(self):
+            return FakeMessages()
+
+    class FakeService:
+        def users(self):
+            return FakeUsers()
+
+    monkeypatch.setattr(gmail_service, "_get_service", lambda: FakeService())
+    out = gmail_service.fetch_delivery_candidates()
+    assert captured["includeSpamTrash"] is True
+    assert out[0]["snippet"] == "Thanks for ordering"

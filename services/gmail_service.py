@@ -22,11 +22,14 @@ def _get_service():
 
 
 def fetch_delivery_candidates() -> list:
-    """Messages from known delivery senders in the lookback window (GMAIL_SCAN_LOOKBACK_DAYS).
-    Returns dicts: gmail_message_id, sender, subject, ordered_at (local-tz ISO)."""
+    """Messages from known delivery senders in the lookback window (GMAIL_SCAN_LOOKBACK_DAYS),
+    including trash/spam so trashed receipts are still counted.
+    Returns dicts: gmail_message_id, sender, subject, ordered_at (local-tz ISO), snippet."""
     service = _get_service()
     tz = pytz.timezone(TIMEZONE)
-    resp = service.users().messages().list(userId="me", q=_query(), maxResults=100).execute()
+    resp = service.users().messages().list(
+        userId="me", q=_query(), maxResults=100, includeSpamTrash=True
+    ).execute()
     out = []
     for ref in resp.get("messages", []) or []:
         msg = service.users().messages().get(
@@ -40,6 +43,7 @@ def fetch_delivery_candidates() -> list:
             "sender": headers.get("from", ""),
             "subject": headers.get("subject", ""),
             "ordered_at": ordered_at,
+            "snippet": msg.get("snippet", ""),
         })
     logger.info("Gmail: %d delivery-sender candidates", len(out))
     return out

@@ -29,10 +29,14 @@ def run():
         for cand in candidates:
             if db.has_delivery_order(cand["gmail_message_id"]):
                 continue
+            if receipts.is_followup(cand.get("snippet", "")):
+                continue
             verdict, service = receipts.classify_candidate(cand["sender"], cand["subject"])
             if verdict == "ambiguous":
                 ai_checked += 1
-                verdict = "order" if ai_metrics.classify_receipt(cand["sender"], cand["subject"]) else "not_order"
+                verdict = "order" if ai_metrics.classify_receipt(
+                    cand["sender"], cand["subject"], cand.get("snippet", "")
+                ) else "not_order"
             if verdict == "order":
                 if db.add_delivery_order(cand["gmail_message_id"], service, cand["ordered_at"], cand["subject"]):
                     added += 1

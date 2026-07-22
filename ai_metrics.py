@@ -47,16 +47,19 @@ def _call_json(prompt: str, max_tokens: int = 300, default=None):
         return default if default is not None else {}
 
 
-def classify_receipt(sender: str, subject: str) -> bool:
+def classify_receipt(sender: str, subject: str, snippet: str = "") -> bool:
     """True if this email is a receipt/confirmation for a FOOD DELIVERY ORDER
-    (not a ride, promo, refund notice, or account email)."""
+    (not a ride, promo, refund notice, tip receipt, or account email)."""
     prompt = f"""You classify emails. Is this email a receipt or confirmation for a food
 delivery ORDER the user placed (Uber Eats, DoorDash, Grubhub, etc.)?
 
 Promotions, ride receipts, refunds, password resets, and newsletters are NOT orders.
+Tip receipts, refund adjustments, and cancellation notices for an EXISTING order
+are NOT new orders.
 
 From: {sender}
 Subject: {subject}
+Preview: {snippet[:200]}
 
 Reply with only JSON: {{"is_order": true|false}}"""
     result = _call_json(prompt, default={"is_order": False})

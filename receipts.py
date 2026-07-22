@@ -14,6 +14,16 @@ DELIVERY_DOMAINS = {
 _ORDER_RE = re.compile(r"\b(order|receipt|delivered|delivery confirmation)\b", re.IGNORECASE)
 _RIDE_RE = re.compile(r"\b(trip|ride|driver)\b", re.IGNORECASE)
 _PROMO_RE = re.compile(r"(\d+% off|promo|deal|free delivery|save \$|don't miss|invite)", re.IGNORECASE)
+_FOLLOWUP_RE = re.compile(
+    r"(thanks for tipping|refunded|adjusted the total|has been cancell?ed)",
+    re.IGNORECASE,
+)
+
+
+def is_followup(snippet) -> bool:
+    """True for follow-up emails about an existing order (tip receipt,
+    refund adjustment, cancellation notice) — not a new order."""
+    return bool(_FOLLOWUP_RE.search(snippet or ""))
 
 
 def _sender_domain(sender: str) -> str:

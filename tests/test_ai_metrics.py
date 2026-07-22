@@ -20,6 +20,16 @@ def test_classify_receipt_parse_failure_defaults_false(mock_anthropic):
     assert ai_metrics.classify_receipt("x@uber.com", "??") is False
 
 
+def test_classify_receipt_includes_snippet(mock_anthropic):
+    _set_response(mock_anthropic, '{"is_order": true}')
+    import ai_metrics
+    assert ai_metrics.classify_receipt(
+        "noreply@uber.com", "Your order", "Thanks for ordering, preview text"
+    ) is True
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "Thanks for ordering, preview text" in prompt
+
+
 def test_classify_social_event(mock_anthropic):
     import ai_metrics
     _set_response(mock_anthropic, '{"is_social": true, "confidence": 0.92}')
