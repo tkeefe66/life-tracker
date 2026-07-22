@@ -273,17 +273,6 @@ button.item:active { transform: scale(0.985); }
   margin-top: 8px;
 }
 
-.hist { display: flex; gap: 4px; margin-top: 10px; }
-
-.hist i {
-  flex: 1;
-  height: 18px;
-  border-radius: 3px;
-  background: var(--accent-soft);
-}
-.hist i.hit { background: var(--accent); }
-.hist i.miss { background: var(--over-soft); border: 1px solid var(--over); }
-
 .footnote {
   font-size: 0.78rem;
   color: var(--muted);

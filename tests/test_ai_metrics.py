@@ -63,3 +63,9 @@ def test_weekly_reflection_empty_on_garbage(mock_anthropic):
     import ai_metrics
     _set_response(mock_anthropic, "not json")
     assert ai_metrics.weekly_reflection(_card(), []) == ""
+
+
+def test_weekly_reflection_empty_on_non_dict_json(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, "[1, 2, 3]")
+    assert ai_metrics.weekly_reflection(_card(), []) == ""

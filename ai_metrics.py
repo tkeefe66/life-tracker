@@ -38,7 +38,10 @@ def _call_json(prompt: str, max_tokens: int = 300, default=None):
             messages=[{"role": "user", "content": prompt}],
         )
         raw = msg.content[0].text.strip()
-        return json.loads(_strip_fences(raw))
+        parsed = json.loads(_strip_fences(raw))
+        if not isinstance(parsed, dict):
+            raise ValueError(f"expected JSON object, got {type(parsed).__name__}")
+        return parsed
     except Exception as e:
         logger.error("ai_metrics JSON call failed: %s | raw=%r", e, raw)
         return default if default is not None else {}
