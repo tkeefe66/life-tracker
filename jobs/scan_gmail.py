@@ -29,16 +29,32 @@ def run():
         for cand in candidates:
             if db.has_delivery_order(cand["gmail_message_id"]):
                 continue
-            if receipts.is_followup(cand.get("snippet", "")):
+            snippet = cand.get("snippet", "")
+            amount = receipts.extract_amount(snippet)
+            day = cand["ordered_at"][:10]
+            if receipts.is_followup(snippet):
+                _, service = receipts.classify_candidate(cand["sender"], cand["subject"])
+                if not service:
+                    continue
+                existing = db.find_delivery_order(service, day, cand["subject"])
+                if existing:
+                    if amount is not None:
+                        db.set_delivery_amount(existing["id"], amount)
+                elif receipts.is_tip_receipt(snippet):
+                    if db.add_delivery_order(cand["gmail_message_id"], service,
+                                             cand["ordered_at"], cand["subject"], amount):
+                        added += 1
                 continue
             verdict, service = receipts.classify_candidate(cand["sender"], cand["subject"])
             if verdict == "ambiguous":
                 ai_checked += 1
                 verdict = "order" if ai_metrics.classify_receipt(
-                    cand["sender"], cand["subject"], cand.get("snippet", "")
-                ) else "not_order"
+                    cand["sender"], cand["subject"], snippet) else "not_order"
             if verdict == "order":
-                if db.add_delivery_order(cand["gmail_message_id"], service, cand["ordered_at"], cand["subject"]):
+                if db.find_delivery_order(service, day, cand["subject"]):
+                    continue
+                if db.add_delivery_order(cand["gmail_message_id"], service,
+                                         cand["ordered_at"], cand["subject"], amount):
                     added += 1
         db.set_setting("gmail_last_run", _now_iso())
         db.set_setting("gmail_last_status", "ok")

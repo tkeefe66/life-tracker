@@ -1,4 +1,4 @@
-from receipts import classify_candidate, is_followup
+from receipts import classify_candidate, extract_amount, is_followup, is_tip_receipt
 
 
 def test_uber_eats_order():
@@ -41,3 +41,18 @@ def test_is_followup_markers():
     assert not is_followup("Thanks for ordering, Tom Here's your receipt for Sonic")
     assert not is_followup("")
     assert not is_followup(None)
+
+
+def test_is_tip_receipt():
+    assert is_tip_receipt("Tip Jul 20 Thanks for tipping, Tom Here's your receipt")
+    assert not is_tip_receipt("We adjusted the total for your recent order")
+    assert not is_tip_receipt("")
+    assert not is_tip_receipt(None)
+
+
+def test_extract_amount():
+    assert extract_amount("Subtotal $14.00 Total $16.31") == 16.31
+    assert extract_amount("Total $1,024.50") == 1024.5
+    assert extract_amount("Total $20") == 20.0
+    assert extract_amount("No amount here") is None
+    assert extract_amount(None) is None

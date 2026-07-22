@@ -120,11 +120,22 @@ def test_deliveries_list_shape_and_order(temp_db_path):
     d1 = (datetime.date.today() - datetime.timedelta(days=10)).isoformat()
     d2 = (datetime.date.today() - datetime.timedelta(days=3)).isoformat()
     db.add_delivery_order("m1", "DoorDash", f"{d1}T18:00:00", "Your order")
-    db.add_delivery_order("m2", "Uber Eats", f"{d2}T19:30:00", "Your receipt")
+    db.add_delivery_order("m2", "Uber Eats", f"{d2}T19:30:00", "Your receipt", 16.31)
     body = client.get("/api/deliveries").json()
     assert [o["service"] for o in body["orders"]] == ["Uber Eats", "DoorDash"]
-    assert set(body["orders"][0].keys()) == {"service", "subject", "ordered_at"}
+    assert set(body["orders"][0].keys()) == {"service", "subject", "ordered_at", "amount"}
+    assert body["orders"][0]["amount"] == 16.31
+    assert body["orders"][1]["amount"] is None
     # days clamp: 0 -> 1; a 1-day window excludes both seeded orders
     assert client.get("/api/deliveries?days=0").json()["orders"] == []
     # settings gains the result field (None when never written)
     assert "gmail_last_result" in client.get("/api/settings").json()
+
+
+def test_scorecard_delivery_spend_sums_amounts_null_as_zero(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    db.add_delivery_order("m1", "Uber Eats", "2026-07-15T19:30:00-06:00", "order", 16.31)
+    db.add_delivery_order("m2", "DoorDash", "2026-07-16T19:30:00-06:00", "order")  # amount NULL
+    card = client.get("/api/scorecard?week_start=2026-07-13").json()
+    assert card["delivery_spend"] == 16.31

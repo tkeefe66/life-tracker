@@ -556,6 +556,12 @@ def _init_v2_tables():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE delivery_orders ADD COLUMN IF NOT EXISTS amount REAL")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(delivery_orders)").fetchall()]
+            if "amount" not in cols:
+                c.execute("ALTER TABLE delivery_orders ADD COLUMN amount REAL")
 
 
 # ── Check-ins ─────────────────────────────────────────────────────────────────
@@ -595,22 +601,40 @@ def has_delivery_order(gmail_message_id):
         return c.fetchone() is not None
 
 
-def add_delivery_order(gmail_message_id, service, ordered_at, subject):
+def add_delivery_order(gmail_message_id, service, ordered_at, subject, amount=None):
     p = _p()
     with _cursor(write=True) as c:
         c.execute(
-            f"""INSERT INTO delivery_orders (gmail_message_id, service, ordered_at, subject)
-                VALUES ({p}, {p}, {p}, {p}) ON CONFLICT(gmail_message_id) DO NOTHING""",
-            (gmail_message_id, service, ordered_at, subject),
+            f"""INSERT INTO delivery_orders (gmail_message_id, service, ordered_at, subject, amount)
+                VALUES ({p}, {p}, {p}, {p}, {p}) ON CONFLICT(gmail_message_id) DO NOTHING""",
+            (gmail_message_id, service, ordered_at, subject, amount),
         )
         return c.rowcount > 0
+
+
+def find_delivery_order(service, day, subject):
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"""SELECT id, amount FROM delivery_orders
+                WHERE service = {p} AND substr(ordered_at, 1, 10) = {p} AND subject = {p}""",
+            (service, day, subject),
+        )
+        row = c.fetchone()
+        return dict(row) if row else None
+
+
+def set_delivery_amount(order_id, amount):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE delivery_orders SET amount = {p} WHERE id = {p}", (amount, order_id))
 
 
 def get_delivery_orders_range(start_day, end_day):
     p = _p()
     with _cursor() as c:
         c.execute(
-            f"""SELECT gmail_message_id, service, subject, ordered_at FROM delivery_orders
+            f"""SELECT id, gmail_message_id, service, subject, ordered_at, amount FROM delivery_orders
                 WHERE substr(ordered_at, 1, 10) >= {p} AND substr(ordered_at, 1, 10) <= {p}
                 ORDER BY ordered_at""",
             (start_day, end_day),

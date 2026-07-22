@@ -18,12 +18,24 @@ _FOLLOWUP_RE = re.compile(
     r"(thanks for tipping|refunded|adjusted the total|has been cancell?ed)",
     re.IGNORECASE,
 )
+_TIP_RE = re.compile(r"thanks for tipping", re.IGNORECASE)
+_AMOUNT_RE = re.compile(r"Total \$([\d,]+(?:\.\d{2})?)")
 
 
 def is_followup(snippet) -> bool:
     """True for follow-up emails about an existing order (tip receipt,
     refund adjustment, cancellation notice) — not a new order."""
     return bool(_FOLLOWUP_RE.search(snippet or ""))
+
+
+def is_tip_receipt(snippet) -> bool:
+    return bool(_TIP_RE.search(snippet or ""))
+
+
+def extract_amount(snippet):
+    """Order total from a receipt snippet, or None."""
+    m = _AMOUNT_RE.search(snippet or "")
+    return float(m.group(1).replace(",", "")) if m else None
 
 
 def _sender_domain(sender: str) -> str:
