@@ -442,3 +442,18 @@ button.item:active { transform: scale(0.985); }
     transition: none !important;
   }
 }
+
+/* ── Day/week navigation header ── */
+.navhead { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.navhead .nav-label { flex: 1; text-align: center; }
+.navhead .nav-label h2 { margin: 0; }
+.navhead .nav-label .sub { margin: 2px 0 0; }
+.nav-btn {
+  width: 40px; height: 40px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink); font-size: 20px; line-height: 1; cursor: pointer;
+}
+.nav-btn:disabled { opacity: 0.3; cursor: default; }
+.navhead.past .nav-label {
+  background: var(--accent-soft); border-radius: 10px; padding: 4px 8px;
+}

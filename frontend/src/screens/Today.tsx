@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
-import { dayLabel, targetLabel } from "../lib";
+import { addDays, targetLabel } from "../lib";
+import DayNav from "../components/DayNav";
 
 interface TodayData {
   date: string;
@@ -27,12 +28,21 @@ function timeLabel(iso: string): string {
 export default function Today() {
   const [data, setData] = useState<TodayData | null>(null);
   const [week, setWeek] = useState<Card | null>(null);
+  const [selected, setSelected] = useState<string | null>(null); // null = today
+  const [todayIso, setTodayIso] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const refresh = useCallback(() => {
-    apiGet<TodayData>("/today").then(setData).catch((e) => setError(e.message));
-    apiGet<Card>("/scorecard").then(setWeek).catch(() => setWeek(null));
-  }, []);
+    apiGet<TodayData>(`/today${selected ? `?date=${selected}` : ""}`)
+      .then((d) => {
+        setData(d);
+        if (!selected) setTodayIso(d.date);
+      })
+      .catch((e) => setError(e.message));
+    apiGet<Card>(`/scorecard${selected ? `?week_start=${selected}` : ""}`)
+      .then(setWeek)
+      .catch(() => setWeek(null));
+  }, [selected]);
   useEffect(refresh, [refresh]);
 
   if (error) return <p className="error">{error}</p>;
@@ -40,8 +50,8 @@ export default function Today() {
 
   const toggleGym = async () => {
     try {
-      if (data.gym) await apiSend("DELETE", "/checkins/gym");
-      else await apiSend("POST", "/checkins", { type: "gym" });
+      if (data.gym) await apiSend("DELETE", `/checkins/gym?date=${data.date}`);
+      else await apiSend("POST", "/checkins", { type: "gym", date: data.date });
       refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -50,7 +60,7 @@ export default function Today() {
 
   const logAlcohol = async (level: number) => {
     try {
-      await apiSend("POST", "/checkins", { type: "alcohol", level });
+      await apiSend("POST", "/checkins", { type: "alcohol", level, date: data.date });
       refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -59,7 +69,7 @@ export default function Today() {
 
   const undoAlcohol = async () => {
     try {
-      await apiSend("DELETE", "/checkins/alcohol");
+      await apiSend("DELETE", `/checkins/alcohol?date=${data.date}`);
       refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -70,17 +80,22 @@ export default function Today() {
 
   return (
     <div>
-      <div className="screen-head">
-        <h2>Today</h2>
-        <p className="sub">{dayLabel(data.date)}</p>
-      </div>
+      <DayNav
+        date={data.date}
+        todayIso={todayIso ?? data.date}
+        onPrev={() => setSelected(addDays(data.date, -1))}
+        onNext={() => {
+          const next = addDays(data.date, 1);
+          setSelected(next === todayIso ? null : next);
+        }}
+      />
 
       <div className="stack">
         <button className={`item${data.gym ? " done" : ""}`} onClick={toggleGym}>
           <span className="dot">{data.gym ? "✓" : ""}</span>
           <span className="txt">
             <span className="t">Gym</span>
-            <span className="s">{data.gym ? "Logged today — tap to undo" : "Tap when you've been"}</span>
+            <span className="s">{data.gym ? "Logged — tap to undo" : "Tap to log a session"}</span>
           </span>
         </button>
 
@@ -111,7 +126,7 @@ export default function Today() {
       </div>
 
       <p className="section-label">Noticed quietly</p>
-      {detections === 0 && <p className="quiet empty">Nothing today.</p>}
+      {detections === 0 && <p className="quiet empty">Nothing this day.</p>}
       {data.deliveries.map((d) => (
         <p className="quiet" key={d.ordered_at}>
           <span>{d.service} order</span>
