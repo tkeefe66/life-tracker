@@ -43,3 +43,51 @@ def test_streaks_counts_backward_from_latest():
 
 def test_streaks_empty_history():
     assert streaks([]) == {"gym": 0, "delivery": 0, "social": 0, "alcohol": 0}
+
+
+from metrics import (
+    co_occurrence, noticings, trend_direction, weekday_counts, weekday_skew,
+)
+
+
+def test_weekday_counts_monday_first():
+    # 2026-07-20 is a Monday, 2026-07-26 a Sunday
+    assert weekday_counts(["2026-07-20", "2026-07-20", "2026-07-26"]) == [2, 0, 0, 0, 0, 0, 1]
+    assert weekday_counts([]) == [0] * 7
+
+
+def test_trend_direction():
+    assert trend_direction([1, 1]) is None
+    assert trend_direction([0, 0, 0, 2, 2, 2]) == "up"
+    assert trend_direction([3, 3, 3, 1, 1, 1]) == "down"
+    assert trend_direction([2, 2, 2, 2, 2, 2]) == "flat"
+    assert trend_direction([9, 9, 0, 0, 0, 2, 2, 2]) == "up"  # only last 6 count
+
+
+def test_weekday_skew():
+    sundays = ["2026-07-05", "2026-07-12", "2026-07-19"]
+    assert weekday_skew(sundays + ["2026-07-20"]) == (6, 0.75)
+    assert weekday_skew(sundays) is None                     # < 4 events
+    assert weekday_skew(["2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23"]) is None  # no cluster
+
+
+def test_co_occurrence():
+    a = ["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"]
+    b = ["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-05"]
+    assert co_occurrence(a, b) == 0.6  # 3 shared / 5 union
+    assert co_occurrence(a[:3], b) is None
+
+
+def test_noticings_caps_at_three_and_prioritizes():
+    shared = ["2026-07-04", "2026-07-11", "2026-07-18", "2026-07-25"]
+    date_lists = {"alcohol": shared, "delivery": shared, "gym": [], "social": []}
+    series = {"gym": [0, 0, 0, 2, 2, 2], "social": [3, 3, 3, 1, 1, 1],
+              "delivery": [1] * 6, "alcohol": [1] * 6}
+    out = noticings(date_lists, series)
+    assert len(out) == 3
+    assert "same day" in out[0]          # co-occurrence first
+    assert out[1].startswith("Delivery") or out[1].startswith("Alcohol")  # skew next
+
+
+def test_noticings_silent_on_sparse_data():
+    assert noticings({"gym": ["2026-07-20"]}, {"gym": [1, 1]}) == []

@@ -1,6 +1,6 @@
 """Pure metric computation — no DB, no I/O."""
 
-from datetime import timedelta
+from datetime import date, timedelta
 
 METRICS = {
     "delivery": {"label": "Delivery orders", "direction": "ceiling", "default_target": 1},
@@ -46,3 +46,66 @@ def streaks(history):
                 break
         out[key] = n
     return out
+
+
+WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def weekday_counts(dates):
+    """ISO date strings -> counts per weekday, Monday-first."""
+    out = [0] * 7
+    for d in dates:
+        out[date.fromisoformat(d).weekday()] += 1
+    return out
+
+
+def trend_direction(series):
+    """Weekly counts oldest-first. None if fewer than 6 weeks."""
+    if len(series) < 6:
+        return None
+    recent = series[-6:]
+    delta = sum(recent[3:]) / 3 - sum(recent[:3]) / 3
+    if delta >= 1:
+        return "up"
+    if delta <= -1:
+        return "down"
+    return "flat"
+
+
+def weekday_skew(dates):
+    """(weekday_index, share) when one weekday dominates; else None.
+    Thresholds: >= 4 total events, max weekday >= 3 events and >= 40% share."""
+    counts = weekday_counts(dates)
+    total = sum(counts)
+    if total < 4:
+        return None
+    mx = max(counts)
+    if mx < 3 or mx / total < 0.4:
+        return None
+    return counts.index(mx), mx / total
+
+
+def co_occurrence(dates_a, dates_b):
+    """Jaccard overlap of two day sets; None unless both have >= 4 distinct days."""
+    a, b = set(dates_a), set(dates_b)
+    if len(a) < 4 or len(b) < 4:
+        return None
+    return len(a & b) / len(a | b)
+
+
+def noticings(date_lists, series):
+    """<= 3 plain-language statements. Priority: co-occurrence, weekday skew, trend."""
+    out = []
+    j = co_occurrence(date_lists.get("alcohol", []), date_lists.get("delivery", []))
+    if j is not None and j >= 0.5:
+        out.append("Alcohol days and delivery orders often land on the same day.")
+    for key in METRICS:
+        skew = weekday_skew(date_lists.get(key, []))
+        if skew:
+            day, share = skew
+            out.append(f"{METRICS[key]['label']} cluster on {WEEKDAY_NAMES[day]}s ({round(share * 100)}% of them).")
+    for key in METRICS:
+        t = trend_direction(series.get(key, []))
+        if t in ("up", "down"):
+            out.append(f"{METRICS[key]['label']} trending {t} over the last six weeks.")
+    return out[:3]
