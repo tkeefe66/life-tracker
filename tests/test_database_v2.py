@@ -41,6 +41,55 @@ def test_delivery_range_excludes_outside_week(temp_db_path):
     assert len(db.get_delivery_orders_range("2026-07-14", "2026-07-20")) == 1
 
 
+def test_delivery_order_roundtrip_with_amount(temp_db_path):
+    db = _db(temp_db_path)
+    assert db.add_delivery_order(
+        "m1", "Uber Eats", "2026-07-15T19:30:00-06:00", "Your order", 16.31
+    ) is True
+    rows = db.get_delivery_orders_range("2026-07-14", "2026-07-20")
+    assert len(rows) == 1 and rows[0]["amount"] == 16.31 and "id" in rows[0]
+
+
+def test_delivery_order_amount_defaults_to_none(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_delivery_order("m1", "Uber Eats", "2026-07-15T19:30:00-06:00", "Your order")
+    rows = db.get_delivery_orders_range("2026-07-14", "2026-07-20")
+    assert rows[0]["amount"] is None
+
+
+def test_find_delivery_order_hit_and_miss(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_delivery_order(
+        "m1", "Uber Eats", "2026-07-15T19:30:00-06:00",
+        "Your Monday evening order with Uber Eats", 16.31,
+    )
+    found = db.find_delivery_order("Uber Eats", "2026-07-15", "Your Monday evening order with Uber Eats")
+    assert found is not None
+    assert found["amount"] == 16.31
+    assert "id" in found
+    assert db.find_delivery_order("Uber Eats", "2026-07-16", "Your Monday evening order with Uber Eats") is None
+    assert db.find_delivery_order("DoorDash", "2026-07-15", "Your Monday evening order with Uber Eats") is None
+    assert db.find_delivery_order("Uber Eats", "2026-07-15", "Some other subject") is None
+
+
+def test_set_delivery_amount_updates(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_delivery_order("m1", "Uber Eats", "2026-07-15T19:30:00-06:00", "Your order")
+    order = db.find_delivery_order("Uber Eats", "2026-07-15", "Your order")
+    db.set_delivery_amount(order["id"], 22.5)
+    updated = db.find_delivery_order("Uber Eats", "2026-07-15", "Your order")
+    assert updated["amount"] == 22.5
+
+
+def test_delivery_migration_is_idempotent(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_delivery_order("m1", "Uber Eats", "2026-07-15T19:30:00-06:00", "Your order", 10.0)
+    db.initialize_db()
+    db.initialize_db()
+    rows = db.get_delivery_orders_range("2026-07-14", "2026-07-20")
+    assert len(rows) == 1 and rows[0]["amount"] == 10.0
+
+
 def test_calendar_event_classification_flow(temp_db_path):
     db = _db(temp_db_path)
     db.upsert_calendar_event("ev1", "Dinner w/ Sam", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
