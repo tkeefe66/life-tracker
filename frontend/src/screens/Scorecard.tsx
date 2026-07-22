@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../api";
-import { targetLabel, weekLabel } from "../lib";
+import { addDays, targetLabel, weekLabel } from "../lib";
+import WeekNav from "../components/WeekNav";
 
 interface Metric { label: string; count: number; target: number; direction: string; hit: boolean }
 interface Card { week_start: string; week_end: string; metrics: Record<string, Metric> }
@@ -10,12 +11,22 @@ const ORDER = ["gym", "social", "delivery", "alcohol"];
 
 export default function Scorecard() {
   const [card, setCard] = useState<Card | null>(null);
+  const [currentWeekStart, setCurrentWeekStart] = useState<string | null>(null);
+  const [weekStart, setWeekStart] = useState<string | null>(null); // null = current
   const [history, setHistory] = useState<History | null>(null);
   const [error, setError] = useState("");
   const [historyFailed, setHistoryFailed] = useState(false);
 
   useEffect(() => {
-    apiGet<Card>("/scorecard").then(setCard).catch((e) => setError(e.message));
+    apiGet<Card>(`/scorecard${weekStart ? `?week_start=${weekStart}` : ""}`)
+      .then((c) => {
+        setCard(c);
+        if (!weekStart) setCurrentWeekStart(c.week_start);
+      })
+      .catch((e) => setError(e.message));
+  }, [weekStart]);
+
+  useEffect(() => {
     apiGet<History>("/history?weeks=8").then(setHistory).catch(() => setHistoryFailed(true));
   }, []);
 
@@ -24,10 +35,15 @@ export default function Scorecard() {
 
   return (
     <div>
-      <div className="screen-head">
-        <h2>This week</h2>
-        <p className="sub">{weekLabel(card.week_start)}</p>
-      </div>
+      <WeekNav
+        weekStart={card.week_start}
+        isCurrent={card.week_start === (currentWeekStart ?? card.week_start)}
+        onPrev={() => setWeekStart(addDays(card.week_start, -7))}
+        onNext={() => {
+          const next = addDays(card.week_start, 7);
+          setWeekStart(next === currentWeekStart ? null : next);
+        }}
+      />
 
       <div className="ledger">
         {ORDER.map((key) => {
@@ -51,7 +67,7 @@ export default function Scorecard() {
                 {m.hit
                   ? m.direction === "ceiling" ? "Within target" : "Target met"
                   : m.direction === "ceiling" ? "Over target" : "Not there yet"}
-                {streak > 0 && ` · ${streak}-week streak`}
+                {streak > 0 && weekStart === null && ` · ${streak}-week streak`}
               </p>
               {history && (
                 <div className="hist">
