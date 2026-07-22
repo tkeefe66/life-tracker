@@ -5,14 +5,26 @@ interface Props {
   todayIso: string;
   onPrev: () => void;
   onNext: () => void;
+  onPick: (iso: string) => void;
 }
 
-export default function DayNav({ date, todayIso, onPrev, onNext }: Props) {
+export default function DayNav({ date, todayIso, onPrev, onNext, onPick }: Props) {
   const isToday = date === todayIso;
   return (
     <div className={`navhead${isToday ? "" : " past"}`}>
       <button className="nav-btn" aria-label="Previous day" onClick={onPrev}>‹</button>
       <div className="nav-label">
+        <input
+          className="nav-pick"
+          type="date"
+          value={date}
+          max={todayIso}
+          aria-label="Pick a date"
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v && v <= todayIso) onPick(v);
+          }}
+        />
         <h2>{relativeDayLabel(date, todayIso)}</h2>
         <p className="sub">{dayLabel(date)}</p>
       </div>

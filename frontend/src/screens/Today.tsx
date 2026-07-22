@@ -88,6 +88,7 @@ export default function Today() {
           const next = addDays(data.date, 1);
           setSelected(next === todayIso ? null : next);
         }}
+        onPick={(iso) => setSelected(iso === todayIso ? null : iso)}
       />
 
       <div className="stack">

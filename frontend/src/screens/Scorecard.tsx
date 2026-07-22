@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../api";
-import { addDays, targetLabel } from "../lib";
+import { addDays, mondayOf, targetLabel } from "../lib";
 import WeekNav from "../components/WeekNav";
 import TrendChart from "../components/TrendChart";
 import WeekdayHeatmap from "../components/WeekdayHeatmap";
@@ -24,6 +24,7 @@ function hasAnyData(ins: Insights): boolean {
 export default function Scorecard() {
   const [card, setCard] = useState<Card | null>(null);
   const [currentWeekStart, setCurrentWeekStart] = useState<string | null>(null);
+  const [currentWeekEnd, setCurrentWeekEnd] = useState<string | null>(null);
   const [weekStart, setWeekStart] = useState<string | null>(null); // null = current
   const [insights, setInsights] = useState<Insights | null>(null);
   const [reflection, setReflection] = useState<Reflection | null>(null);
@@ -33,7 +34,10 @@ export default function Scorecard() {
     apiGet<Card>(`/scorecard${weekStart ? `?week_start=${weekStart}` : ""}`)
       .then((c) => {
         setCard(c);
-        if (!weekStart) setCurrentWeekStart(c.week_start);
+        if (!weekStart) {
+          setCurrentWeekStart(c.week_start);
+          setCurrentWeekEnd(c.week_end);
+        }
       })
       .catch((e) => setError(e.message));
   }, [weekStart]);
@@ -58,6 +62,11 @@ export default function Scorecard() {
         onNext={() => {
           const next = addDays(card.week_start, 7);
           setWeekStart(next === currentWeekStart ? null : next);
+        }}
+        max={currentWeekEnd ?? card.week_end}
+        onPick={(iso) => {
+          const monday = mondayOf(iso);
+          setWeekStart(monday === currentWeekStart ? null : monday);
         }}
       />
 
