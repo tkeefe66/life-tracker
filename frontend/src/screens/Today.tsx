@@ -7,6 +7,7 @@ interface TodayData {
   date: string;
   gym: boolean;
   alcohol_level: number | null;
+  substances: boolean;
   deliveries: { service: string; subject: string; ordered_at: string }[];
   social_events: { title: string; start_at: string; end_at: string }[];
 }
@@ -15,9 +16,9 @@ interface Metric { label: string; count: number; target: number; direction: stri
 interface Card { metrics: Record<string, Metric> }
 
 const LEVEL_HINTS = ["a drink or two", "a solid night", "a heavy one"];
-const STRIP_ORDER = ["gym", "social", "delivery", "alcohol"];
+const STRIP_ORDER = ["gym", "social", "delivery", "alcohol", "substances"];
 const STRIP_LABELS: Record<string, string> = {
-  gym: "Gym", social: "Social", delivery: "Delivery", alcohol: "Alcohol",
+  gym: "Gym", social: "Social", delivery: "Delivery", alcohol: "Alcohol", substances: "Subst.",
 };
 
 function timeLabel(iso: string): string {
@@ -76,6 +77,16 @@ export default function Today() {
     }
   };
 
+  const toggleSubstances = async () => {
+    try {
+      if (data.substances) await apiSend("DELETE", `/checkins/substances?date=${data.date}`);
+      else await apiSend("POST", "/checkins", { type: "substances", date: data.date });
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   const detections = data.deliveries.length + data.social_events.length;
 
   return (
@@ -97,6 +108,14 @@ export default function Today() {
           <span className="txt">
             <span className="t">Gym</span>
             <span className="s">{data.gym ? "Logged — tap to undo" : "Tap to log a session"}</span>
+          </span>
+        </button>
+
+        <button className={`item${data.substances ? " done" : ""}`} onClick={toggleSubstances}>
+          <span className="dot">{data.substances ? "✓" : ""}</span>
+          <span className="txt">
+            <span className="t">Substances</span>
+            <span className="s">{data.substances ? "Logged — tap to undo" : "Tap to log a day"}</span>
           </span>
         </button>
 

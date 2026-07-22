@@ -15,7 +15,7 @@ interface Insights {
 }
 interface Reflection { week_start: string; text: string }
 
-const ORDER = ["gym", "social", "delivery", "alcohol"];
+const ORDER = ["gym", "social", "delivery", "alcohol", "substances"];
 
 function hasAnyData(ins: Insights): boolean {
   return ins.weeks.some((w) => Object.values(w.metrics).some((m) => m.count > 0));

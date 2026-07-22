@@ -26,6 +26,7 @@ const LABELS: Record<string, string> = {
   social: "Social events",
   delivery: "Delivery orders",
   alcohol: "Alcohol days",
+  substances: "Substances",
 };
 
 function statusLine(status: string | null, run: string | null): string {
