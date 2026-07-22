@@ -15,6 +15,18 @@ def test_format_scorecard_text():
     assert "❌ Delivery orders: 2 (target ≤1)" in text
 
 
+def test_push_text_excludes_private_metrics():
+    import datetime
+
+    from jobs.weekly_push import format_scorecard_text
+    import metrics as m
+    card = m.build_scorecard(datetime.date(2026, 7, 13),
+                              {"gym": 3, "substances": 2}, {})
+    text = format_scorecard_text(card)
+    assert "Gym" in text
+    assert "Substances" not in text
+
+
 def test_push_respects_toggle(temp_db_path, monkeypatch):
     import database as db
     from jobs import weekly_push

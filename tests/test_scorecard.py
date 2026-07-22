@@ -49,7 +49,7 @@ def test_history_excludes_current_week_and_computes_streaks(temp_db_path):
     db.seed_default_targets()
     out = history(weeks=4)
     assert len(out["weeks"]) == 4
-    assert set(out["streaks"].keys()) == {"delivery", "gym", "social", "alcohol"}
+    assert set(out["streaks"].keys()) == {"delivery", "gym", "social", "alcohol", "substances"}
     import metrics
     from datetime import date as d
     today_week_start = metrics.week_bounds(d.today())[0].isoformat()

@@ -38,6 +38,7 @@ def counts_for_week(week_start: date) -> dict:
     return {
         "gym": sum(1 for c in checkins if c["type"] == "gym"),
         "alcohol": sum(1 for c in checkins if c["type"] == "alcohol"),
+        "substances": sum(1 for c in checkins if c["type"] == "substances"),
         "delivery": len(db.get_delivery_orders_range(start, end)),
         "social": len(social),
     }
@@ -71,6 +72,7 @@ def _date_lists(start: date, end: date) -> dict:
     return {
         "gym": [c["date"] for c in checkins if c["type"] == "gym"],
         "alcohol": [c["date"] for c in checkins if c["type"] == "alcohol"],
+        "substances": [c["date"] for c in checkins if c["type"] == "substances"],
         "delivery": [o["ordered_at"][:10] for o in db.get_delivery_orders_range(s, e)],
         "social": [ev["end_at"][:10] for ev in social],
     }
@@ -97,6 +99,7 @@ def today_snapshot(day: Optional[date] = None) -> dict:
         "date": d,
         "gym": any(c["type"] == "gym" for c in checkins),
         "alcohol_level": alcohol["level"] if alcohol else None,
+        "substances": any(c["type"] == "substances" for c in checkins),
         "deliveries": db.get_delivery_orders_range(d, d),
         "social_events": db.get_events_for_day(d),
     }

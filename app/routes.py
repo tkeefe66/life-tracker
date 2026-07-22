@@ -16,7 +16,7 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 
 
 class CheckinBody(BaseModel):
-    type: Literal["gym", "alcohol"]
+    type: Literal["gym", "alcohol", "substances"]
     date: Optional[str] = None
     level: Optional[int] = Field(default=None, ge=1, le=3)
 
@@ -47,7 +47,7 @@ def post_checkin(body: CheckinBody):
 
 
 @router.delete("/checkins/{type}")
-def delete_checkin(type: Literal["gym", "alcohol"], date: Optional[str] = None):
+def delete_checkin(type: Literal["gym", "alcohol", "substances"], date: Optional[str] = None):
     day = (_parse_date(date) if date else _local_today()).isoformat()
     db.delete_checkin(day, type)
     return {"ok": True}
@@ -83,7 +83,12 @@ def get_reflection():
     if cached:
         return {"week_start": ws, "text": cached}
     card = scorecard_for_week(week_start)
-    text = ai_metrics.weekly_reflection(card, insights(12)["noticings"])
+    private_labels = [m["label"] for m in metrics.METRICS.values() if m.get("private")]
+    card = {**card, "metrics": {k: v for k, v in card["metrics"].items()
+                                if not metrics.METRICS.get(k, {}).get("private")}}
+    notes = [n for n in insights(12)["noticings"]
+             if not any(lbl in n for lbl in private_labels)]
+    text = ai_metrics.weekly_reflection(card, notes)
     if not text:
         return Response(status_code=204)
     db.save_reflection(ws, text)

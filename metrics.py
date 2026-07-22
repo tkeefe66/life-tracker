@@ -7,6 +7,7 @@ METRICS = {
     "gym": {"label": "Gym sessions", "direction": "floor", "default_target": 3},
     "social": {"label": "Social events", "direction": "floor", "default_target": 2},
     "alcohol": {"label": "Alcohol days", "direction": "ceiling", "default_target": 2},
+    "substances": {"label": "Substances", "direction": "ceiling", "default_target": 0, "private": True},
 }
 
 

@@ -9,6 +9,12 @@ def test_week_bounds_monday_start():
     assert week_bounds(date(2026, 7, 26)) == (date(2026, 7, 20), date(2026, 7, 26))  # Sunday
 
 
+def test_substances_metric_defined():
+    m = METRICS["substances"]
+    assert (m["label"], m["direction"], m["default_target"], m.get("private")) == \
+        ("Substances", "ceiling", 0, True)
+
+
 def test_is_hit_directions():
     assert is_hit("ceiling", 1, 1) is True
     assert is_hit("ceiling", 2, 1) is False
@@ -33,16 +39,16 @@ def _card(hits: dict):
 
 def test_streaks_counts_backward_from_latest():
     history = [
-        _card({"gym": True, "delivery": True, "social": False, "alcohol": True}),
-        _card({"gym": True, "delivery": False, "social": True, "alcohol": True}),
-        _card({"gym": True, "delivery": True, "social": True, "alcohol": False}),
+        _card({"gym": True, "delivery": True, "social": False, "alcohol": True, "substances": True}),
+        _card({"gym": True, "delivery": False, "social": True, "alcohol": True, "substances": True}),
+        _card({"gym": True, "delivery": True, "social": True, "alcohol": False, "substances": True}),
     ]
     s = streaks(history)
-    assert s == {"gym": 3, "delivery": 1, "social": 2, "alcohol": 0}
+    assert s == {"gym": 3, "delivery": 1, "social": 2, "alcohol": 0, "substances": 3}
 
 
 def test_streaks_empty_history():
-    assert streaks([]) == {"gym": 0, "delivery": 0, "social": 0, "alcohol": 0}
+    assert streaks([]) == {"gym": 0, "delivery": 0, "social": 0, "alcohol": 0, "substances": 0}
 
 
 from metrics import (

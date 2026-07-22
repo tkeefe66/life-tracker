@@ -20,7 +20,9 @@ def _now_iso() -> str:
 
 def format_scorecard_text(card: dict) -> str:
     lines = [f"On Track — week of {card['week_start']}"]
-    for m in card["metrics"].values():
+    for key, m in card["metrics"].items():
+        if metrics.METRICS.get(key, {}).get("private"):
+            continue
         mark = "✅" if m["hit"] else "❌"
         sign = "≤" if m["direction"] == "ceiling" else "≥"
         lines.append(f"{mark} {m['label']}: {m['count']} (target {sign}{m['target']})")

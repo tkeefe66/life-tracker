@@ -23,6 +23,19 @@ def test_checkin_roundtrip(temp_db_path):
     assert client.get("/api/today").json()["gym"] is False
 
 
+def test_substances_checkin_roundtrip(temp_db_path):
+    client = _client(temp_db_path)
+    assert client.post("/api/checkins", json={"type": "substances"}).status_code == 200
+    snap = client.get("/api/today").json()
+    assert snap["substances"] is True
+    card = client.get("/api/scorecard").json()
+    assert card["metrics"]["substances"]["count"] == 1
+    assert card["metrics"]["substances"]["hit"] is False  # ceiling 0: any day is a miss
+    assert client.delete("/api/checkins/substances").status_code == 200
+    assert client.get("/api/today").json()["substances"] is False
+    assert client.get("/api/scorecard").json()["metrics"]["substances"]["hit"] is True
+
+
 def test_checkin_validation(temp_db_path):
     client = _client(temp_db_path)
     assert client.post("/api/checkins", json={"type": "yoga"}).status_code == 422
@@ -33,7 +46,7 @@ def test_checkin_validation(temp_db_path):
 def test_scorecard_and_history_endpoints(temp_db_path):
     client = _client(temp_db_path)
     card = client.get("/api/scorecard").json()
-    assert set(card["metrics"].keys()) == {"delivery", "gym", "social", "alcohol"}
+    assert set(card["metrics"].keys()) == {"delivery", "gym", "social", "alcohol", "substances"}
     hist = client.get("/api/history?weeks=4").json()
     assert len(hist["weeks"]) == 4
 
@@ -112,6 +125,18 @@ def test_reflection_204_on_generation_failure(temp_db_path, mock_anthropic):
     mock_anthropic.messages.create.return_value.content = [type("T", (), {"text": "garbage"})()]
     client = _client(temp_db_path)
     assert client.get("/api/reflection").status_code == 204
+
+
+def test_reflection_excludes_private_metrics(temp_db_path, mock_anthropic):
+    mock_anthropic.messages.create.return_value.content = [
+        type("T", (), {"text": '{"reflection": "Steady week."}'})()
+    ]
+    client = _client(temp_db_path)
+    past = (datetime.date.today() - datetime.timedelta(days=8)).isoformat()
+    client.post("/api/checkins", json={"type": "substances", "date": past})
+    client.get("/api/reflection")
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "Substances" not in prompt
 
 
 def test_deliveries_list_shape_and_order(temp_db_path):
