@@ -1,6 +1,7 @@
 """Assemble weekly scorecards from DB counts. All week logic is Monday–Sunday local time."""
 import datetime
 from datetime import date, timedelta
+from typing import Optional
 
 import pytz
 
@@ -55,14 +56,14 @@ def history(weeks: int) -> dict:
     return {"weeks": cards, "streaks": metrics.streaks(cards)}
 
 
-def today_snapshot() -> dict:
-    today = _local_today().isoformat()
-    checkins = db.get_checkins_range(today, today)
+def today_snapshot(day: Optional[date] = None) -> dict:
+    d = (day or _local_today()).isoformat()
+    checkins = db.get_checkins_range(d, d)
     alcohol = next((c for c in checkins if c["type"] == "alcohol"), None)
     return {
-        "date": today,
+        "date": d,
         "gym": any(c["type"] == "gym" for c in checkins),
         "alcohol_level": alcohol["level"] if alcohol else None,
-        "deliveries": db.get_delivery_orders_range(today, today),
-        "social_events": db.get_events_for_day(today),
+        "deliveries": db.get_delivery_orders_range(d, d),
+        "social_events": db.get_events_for_day(d),
     }

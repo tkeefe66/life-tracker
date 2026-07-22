@@ -20,23 +20,35 @@ class CheckinBody(BaseModel):
     level: Optional[int] = Field(default=None, ge=1, le=3)
 
 
+def _parse_date(value: str) -> datetime.date:
+    try:
+        d = datetime.date.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    if d > _local_today():
+        raise HTTPException(status_code=400, detail="date cannot be in the future")
+    return d
+
+
 @router.get("/today")
-def get_today():
-    return today_snapshot()
+def get_today(date: Optional[str] = None):
+    day = _parse_date(date) if date else None
+    return today_snapshot(day)
 
 
 @router.post("/checkins")
 def post_checkin(body: CheckinBody):
     if body.type == "alcohol" and body.level is None:
         raise HTTPException(status_code=400, detail="alcohol check-in requires level 1-3")
-    day = body.date or _local_today().isoformat()
+    day = (_parse_date(body.date) if body.date else _local_today()).isoformat()
     db.record_checkin(day, body.type, body.level)
     return {"ok": True}
 
 
 @router.delete("/checkins/{type}")
 def delete_checkin(type: Literal["gym", "alcohol"], date: Optional[str] = None):
-    db.delete_checkin(date or _local_today().isoformat(), type)
+    day = (_parse_date(date) if date else _local_today()).isoformat()
+    db.delete_checkin(day, type)
     return {"ok": True}
 
 
