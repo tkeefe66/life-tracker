@@ -132,11 +132,17 @@ def test_reflection_excludes_private_metrics(temp_db_path, mock_anthropic):
         type("T", (), {"text": '{"reflection": "Steady week."}'})()
     ]
     client = _client(temp_db_path)
-    past = (datetime.date.today() - datetime.timedelta(days=8)).isoformat()
-    client.post("/api/checkins", json={"type": "substances", "date": past})
-    client.get("/api/reflection")
+    # Land the check-in mid-way through the exact week /reflection reflects on,
+    # using the route's own week math — a fixed day offset goes vacuous on Mondays.
+    import metrics as metrics_mod
+    from app.scorecard import _local_today
+    last_wed = metrics_mod.week_bounds(_local_today())[0] - datetime.timedelta(weeks=1) + datetime.timedelta(days=2)
+    client.post("/api/checkins", json={"type": "substances", "date": last_wed.isoformat()})
+    resp = client.get("/api/reflection")
+    assert resp.status_code == 200
     prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
     assert "Substances" not in prompt
+    assert "Gym" in prompt  # non-private metrics still present — filter, not an empty card
 
 
 def test_deliveries_list_shape_and_order(temp_db_path):
