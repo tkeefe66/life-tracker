@@ -13,6 +13,7 @@ interface Insights {
   weekday_counts: Record<string, number[]>;
   noticings: string[];
 }
+interface Reflection { week_start: string; text: string }
 
 const ORDER = ["gym", "social", "delivery", "alcohol"];
 
@@ -25,6 +26,7 @@ export default function Scorecard() {
   const [currentWeekStart, setCurrentWeekStart] = useState<string | null>(null);
   const [weekStart, setWeekStart] = useState<string | null>(null); // null = current
   const [insights, setInsights] = useState<Insights | null>(null);
+  const [reflection, setReflection] = useState<Reflection | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -38,6 +40,10 @@ export default function Scorecard() {
 
   useEffect(() => {
     apiGet<Insights>("/insights?weeks=12").then(setInsights).catch(() => setInsights(null));
+  }, []);
+
+  useEffect(() => {
+    apiGet<Reflection | null>("/reflection").then(setReflection).catch(() => setReflection(null));
   }, []);
 
   if (error) return <p className="error">{error}</p>;
@@ -122,6 +128,13 @@ export default function Scorecard() {
       )}
       {insights && !hasAnyData(insights) && (
         <p className="footnote">Not enough history yet — insights appear after a few weeks.</p>
+      )}
+
+      {reflection && (
+        <>
+          <p className="section-label">Last week</p>
+          <p className="reflection">{reflection.text}</p>
+        </>
       )}
     </div>
   );

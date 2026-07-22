@@ -6,6 +6,7 @@ async function handle<T>(resp: Response): Promise<T> {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.detail ?? `Request failed (${resp.status})`);
   }
+  if (resp.status === 204) return null as T;
   return resp.json();
 }
 

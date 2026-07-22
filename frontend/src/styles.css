@@ -476,3 +476,9 @@ button.item:active { transform: scale(0.985); }
   background: color-mix(in oklch, var(--accent) var(--pct, 0%), var(--surface-2));
 }
 .hm-cell.over { background: color-mix(in oklch, var(--over) var(--pct, 0%), var(--surface-2)); }
+
+/* ── Reflection ── */
+.reflection {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; margin: 0; font-size: 14px; line-height: 1.55; color: var(--ink-2);
+}
