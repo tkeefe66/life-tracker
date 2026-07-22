@@ -489,3 +489,13 @@ button.item:active { transform: scale(0.985); }
   padding: 0;
   cursor: pointer;
 }
+
+/* ── Detected orders (Settings) ── */
+details.orders {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+details.orders summary { cursor: pointer; font-size: 14px; color: var(--ink-2); }
+details.orders .quiet { margin: 10px 0 0; }

@@ -9,8 +9,16 @@ interface SettingsData {
   google_configured: boolean;
   gmail_last_run: string | null;
   gmail_last_status: string | null;
+  gmail_last_result: string | null;
   calendar_last_run: string | null;
   calendar_last_status: string | null;
+}
+
+interface Delivery { service: string; subject: string; ordered_at: string }
+
+function orderDate(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 const LABELS: Record<string, string> = {
@@ -32,12 +40,16 @@ function statusLine(status: string | null, run: string | null): string {
 export default function Settings() {
   const [targets, setTargets] = useState<Record<string, Target> | null>(null);
   const [settings, setSettings] = useState<SettingsData | null>(null);
+  const [deliveries, setDeliveries] = useState<Delivery[] | null>(null);
   const [error, setError] = useState("");
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     apiGet<Record<string, Target>>("/targets").then(setTargets).catch((e) => setError(e.message));
     apiGet<SettingsData>("/settings").then(setSettings).catch((e) => setError(e.message));
+    apiGet<{ orders: Delivery[] }>("/deliveries?days=60")
+      .then((r) => setDeliveries(r.orders))
+      .catch(() => setDeliveries(null));
   }, []);
 
   if (error) return <p className="error">{error}</p>;
@@ -137,7 +149,10 @@ export default function Settings() {
         <div className="row">
           <span className="grow">
             Gmail receipts
-            <span className="hint">{statusLine(settings.gmail_last_status, settings.gmail_last_run)}</span>
+            <span className="hint">
+              {statusLine(settings.gmail_last_status, settings.gmail_last_run)}
+              {settings.gmail_last_result ? ` · ${settings.gmail_last_result}` : ""}
+            </span>
           </span>
         </div>
         <div className="row">
@@ -147,6 +162,25 @@ export default function Settings() {
           </span>
         </div>
       </div>
+
+      {deliveries && (
+        <>
+          <p className="section-label">Detected orders</p>
+          <details className="orders">
+            <summary>
+              {deliveries.length === 0
+                ? "None detected yet"
+                : `${deliveries.length} in the last 60 days`}
+            </summary>
+            {deliveries.map((o) => (
+              <p className="quiet" key={o.ordered_at + o.subject}>
+                <span>{o.service} — {o.subject}</span>
+                <span className="when">{orderDate(o.ordered_at)}</span>
+              </p>
+            ))}
+          </details>
+        </>
+      )}
     </div>
   );
 }
