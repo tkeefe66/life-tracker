@@ -14,7 +14,7 @@ interface SettingsData {
   calendar_last_status: string | null;
 }
 
-interface Delivery { service: string; subject: string; ordered_at: string }
+interface Delivery { service: string; subject: string; ordered_at: string; amount: number | null }
 
 function orderDate(iso: string): string {
   const d = new Date(iso);
@@ -175,7 +175,10 @@ export default function Settings() {
             {deliveries.map((o) => (
               <p className="quiet" key={o.ordered_at + o.subject}>
                 <span>{o.service} — {o.subject}</span>
-                <span className="when">{orderDate(o.ordered_at)}</span>
+                <span className="when">
+                  {o.amount != null && `$${o.amount.toFixed(2).replace(/\.00$/, "")} · `}
+                  {orderDate(o.ordered_at)}
+                </span>
               </p>
             ))}
           </details>
