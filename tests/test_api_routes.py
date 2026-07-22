@@ -82,3 +82,14 @@ def test_today_rejects_future_or_malformed_date(temp_db_path):
     future = (datetime.date.today() + datetime.timedelta(days=3)).isoformat()
     assert client.get(f"/api/today?date={future}").status_code == 400
     assert client.get("/api/today?date=garbage").status_code == 400
+
+
+def test_insights_shape_and_weekday_counts(temp_db_path):
+    client = _client(temp_db_path)
+    past = (datetime.date.today() - datetime.timedelta(days=10)).isoformat()
+    client.post("/api/checkins", json={"type": "gym", "date": past})
+    ins = client.get("/api/insights?weeks=12").json()
+    assert set(ins.keys()) == {"weeks", "streaks", "weekday_counts", "noticings"}
+    assert len(ins["weeks"]) == 12
+    assert sum(ins["weekday_counts"]["gym"]) == 1
+    assert isinstance(ins["noticings"], list)

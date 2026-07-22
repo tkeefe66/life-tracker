@@ -56,6 +56,35 @@ def history(weeks: int) -> dict:
     return {"weeks": cards, "streaks": metrics.streaks(cards)}
 
 
+PATTERN_WEEKS = 8
+
+
+def _date_lists(start: date, end: date) -> dict:
+    """Per-metric ISO day lists for events inside [start, end]."""
+    s, e = start.isoformat(), end.isoformat()
+    checkins = db.get_checkins_range(s, e)
+    social = [ev for ev in db.get_social_events_range(s, e) if _occurred(ev["end_at"])]
+    return {
+        "gym": [c["date"] for c in checkins if c["type"] == "gym"],
+        "alcohol": [c["date"] for c in checkins if c["type"] == "alcohol"],
+        "delivery": [o["ordered_at"][:10] for o in db.get_delivery_orders_range(s, e)],
+        "social": [ev["end_at"][:10] for ev in social],
+    }
+
+
+def insights(weeks: int) -> dict:
+    hist = history(weeks)
+    series = {k: [w["metrics"][k]["count"] for w in hist["weeks"]] for k in metrics.METRICS}
+    this_monday = metrics.week_bounds(_local_today())[0]
+    dates = _date_lists(this_monday - timedelta(weeks=PATTERN_WEEKS), this_monday - timedelta(days=1))
+    return {
+        "weeks": hist["weeks"],
+        "streaks": hist["streaks"],
+        "weekday_counts": {k: metrics.weekday_counts(v) for k, v in dates.items()},
+        "noticings": metrics.noticings(dates, series),
+    }
+
+
 def today_snapshot(day: Optional[date] = None) -> dict:
     d = (day or _local_today()).isoformat()
     checkins = db.get_checkins_range(d, d)
