@@ -44,7 +44,11 @@ def counts_for_week(week_start: date) -> dict:
 
 
 def scorecard_for_week(week_start: date) -> dict:
-    return metrics.build_scorecard(week_start, counts_for_week(week_start), db.get_targets())
+    ws, we = metrics.week_bounds(week_start)
+    card = metrics.build_scorecard(week_start, counts_for_week(week_start), db.get_targets())
+    orders = db.get_delivery_orders_range(ws.isoformat(), we.isoformat())
+    card["delivery_spend"] = round(sum(o["amount"] or 0 for o in orders), 2)
+    return card
 
 
 def history(weeks: int) -> dict:

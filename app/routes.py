@@ -140,6 +140,6 @@ def get_deliveries(days: int = 60):
     orders = db.get_delivery_orders_range(start.isoformat(), end.isoformat())
     orders.sort(key=lambda o: o["ordered_at"], reverse=True)
     return {"orders": [
-        {"service": o["service"], "subject": o["subject"], "ordered_at": o["ordered_at"]}
+        {"service": o["service"], "subject": o["subject"], "ordered_at": o["ordered_at"], "amount": o["amount"]}
         for o in orders
     ]}
