@@ -86,3 +86,12 @@ def test_settings_roundtrip(temp_db_path):
     db.set_setting("telegram_push", "on")
     db.set_setting("telegram_push", "on")  # upsert
     assert db.get_setting("telegram_push") == "on"
+
+
+def test_reflection_roundtrip(temp_db_path):
+    import database as db
+    assert db.get_reflection("2026-07-13") is None
+    db.save_reflection("2026-07-13", "A solid week.")
+    assert db.get_reflection("2026-07-13") == "A solid week."
+    db.save_reflection("2026-07-13", "Revised.")
+    assert db.get_reflection("2026-07-13") == "Revised."

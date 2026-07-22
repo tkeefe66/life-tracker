@@ -548,6 +548,14 @@ def _init_v2_tables():
                 value TEXT NOT NULL
             )
         """)
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS weekly_reflections (
+                id {serial} PRIMARY KEY,
+                week_start TEXT NOT NULL UNIQUE,
+                text TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
 
 # ── Check-ins ─────────────────────────────────────────────────────────────────
@@ -715,3 +723,22 @@ def set_setting(key, value):
             (key, value),
         )
 
+
+# ── Weekly reflections ────────────────────────────────────────────────────────
+
+def get_reflection(week_start):
+    p = _p()
+    with _cursor() as c:
+        c.execute(f"SELECT text FROM weekly_reflections WHERE week_start = {p}", (week_start,))
+        row = c.fetchone()
+        return row["text"] if row else None
+
+
+def save_reflection(week_start, text):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"""INSERT INTO weekly_reflections (week_start, text) VALUES ({p}, {p})
+                ON CONFLICT(week_start) DO UPDATE SET text = excluded.text""",
+            (week_start, text),
+        )
