@@ -457,3 +457,11 @@ button.item:active { transform: scale(0.985); }
 .navhead.past .nav-label {
   background: var(--accent-soft); border-radius: 10px; padding: 4px 8px;
 }
+
+/* ── Trends ── */
+.trends { display: grid; gap: 14px; }
+.trend-row .trend-name { display: block; font-size: 13px; color: var(--ink-2); margin-bottom: 4px; }
+.trend { width: 100%; height: 56px; display: block; }
+.trend rect.hit { fill: var(--accent); }
+.trend rect.miss { fill: var(--over); }
+.trend line.target { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
