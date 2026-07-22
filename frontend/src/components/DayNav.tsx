@@ -20,6 +20,11 @@ export default function DayNav({ date, todayIso, onPrev, onNext, onPick }: Props
           value={date}
           max={todayIso}
           aria-label="Pick a date"
+          onClick={(e) => {
+            // Desktop browsers only open the popover from the calendar icon;
+            // showPicker() opens it from anywhere in the label.
+            try { e.currentTarget.showPicker?.(); } catch { /* fall back to native */ }
+          }}
           onChange={(e) => {
             const v = e.target.value;
             if (v && v <= todayIso) onPick(v);

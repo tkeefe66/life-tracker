@@ -1,4 +1,5 @@
 """On Track v2 entry point — FastAPI app + in-process APScheduler."""
+import datetime
 import logging
 from contextlib import asynccontextmanager
 
@@ -28,7 +29,14 @@ async def lifespan(app):
     from jobs.weekly_push import run as weekly_push
 
     scheduler = AsyncIOScheduler(timezone=pytz.timezone(TIMEZONE))
-    scheduler.add_job(scan_gmail, IntervalTrigger(hours=GMAIL_SCAN_INTERVAL_HOURS), id="scan_gmail")
+    # next_run_time=now: run once at startup so a deploy/restart refreshes
+    # gmail_last_status immediately instead of waiting a full interval.
+    scheduler.add_job(
+        scan_gmail,
+        IntervalTrigger(hours=GMAIL_SCAN_INTERVAL_HOURS),
+        id="scan_gmail",
+        next_run_time=datetime.datetime.now(pytz.timezone(TIMEZONE)),
+    )
     scheduler.add_job(scan_calendar, CronTrigger(hour=CALENDAR_SCAN_HOUR, minute=0), id="scan_calendar")
     scheduler.add_job(weekly_push, CronTrigger(day_of_week="mon", hour=WEEKLY_PUSH_HOUR, minute=0), id="weekly_push")
     scheduler.start()
