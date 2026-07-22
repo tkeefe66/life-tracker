@@ -2,9 +2,10 @@
 import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
+import ai_metrics
 import database as db
 import metrics
 from app.auth import require_auth
@@ -72,6 +73,21 @@ def get_history(weeks: int = 8):
 @router.get("/insights")
 def get_insights(weeks: int = 12):
     return insights(min(max(weeks, 1), 52))
+
+
+@router.get("/reflection")
+def get_reflection():
+    week_start = metrics.week_bounds(_local_today())[0] - datetime.timedelta(weeks=1)
+    ws = week_start.isoformat()
+    cached = db.get_reflection(ws)
+    if cached:
+        return {"week_start": ws, "text": cached}
+    card = scorecard_for_week(week_start)
+    text = ai_metrics.weekly_reflection(card, insights(12)["noticings"])
+    if not text:
+        return Response(status_code=204)
+    db.save_reflection(ws, text)
+    return {"week_start": ws, "text": text}
 
 
 @router.get("/targets")

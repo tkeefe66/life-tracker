@@ -93,3 +93,22 @@ def test_insights_shape_and_weekday_counts(temp_db_path):
     assert len(ins["weeks"]) == 12
     assert sum(ins["weekday_counts"]["gym"]) == 1
     assert isinstance(ins["noticings"], list)
+
+
+def test_reflection_generates_once_then_caches(temp_db_path, mock_anthropic):
+    mock_anthropic.messages.create.return_value.content = [
+        type("T", (), {"text": '{"reflection": "Steady week."}'})()
+    ]
+    client = _client(temp_db_path)
+    first = client.get("/api/reflection")
+    assert first.status_code == 200
+    assert first.json()["text"] == "Steady week."
+    second = client.get("/api/reflection")
+    assert second.json() == first.json()
+    assert mock_anthropic.messages.create.call_count == 1
+
+
+def test_reflection_204_on_generation_failure(temp_db_path, mock_anthropic):
+    mock_anthropic.messages.create.return_value.content = [type("T", (), {"text": "garbage"})()]
+    client = _client(temp_db_path)
+    assert client.get("/api/reflection").status_code == 204
