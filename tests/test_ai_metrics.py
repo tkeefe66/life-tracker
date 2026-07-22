@@ -39,3 +39,27 @@ def test_classify_social_event_non_numeric_confidence(mock_anthropic):
     _set_response(mock_anthropic, '{"is_social": true, "confidence": "high"}')
     out = ai_metrics.classify_social_event("Dinner w/ friends", "", "Restaurant", ["Alice", "Bob"])
     assert out == {"is_social": True, "confidence": 0.0}
+
+
+def _card():
+    return {
+        "week_start": "2026-07-13", "week_end": "2026-07-19",
+        "metrics": {
+            "gym": {"label": "Gym sessions", "count": 3, "target": 3, "direction": "floor", "hit": True},
+            "delivery": {"label": "Delivery orders", "count": 2, "target": 1, "direction": "ceiling", "hit": False},
+        },
+    }
+
+
+def test_weekly_reflection_returns_text(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"reflection": "You held the line on gym."}')
+    assert ai_metrics.weekly_reflection(_card(), ["a pattern"]) == "You held the line on gym."
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "Gym sessions: 3" in prompt and "a pattern" in prompt
+
+
+def test_weekly_reflection_empty_on_garbage(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, "not json")
+    assert ai_metrics.weekly_reflection(_card(), []) == ""

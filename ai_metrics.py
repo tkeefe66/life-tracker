@@ -87,3 +87,28 @@ Reply with only JSON: {{"is_social": true|false, "confidence": 0.0-1.0}}"""
         "is_social": bool(result.get("is_social", False)),
         "confidence": confidence,
     }
+
+
+def weekly_reflection(card: dict, noticings: list) -> str:
+    """2-3 sentence reflection on a completed week. Returns "" on any failure."""
+    lines = []
+    for m in card["metrics"].values():
+        sign = "≤" if m["direction"] == "ceiling" else "≥"
+        outcome = "hit" if m["hit"] else "missed"
+        lines.append(f"- {m['label']}: {m['count']} (target {sign}{m['target']}) — {outcome}")
+    summary = "\n".join(lines)
+    patterns = "\n".join(f"- {n}" for n in noticings) if noticings else "- (none)"
+    prompt = f"""You write a short weekly reflection for a personal habit tracker.
+
+Week {card['week_start']} to {card['week_end']}:
+{summary}
+
+Patterns noticed:
+{patterns}
+
+Write 2-3 sentences: honest, warm, specific to the numbers. Address the reader as
+"you". No emojis, no bullet points, no advice-column clichés.
+
+Reply with only JSON: {{"reflection": "..."}}"""
+    result = _call_json(prompt, max_tokens=300, default={"reflection": ""})
+    return str(result.get("reflection") or "")
