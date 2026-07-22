@@ -64,3 +64,28 @@ def test_scan_noop_when_unconfigured(temp_db_path, monkeypatch):
     monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: False)
     scan_gmail.run()
     assert db.get_setting("gmail_last_status") == "error: Google not configured"
+
+
+def test_query_uses_lookback_default():
+    from services import gmail_service
+    assert "newer_than:7d" in gmail_service._query()
+    assert "from:(" in gmail_service._query()
+
+
+def test_scan_writes_last_result(temp_db_path, mock_anthropic, monkeypatch):
+    import database as db
+    from jobs import scan_gmail
+
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [
+        {"gmail_message_id": "m1", "sender": "noreply@doordash.com",
+         "subject": "Order Confirmation for Tom", "ordered_at": "2026-07-20T18:00:00"},
+    ])
+
+    scan_gmail.run()
+
+    assert db.get_setting("gmail_last_status") == "ok"
+    result = db.get_setting("gmail_last_result")
+    assert result is not None
+    assert result.startswith("1 candidates")
+    assert "new orders" in result

@@ -116,6 +116,7 @@ def get_settings():
         "google_configured": google_auth.is_configured(),
         "gmail_last_run": db.get_setting("gmail_last_run"),
         "gmail_last_status": db.get_setting("gmail_last_status"),
+        "gmail_last_result": db.get_setting("gmail_last_result"),
         "calendar_last_run": db.get_setting("calendar_last_run"),
         "calendar_last_status": db.get_setting("calendar_last_status"),
     }
@@ -129,3 +130,16 @@ class SettingsBody(BaseModel):
 def put_settings(body: SettingsBody):
     db.set_setting("telegram_push", body.telegram_push)
     return {"ok": True}
+
+
+@router.get("/deliveries")
+def get_deliveries(days: int = 60):
+    d = min(max(days, 1), 365)
+    end = _local_today()
+    start = end - datetime.timedelta(days=d)
+    orders = db.get_delivery_orders_range(start.isoformat(), end.isoformat())
+    orders.sort(key=lambda o: o["ordered_at"], reverse=True)
+    return {"orders": [
+        {"service": o["service"], "subject": o["subject"], "ordered_at": o["ordered_at"]}
+        for o in orders
+    ]}

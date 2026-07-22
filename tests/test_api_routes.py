@@ -112,3 +112,19 @@ def test_reflection_204_on_generation_failure(temp_db_path, mock_anthropic):
     mock_anthropic.messages.create.return_value.content = [type("T", (), {"text": "garbage"})()]
     client = _client(temp_db_path)
     assert client.get("/api/reflection").status_code == 204
+
+
+def test_deliveries_list_shape_and_order(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    d1 = (datetime.date.today() - datetime.timedelta(days=10)).isoformat()
+    d2 = (datetime.date.today() - datetime.timedelta(days=3)).isoformat()
+    db.add_delivery_order("m1", "DoorDash", f"{d1}T18:00:00", "Your order")
+    db.add_delivery_order("m2", "Uber Eats", f"{d2}T19:30:00", "Your receipt")
+    body = client.get("/api/deliveries").json()
+    assert [o["service"] for o in body["orders"]] == ["Uber Eats", "DoorDash"]
+    assert set(body["orders"][0].keys()) == {"service", "subject", "ordered_at"}
+    # days clamp: 0 -> 1; a 1-day window excludes both seeded orders
+    assert client.get("/api/deliveries?days=0").json()["orders"] == []
+    # settings gains the result field (None when never written)
+    assert "gmail_last_result" in client.get("/api/settings").json()

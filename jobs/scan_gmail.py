@@ -38,6 +38,10 @@ def run():
                     added += 1
         db.set_setting("gmail_last_run", _now_iso())
         db.set_setting("gmail_last_status", "ok")
+        db.set_setting(
+            "gmail_last_result",
+            f"{len(candidates)} candidates · {ai_checked} AI-checked · {added} new orders",
+        )
         logger.info("Gmail scan: %d candidates, %d AI-checked, %d new orders", len(candidates), ai_checked, added)
     except Exception as e:
         logger.exception("Gmail scan failed")

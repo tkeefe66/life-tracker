@@ -106,6 +106,7 @@ Matches `.env.example`.
 | `GOOGLE_CALENDAR_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` / `_ID` | OAuth2 for Calendar + Gmail — one refresh token must carry both scopes; generate via `scripts/calendar_auth.py` |
 | `TIMEZONE` | Local timezone for week boundaries and job schedule times (default `America/Denver`) |
 | `GMAIL_SCAN_INTERVAL_HOURS` | Gmail receipt scan interval (default 4) |
+| `GMAIL_SCAN_LOOKBACK_DAYS` | Gmail scan lookback window in days (default 7) |
 | `CALENDAR_SCAN_HOUR` | Daily calendar scan hour, local time (default 6) |
 | `WEEKLY_PUSH_HOUR` | Monday scorecard push hour, local time (default 9) |
 

@@ -29,5 +29,6 @@ DATABASE_PATH = os.getenv("DATABASE_PATH", "weekly_updates.db")
 
 # Job schedules
 GMAIL_SCAN_INTERVAL_HOURS = int(os.getenv("GMAIL_SCAN_INTERVAL_HOURS", "4"))
+GMAIL_SCAN_LOOKBACK_DAYS = int(os.getenv("GMAIL_SCAN_LOOKBACK_DAYS", "7"))
 CALENDAR_SCAN_HOUR = int(os.getenv("CALENDAR_SCAN_HOUR", "6"))
 WEEKLY_PUSH_HOUR = int(os.getenv("WEEKLY_PUSH_HOUR", "9"))
