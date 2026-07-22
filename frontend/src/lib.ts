@@ -33,6 +33,11 @@ export function addDays(iso: string, delta: number): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
+export function mondayOf(iso: string): string {
+  const d = parseDay(iso);
+  return addDays(iso, -((d.getDay() + 6) % 7));
+}
+
 export function relativeDayLabel(iso: string, todayIso: string): string {
   if (iso === todayIso) return "Today";
   if (iso === addDays(todayIso, -1)) return "Yesterday";

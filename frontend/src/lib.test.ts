@@ -45,3 +45,20 @@ describe("relativeDayLabel", () => {
     expect(relativeDayLabel("2025-12-31", "2026-07-22")).toBe("Wed, Dec 31, 2025");
   });
 });
+
+import { mondayOf } from "./lib";
+
+describe("mondayOf", () => {
+  it("maps a mid-week date to its containing Monday", () => {
+    expect(mondayOf("2026-07-22")).toBe("2026-07-20"); // Wednesday
+  });
+  it("is identity on a Monday", () => {
+    expect(mondayOf("2026-07-20")).toBe("2026-07-20");
+  });
+  it("maps Sunday back to the previous Monday", () => {
+    expect(mondayOf("2026-07-26")).toBe("2026-07-20");
+  });
+  it("crosses year boundaries", () => {
+    expect(mondayOf("2026-01-01")).toBe("2025-12-29"); // Thursday
+  });
+});
