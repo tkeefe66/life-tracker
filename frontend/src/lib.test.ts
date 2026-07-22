@@ -22,3 +22,26 @@ describe("dayLabel", () => {
     expect(dayLabel("2026-07-20")).toBe("Monday, July 20");
   });
 });
+
+import { addDays, relativeDayLabel } from "./lib";
+
+describe("addDays", () => {
+  it("steps forward and back across month boundaries", () => {
+    expect(addDays("2026-07-01", -1)).toBe("2026-06-30");
+    expect(addDays("2026-06-30", 1)).toBe("2026-07-01");
+    expect(addDays("2026-01-01", -1)).toBe("2025-12-31");
+  });
+});
+
+describe("relativeDayLabel", () => {
+  it("labels today and yesterday", () => {
+    expect(relativeDayLabel("2026-07-22", "2026-07-22")).toBe("Today");
+    expect(relativeDayLabel("2026-07-21", "2026-07-22")).toBe("Yesterday");
+  });
+  it("labels older days with weekday and month", () => {
+    expect(relativeDayLabel("2026-07-14", "2026-07-22")).toBe("Tue, Jul 14");
+  });
+  it("appends the year when it differs", () => {
+    expect(relativeDayLabel("2025-12-31", "2026-07-22")).toBe("Wed, Dec 31, 2025");
+  });
+});

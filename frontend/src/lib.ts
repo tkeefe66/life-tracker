@@ -24,3 +24,21 @@ export function dayLabel(iso: string): string {
   const d = parseDay(iso);
   return `${DAYS[d.getDay()]}, ${MONTHS_FULL[d.getMonth()]} ${d.getDate()}`;
 }
+
+export function addDays(iso: string, delta: number): string {
+  const d = parseDay(iso);
+  d.setDate(d.getDate() + delta);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+export function relativeDayLabel(iso: string, todayIso: string): string {
+  if (iso === todayIso) return "Today";
+  if (iso === addDays(todayIso, -1)) return "Yesterday";
+  const d = parseDay(iso);
+  const base = `${DAYS[d.getDay()].slice(0, 3)}, ${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  return d.getFullYear() === parseDay(todayIso).getFullYear()
+    ? base
+    : `${base}, ${d.getFullYear()}`;
+}
