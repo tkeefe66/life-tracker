@@ -572,6 +572,41 @@ def _init_v2_tables():
             )
         """)
         c.execute("CREATE INDEX IF NOT EXISTS ix_rides_ride_key ON rides(ride_key)")
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS bank_accounts (
+                id {serial} PRIMARY KEY,
+                simplefin_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                org TEXT DEFAULT '',
+                kind TEXT DEFAULT '',
+                role TEXT NOT NULL DEFAULT 'unknown',
+                active {bool_t} NOT NULL DEFAULT TRUE,
+                last_synced_at TEXT
+            )
+        """)
+        # Balances are deliberately absent — see the spec. Not needed for spending
+        # analysis, and the most sensitive field is safest when never stored.
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS bank_transactions (
+                id {serial} PRIMARY KEY,
+                simplefin_id TEXT NOT NULL UNIQUE,
+                account_id INTEGER NOT NULL,
+                posted TEXT NOT NULL,
+                transacted_at TEXT,
+                amount REAL NOT NULL,
+                description TEXT DEFAULT '',
+                payee TEXT DEFAULT '',
+                memo TEXT DEFAULT '',
+                mcc TEXT,
+                flow TEXT,
+                user_flow TEXT,
+                pair_id TEXT,
+                ambiguous {bool_t} NOT NULL DEFAULT FALSE,
+                detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS ix_bank_txn_posted ON bank_transactions(posted)")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_bank_txn_account ON bank_transactions(account_id)")
         c.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
@@ -1013,3 +1048,145 @@ def delete_expired_sessions(now_iso):
     p = _p()
     with _cursor(write=True) as c:
         c.execute(f"DELETE FROM sessions WHERE expires_at <= {p}", (now_iso,))
+
+
+# ── Bank accounts & transactions ──────────────────────────────────────────────
+# The sync job may overwrite everything SimpleFIN reports, but never `role`
+# (user-set) or `user_flow` (user override). Same Override + Learning pattern as
+# social events and rides: AI/derived verdict and user verdict live in separate
+# columns, and resolution happens in SQL so every caller agrees.
+
+BANK_ROLES = ("spending", "bills", "savings", "investment", "credit_card", "unknown")
+BANK_FLOWS = ("spending", "transfer", "card_payment", "investment", "income", "inflow_unknown")
+
+
+def upsert_bank_account(simplefin_id, name, org="", kind=""):
+    """Insert or refresh an account. Never touches `role` or `active` — those are
+    the user's, and a nightly sync must not reset them."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"""INSERT INTO bank_accounts (simplefin_id, name, org, kind)
+                VALUES ({p}, {p}, {p}, {p})
+                ON CONFLICT(simplefin_id) DO UPDATE SET
+                    name = excluded.name, org = excluded.org, kind = excluded.kind""",
+            (simplefin_id, name, org, kind),
+        )
+
+
+def _bank_account_rows(rows):
+    out = [dict(r) for r in rows]
+    for r in out:
+        r["active"] = bool(r["active"])
+    return out
+
+
+def get_bank_accounts():
+    with _cursor() as c:
+        c.execute("""SELECT id, simplefin_id, name, org, kind, role, active, last_synced_at
+                     FROM bank_accounts ORDER BY id""")
+        return _bank_account_rows(c.fetchall())
+
+
+def set_bank_account_role(simplefin_id, role):
+    """Returns True iff a row was updated, so a route can turn an unknown id into a 404."""
+    if role not in BANK_ROLES:
+        raise ValueError(f"unknown role: {role}")
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE bank_accounts SET role = {p} WHERE simplefin_id = {p}",
+                  (role, simplefin_id))
+        return c.rowcount > 0
+
+
+def touch_bank_account_sync(simplefin_id, when_iso):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE bank_accounts SET last_synced_at = {p} WHERE simplefin_id = {p}",
+                  (when_iso, simplefin_id))
+
+
+def upsert_bank_transaction(simplefin_id, account_id, posted, transacted_at, amount,
+                            description="", payee="", memo="", mcc=None):
+    """Insert or refresh. Pending transactions settle — amount, description and
+    posted date all legitimately change — so those are overwritten. `flow`,
+    `user_flow`, `pair_id` and `ambiguous` are never touched here: the first is
+    recomputed by the classification pass, the second belongs to the user."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"""INSERT INTO bank_transactions
+                    (simplefin_id, account_id, posted, transacted_at, amount,
+                     description, payee, memo, mcc)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                ON CONFLICT(simplefin_id) DO UPDATE SET
+                    account_id = excluded.account_id,
+                    posted = excluded.posted,
+                    transacted_at = excluded.transacted_at,
+                    amount = excluded.amount,
+                    description = excluded.description,
+                    payee = excluded.payee,
+                    memo = excluded.memo,
+                    mcc = excluded.mcc""",
+            (simplefin_id, account_id, posted, transacted_at, amount,
+             description, payee, memo, mcc),
+        )
+
+
+def set_bank_transaction_derived(simplefin_id, flow, pair_id, ambiguous):
+    """Write the derived columns. Deliberately does NOT touch user_flow."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"""UPDATE bank_transactions
+                SET flow = {p}, pair_id = {p}, ambiguous = {p}
+                WHERE simplefin_id = {p}""",
+            (flow, pair_id, bool(ambiguous), simplefin_id),
+        )
+
+
+def set_bank_flow_override(simplefin_id, user_flow):
+    """The confirmed user verdict. Returns True iff a row was updated."""
+    if user_flow is not None and user_flow not in BANK_FLOWS:
+        raise ValueError(f"unknown flow: {user_flow}")
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE bank_transactions SET user_flow = {p} WHERE simplefin_id = {p}",
+                  (user_flow, simplefin_id))
+        return c.rowcount > 0
+
+
+_BANK_TXN_SELECT = """
+    SELECT t.id, t.simplefin_id, t.account_id, t.posted, t.transacted_at, t.amount,
+           t.description, t.payee, t.memo, t.mcc, t.flow, t.user_flow, t.pair_id,
+           t.ambiguous, a.role AS account_role, a.name AS account_name,
+           COALESCE(t.user_flow, t.flow) AS resolved_flow
+    FROM bank_transactions t JOIN bank_accounts a ON a.id = t.account_id
+"""
+
+
+def _bank_txn_rows(rows):
+    """Cast `ambiguous` to a real bool — SQLite returns 0/1 ints, which would
+    otherwise leak into the API as non-bool JSON (same reason as _ride_bool_rows)."""
+    out = [dict(r) for r in rows]
+    for r in out:
+        r["ambiguous"] = bool(r["ambiguous"])
+    return out
+
+
+def get_bank_transactions_range(start_day, end_day):
+    p = _p()
+    with _cursor() as c:
+        c.execute(f"{_BANK_TXN_SELECT} WHERE t.posted >= {p} AND t.posted <= {p} "
+                  f"ORDER BY t.posted, t.simplefin_id", (start_day, end_day))
+        return _bank_txn_rows(c.fetchall())
+
+
+def get_unclassified_window(start_day):
+    """Every transaction posted on/after `start_day`, for the matcher and classifier.
+    Returns already-paired rows too — the matcher needs them to know what is taken."""
+    p = _p()
+    with _cursor() as c:
+        c.execute(f"{_BANK_TXN_SELECT} WHERE t.posted >= {p} "
+                  f"ORDER BY t.posted, t.simplefin_id", (start_day,))
+        return _bank_txn_rows(c.fetchall())
