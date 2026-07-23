@@ -97,6 +97,59 @@ export interface SocialPatch {
  * field becomes an explicit `null` (clears a stored amount) rather than being
  * omitted (which would leave a stale amount untouched).
  */
+/** Left-hand label for a spend-subtotal row: rides get a "rides" suffix,
+ * delivery services print as-is, and any social row collapses to "Social". */
+export function serviceLabel(kind: string, service: string): string {
+  if (kind === "ride") return `${service} rides`;
+  if (kind === "social") return "Social";
+  return service;
+}
+
+/** `$16.31`, whole dollars trimmed (`$20`) — a real `$0` still shows, it is
+ * never treated as "nothing to show" (that's the caller's job via null checks). */
+export function money(amount: number): string {
+  return `$${amount.toFixed(2).replace(/\.00$/, "")}`;
+}
+
+interface SubtotalDelivery { service: string; amount: number | null }
+interface SubtotalRide { service: string; amount: number | null; user_is_work: boolean | null }
+interface SubtotalSocialEvent { amount: number | null }
+interface SubtotalDay {
+  deliveries: SubtotalDelivery[];
+  rides: SubtotalRide[];
+  social_events: SubtotalSocialEvent[];
+}
+export interface SpendRow { kind: string; service: string; amount: number }
+
+/**
+ * Client-side mirror of the backend's spend_by_service shape, computed from a
+ * single day's /today payload. Null amounts are skipped (nothing to sum), a
+ * confirmed work ride (user_is_work === true) is excluded — matching the
+ * backend's _personal_rides rule, an AI flag alone never excludes a ride —
+ * and social events collapse into one "Social" row regardless of source.
+ */
+export function subtotalsFromDay(day: SubtotalDay): SpendRow[] {
+  const sums = new Map<string, SpendRow>();
+  const add = (kind: string, service: string, amount: number | null) => {
+    if (amount == null) return;
+    const key = `${kind}:${service}`;
+    const existing = sums.get(key);
+    if (existing) existing.amount += amount;
+    else sums.set(key, { kind, service, amount });
+  };
+
+  for (const d of day.deliveries) add("delivery", d.service, d.amount);
+  for (const r of day.rides) {
+    if (r.user_is_work) continue;
+    add("ride", r.service, r.amount);
+  }
+  for (const e of day.social_events) add("social", "Social", e.amount);
+
+  return Array.from(sums.values())
+    .map((r) => ({ ...r, amount: Math.round(r.amount * 100) / 100 }))
+    .sort((a, b) => b.amount - a.amount);
+}
+
 export function buildSocialPatch(state: SocialEditState): SocialPatch {
   const patch: SocialPatch = {};
 
