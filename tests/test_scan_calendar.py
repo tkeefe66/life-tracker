@@ -18,8 +18,10 @@ def test_scan_classifies_new_events(temp_db_path, monkeypatch):
 
     monkeypatch.setattr(scan_calendar.calendar_service, "get_events_range", lambda days_back: _events())
     monkeypatch.setattr(scan_calendar.google_auth, "is_configured", lambda: True)
-    monkeypatch.setattr(scan_calendar.ai_metrics, "classify_social_event",
-                        lambda title, desc, loc, att: {"is_social": title.startswith("Dinner"), "confidence": 0.9})
+    monkeypatch.setattr(
+        scan_calendar.ai_metrics, "classify_social_event",
+        lambda title, desc, loc, att, examples=None: {"is_social": title.startswith("Dinner"), "confidence": 0.9},
+    )
 
     scan_calendar.run()
 
@@ -34,8 +36,10 @@ def test_scan_does_not_reclassify(temp_db_path, monkeypatch):
     monkeypatch.setattr(scan_calendar.calendar_service, "get_events_range", lambda days_back: _events())
     monkeypatch.setattr(scan_calendar.google_auth, "is_configured", lambda: True)
     calls = []
-    monkeypatch.setattr(scan_calendar.ai_metrics, "classify_social_event",
-                        lambda title, desc, loc, att: calls.append(title) or {"is_social": True, "confidence": 0.9})
+    monkeypatch.setattr(
+        scan_calendar.ai_metrics, "classify_social_event",
+        lambda title, desc, loc, att, examples=None: calls.append(title) or {"is_social": True, "confidence": 0.9},
+    )
 
     scan_calendar.run()
     scan_calendar.run()  # second run: events already classified
@@ -53,3 +57,29 @@ def test_scan_records_error(temp_db_path, monkeypatch):
 
     scan_calendar.run()  # must not raise
     assert db.get_setting("calendar_last_status").startswith("error:")
+
+
+def test_scan_passes_classification_examples_to_each_call(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import scan_calendar
+
+    # A prior user override becomes an example for future classification calls.
+    db.upsert_calendar_event("evold", "Taco Tuesday", "2026-07-01T19:00:00-06:00", "2026-07-01T21:00:00-06:00")
+    db.set_event_classification("evold", False, 0.5)
+    db.set_event_overrides("evold", {"user_is_social": True})
+
+    monkeypatch.setattr(scan_calendar.calendar_service, "get_events_range", lambda days_back: _events())
+    monkeypatch.setattr(scan_calendar.google_auth, "is_configured", lambda: True)
+    received = []
+
+    def fake_classify(title, desc, loc, att, examples=None):
+        received.append(examples)
+        return {"is_social": True, "confidence": 0.9}
+
+    monkeypatch.setattr(scan_calendar.ai_metrics, "classify_social_event", fake_classify)
+    scan_calendar.run()
+
+    assert len(received) == 2  # ev1 + ev2
+    for examples in received:
+        assert examples is not None
+        assert any(e["title"] == "Taco Tuesday" for e in examples)

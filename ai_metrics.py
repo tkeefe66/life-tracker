@@ -66,15 +66,25 @@ Reply with only JSON: {{"is_order": true|false}}"""
     return bool(result.get("is_order", False))
 
 
-def classify_social_event(title: str, description: str, location: str, attendees: list) -> dict:
+def classify_social_event(title: str, description: str, location: str, attendees: list, examples=None) -> dict:
     """Classify a calendar event as social (spending leisure time with other people)
-    or not. Returns {"is_social": bool, "confidence": float}."""
+    or not. Returns {"is_social": bool, "confidence": float}.
+
+    `examples` — recent user corrections (see database.get_classification_examples) —
+    are folded into the prompt so the model learns from past overrides."""
+    example_block = ""
+    if examples:
+        lines = "\n".join(
+            f'- "{e["title"]}" IS {"" if e["user_is_social"] else "NOT "}social' for e in examples
+        )
+        example_block = f"\nThe user has corrected past classifications:\n{lines}\n"
+
     prompt = f"""You classify calendar events. "Social" means leisure time spent with other
 people: dinners, drinks, parties, dates, hangouts, group activities, weddings.
 
 NOT social: work meetings, appointments (doctor, dentist), errands, solo activities
 (gym, haircut), reminders, flights, focus blocks.
-
+{example_block}
 Title: {title}
 Description: {description[:300]}
 Location: {location}

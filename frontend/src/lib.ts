@@ -47,3 +47,44 @@ export function relativeDayLabel(iso: string, todayIso: string): string {
     ? base
     : `${base}, ${d.getFullYear()}`;
 }
+
+export interface SocialEditState {
+  loadedTitle: string;
+  loadedIsSocial: boolean;
+  loadedAmount: number | null;
+  title: string;
+  isSocial: boolean;
+  amountText: string;
+}
+
+export interface SocialPatch {
+  title?: string;
+  is_social?: boolean;
+  amount?: number | null;
+}
+
+/**
+ * Diff the editor's current fields against what was loaded and return only the
+ * fields the user actually changed — so PATCH never manufactures an override
+ * (a pinned title, a bogus is_social flip) the user never made. An emptied cost
+ * field becomes an explicit `null` (clears a stored amount) rather than being
+ * omitted (which would leave a stale amount untouched).
+ */
+export function buildSocialPatch(state: SocialEditState): SocialPatch {
+  const patch: SocialPatch = {};
+
+  const trimmedTitle = state.title.trim();
+  if (trimmedTitle !== state.loadedTitle) patch.title = trimmedTitle;
+
+  if (state.isSocial !== state.loadedIsSocial) patch.is_social = state.isSocial;
+
+  const amountText = state.amountText.trim();
+  if (amountText === "") {
+    if (state.loadedAmount !== null) patch.amount = null;
+  } else {
+    const amount = Number(amountText);
+    if (amount !== state.loadedAmount) patch.amount = amount;
+  }
+
+  return patch;
+}

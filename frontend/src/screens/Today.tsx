@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
-import { addDays, targetLabel } from "../lib";
+import { addDays, buildSocialPatch, targetLabel } from "../lib";
 import DayNav from "../components/DayNav";
+
+interface SocialEvent {
+  gcal_event_id: string;
+  title: string;
+  start_at: string;
+  end_at: string;
+  source: string;
+  amount: number | null;
+  is_social: boolean;
+}
 
 interface TodayData {
   date: string;
@@ -9,7 +19,7 @@ interface TodayData {
   alcohol_level: number | null;
   substances: boolean;
   deliveries: { service: string; subject: string; ordered_at: string }[];
-  social_events: { title: string; start_at: string; end_at: string }[];
+  social_events: SocialEvent[];
 }
 
 interface Metric { label: string; count: number; target: number; direction: string; hit: boolean }
@@ -32,6 +42,18 @@ export default function Today() {
   const [selected, setSelected] = useState<string | null>(null); // null = today
   const [todayIso, setTodayIso] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  const [addingSocial, setAddingSocial] = useState(false);
+  const [socialName, setSocialName] = useState("");
+  const [socialAmount, setSocialAmount] = useState("");
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editIsSocial, setEditIsSocial] = useState(true);
+  const [editAmount, setEditAmount] = useState("");
+  const [editLoaded, setEditLoaded] = useState<{ title: string; isSocial: boolean; amount: number | null }>({
+    title: "", isSocial: true, amount: null,
+  });
 
   const refresh = useCallback(() => {
     apiGet<TodayData>(`/today${selected ? `?date=${selected}` : ""}`)
@@ -81,6 +103,75 @@ export default function Today() {
     try {
       if (data.substances) await apiSend("DELETE", `/checkins/substances?date=${data.date}`);
       else await apiSend("POST", "/checkins", { type: "substances", date: data.date });
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const openAddSocial = () => {
+    setEditingId(null);
+    setSocialName("");
+    setSocialAmount("");
+    setAddingSocial(true);
+  };
+
+  const cancelAddSocial = () => setAddingSocial(false);
+
+  const submitAddSocial = async () => {
+    const name = socialName.trim();
+    if (!name) return;
+    try {
+      const amount = socialAmount.trim() === "" ? undefined : Number(socialAmount);
+      await apiSend("POST", "/social", { name, date: data.date, amount });
+      setAddingSocial(false);
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const openEditSocial = (e: SocialEvent) => {
+    setAddingSocial(false);
+    setEditingId(e.gcal_event_id);
+    setEditTitle(e.title);
+    setEditIsSocial(e.is_social);
+    setEditAmount(e.amount !== null ? String(e.amount) : "");
+    setEditLoaded({ title: e.title, isSocial: e.is_social, amount: e.amount });
+  };
+
+  const cancelEditSocial = () => setEditingId(null);
+
+  const saveEditSocial = async () => {
+    if (!editingId) return;
+    const title = editTitle.trim();
+    if (!title) return;
+    try {
+      // Only fields the user actually changed — an untouched checkbox or title
+      // must never manufacture an override the user never made.
+      const patch = buildSocialPatch({
+        loadedTitle: editLoaded.title,
+        loadedIsSocial: editLoaded.isSocial,
+        loadedAmount: editLoaded.amount,
+        title: editTitle,
+        isSocial: editIsSocial,
+        amountText: editAmount,
+      });
+      if (Object.keys(patch).length > 0) {
+        await apiSend("PATCH", `/social/${editingId}`, patch);
+      }
+      setEditingId(null);
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const deleteEditSocial = async () => {
+    if (!editingId) return;
+    try {
+      await apiSend("DELETE", `/social/${editingId}`);
+      setEditingId(null);
       refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -154,11 +245,80 @@ export default function Today() {
         </p>
       ))}
       {data.social_events.map((e) => (
-        <p className="quiet" key={e.start_at}>
-          <span>{e.title}</span>
-          <span className="when">counted as social</span>
-        </p>
+        <div className="quiet-row" key={e.gcal_event_id}>
+          <button className="quiet quiet-btn" onClick={() => openEditSocial(e)}>
+            <span>{e.title}</span>
+            <span className="when">
+              {e.amount !== null ? `$${e.amount.toFixed(2).replace(/\.00$/, "")}` : e.source === "manual" ? "manual" : "counted as social"}
+            </span>
+          </button>
+          {editingId === e.gcal_event_id && (
+            <div className="social-form">
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(ev) => setEditTitle(ev.target.value)}
+                placeholder="Event name"
+                aria-label="Event name"
+              />
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={editIsSocial}
+                  onChange={(ev) => setEditIsSocial(ev.target.checked)}
+                />
+                Counts as social
+              </label>
+              <input
+                className="field-num"
+                type="number"
+                min="0"
+                step="0.01"
+                value={editAmount}
+                onChange={(ev) => setEditAmount(ev.target.value)}
+                placeholder="Cost"
+                aria-label="Cost"
+              />
+              <div className="row-actions">
+                <button onClick={cancelEditSocial}>Cancel</button>
+                {e.source === "manual" && (
+                  <button className="danger" onClick={deleteEditSocial}>Delete</button>
+                )}
+                <button className="primary" onClick={saveEditSocial}>Save</button>
+              </div>
+            </div>
+          )}
+        </div>
       ))}
+
+      {addingSocial ? (
+        <div className="social-form">
+          <input
+            type="text"
+            value={socialName}
+            onChange={(ev) => setSocialName(ev.target.value)}
+            placeholder="Event name"
+            aria-label="Event name"
+            autoFocus
+          />
+          <input
+            className="field-num"
+            type="number"
+            min="0"
+            step="0.01"
+            value={socialAmount}
+            onChange={(ev) => setSocialAmount(ev.target.value)}
+            placeholder="Cost (optional)"
+            aria-label="Cost"
+          />
+          <div className="row-actions">
+            <button onClick={cancelAddSocial}>Cancel</button>
+            <button className="primary" onClick={submitAddSocial}>Save</button>
+          </div>
+        </div>
+      ) : (
+        <button className="add-social-btn" onClick={openAddSocial}>+ Add social event</button>
+      )}
 
       {week && (
         <>

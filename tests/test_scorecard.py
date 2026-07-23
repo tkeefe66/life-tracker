@@ -43,6 +43,21 @@ def test_social_excludes_future_events(temp_db_path):
     assert card["metrics"]["social"]["count"] == 0  # hasn't occurred yet
 
 
+def test_manual_social_event_counts_before_it_would_have_occurred(temp_db_path):
+    """Manual events are user-asserted facts, not calendar predictions — they must
+    count toward the week and social_spend immediately, regardless of the synthetic
+    12:00-13:00 span the API gives them or what time of day it currently is."""
+    import database as db
+    from app.scorecard import counts_for_week, scorecard_for_week, _local_today
+    db.seed_default_targets()
+    today = _local_today()
+    day = today.isoformat()
+    # end_at far in the future relative to "now" so an occurrence gate would exclude it.
+    db.add_manual_social_event("manual:trivia", "Trivia night", f"{day}T23:58:00", f"{day}T23:59:00", amount=15.0)
+    assert counts_for_week(today)["social"] == 1
+    assert scorecard_for_week(today)["social_spend"] == 15.0
+
+
 def test_history_excludes_current_week_and_computes_streaks(temp_db_path):
     import database as db
     from app.scorecard import history

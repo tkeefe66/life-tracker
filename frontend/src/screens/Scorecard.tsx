@@ -6,7 +6,10 @@ import TrendChart from "../components/TrendChart";
 import WeekdayHeatmap from "../components/WeekdayHeatmap";
 
 interface Metric { label: string; count: number; target: number; direction: string; hit: boolean }
-interface Card { week_start: string; week_end: string; metrics: Record<string, Metric>; delivery_spend: number }
+interface Card {
+  week_start: string; week_end: string; metrics: Record<string, Metric>;
+  delivery_spend: number; social_spend: number;
+}
 interface Insights {
   weeks: Card[];
   streaks: Record<string, number>;
@@ -95,6 +98,8 @@ export default function Scorecard() {
                 {streak > 0 && weekStart === null && ` · ${streak}-week streak`}
                 {key === "delivery" && card.delivery_spend > 0 &&
                   ` · $${card.delivery_spend.toFixed(2).replace(/\.00$/, "")} spent`}
+                {key === "social" && card.social_spend > 0 &&
+                  ` · $${card.social_spend.toFixed(2).replace(/\.00$/, "")} spent`}
               </p>
             </section>
           );

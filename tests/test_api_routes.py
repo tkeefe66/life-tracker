@@ -170,3 +170,158 @@ def test_scorecard_delivery_spend_sums_amounts_null_as_zero(temp_db_path):
     db.add_delivery_order("m2", "DoorDash", "2026-07-16T19:30:00-06:00", "order")  # amount NULL
     card = client.get("/api/scorecard?week_start=2026-07-13").json()
     assert card["delivery_spend"] == 16.31
+
+
+# ── Social: manual events, overrides, delete ─────────────────────────────────
+
+def test_post_social_creates_manual_event(temp_db_path):
+    client = _client(temp_db_path)
+    resp = client.post("/api/social", json={"name": "Trivia night", "amount": 12.5})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["title"] == "Trivia night"
+    assert body["source"] == "manual"
+    assert body["amount"] == 12.5
+
+    snap = client.get("/api/today").json()
+    ev = next(e for e in snap["social_events"] if e["title"] == "Trivia night")
+    assert ev["source"] == "manual"
+    assert ev["amount"] == 12.5
+    assert ev["gcal_event_id"] == body["gcal_event_id"]
+    assert ev["is_social"] is True  # editor initializes its checkbox from this, not a hardcoded guess
+
+
+def test_post_social_increments_scorecard_social_count(temp_db_path):
+    """Plan-required test: creating a manual event must count toward the week
+    immediately, not just once its synthetic 12:00-13:00 span has 'occurred' —
+    robust to whatever time of day the suite runs."""
+    client = _client(temp_db_path)
+    before = client.get("/api/scorecard").json()["metrics"]["social"]["count"]
+    resp = client.post("/api/social", json={"name": "Trivia night"})
+    assert resp.status_code == 200
+    after = client.get("/api/scorecard").json()["metrics"]["social"]["count"]
+    assert after == before + 1
+
+
+def test_post_social_rejects_future_date(temp_db_path):
+    client = _client(temp_db_path)
+    future = (datetime.date.today() + datetime.timedelta(days=3)).isoformat()
+    resp = client.post("/api/social", json={"name": "Party", "date": future})
+    assert resp.status_code == 400
+
+
+def test_post_social_rejects_negative_amount(temp_db_path):
+    client = _client(temp_db_path)
+    resp = client.post("/api/social", json={"name": "Party", "amount": -5})
+    assert resp.status_code == 422
+
+
+def test_post_social_past_date_lands_on_that_day(temp_db_path):
+    client = _client(temp_db_path)
+    past = (datetime.date.today() - datetime.timedelta(days=2)).isoformat()
+    resp = client.post("/api/social", json={"name": "Dinner", "date": past})
+    assert resp.status_code == 200
+    snap = client.get(f"/api/today?date={past}").json()
+    assert any(e["title"] == "Dinner" for e in snap["social_events"])
+
+
+def test_patch_social_renames_event(temp_db_path):
+    client = _client(temp_db_path)
+    created = client.post("/api/social", json={"name": "Old name"}).json()
+    event_id = created["gcal_event_id"]
+    resp = client.patch(f"/api/social/{event_id}", json={"title": "New name"})
+    assert resp.status_code == 200
+    snap = client.get("/api/today").json()
+    assert any(e["title"] == "New name" for e in snap["social_events"])
+
+
+def test_patch_social_is_social_false_drops_from_count(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    db.upsert_calendar_event("ev1", "Dinner", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    before = client.get("/api/scorecard?week_start=2026-07-13").json()
+    assert before["metrics"]["social"]["count"] == 1
+    resp = client.patch("/api/social/ev1", json={"is_social": False})
+    assert resp.status_code == 200
+    after = client.get("/api/scorecard?week_start=2026-07-13").json()
+    assert after["metrics"]["social"]["count"] == 0
+
+
+def test_patch_social_unknown_id_404(temp_db_path):
+    client = _client(temp_db_path)
+    resp = client.patch("/api/social/nope", json={"title": "x"})
+    assert resp.status_code == 404
+
+
+def test_patch_social_rejects_negative_amount(temp_db_path):
+    client = _client(temp_db_path)
+    created = client.post("/api/social", json={"name": "Party"}).json()
+    resp = client.patch(f"/api/social/{created['gcal_event_id']}", json={"amount": -1})
+    assert resp.status_code == 422
+
+
+def test_patch_social_clears_amount_with_explicit_null(temp_db_path):
+    client = _client(temp_db_path)
+    created = client.post("/api/social", json={"name": "Party", "amount": 300}).json()
+    event_id = created["gcal_event_id"]
+    resp = client.patch(f"/api/social/{event_id}", json={"amount": None})
+    assert resp.status_code == 200
+    import database as db
+    assert db.get_event(event_id)["amount"] is None
+
+
+def test_patch_social_omitted_amount_leaves_it_untouched(temp_db_path):
+    client = _client(temp_db_path)
+    created = client.post("/api/social", json={"name": "Party", "amount": 300}).json()
+    event_id = created["gcal_event_id"]
+    resp = client.patch(f"/api/social/{event_id}", json={"title": "Party v2"})
+    assert resp.status_code == 200
+    import database as db
+    assert db.get_event(event_id)["amount"] == 300
+
+
+def test_patch_social_clears_title_override_with_explicit_null(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    db.upsert_calendar_event("ev1", "Dinner", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    db.set_event_overrides("ev1", {"user_title": "Sam's birthday dinner"})
+    resp = client.patch("/api/social/ev1", json={"title": None})
+    assert resp.status_code == 200
+    row = db.get_event("ev1")
+    assert row["user_title"] is None
+
+
+def test_delete_social_manual_event(temp_db_path):
+    client = _client(temp_db_path)
+    created = client.post("/api/social", json={"name": "Cancelled plan"}).json()
+    event_id = created["gcal_event_id"]
+    resp = client.delete(f"/api/social/{event_id}")
+    assert resp.status_code == 200
+    snap = client.get("/api/today").json()
+    assert not any(e["title"] == "Cancelled plan" for e in snap["social_events"])
+
+
+def test_delete_social_gcal_event_rejected(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    db.upsert_calendar_event("ev1", "Dinner", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    resp = client.delete("/api/social/ev1")
+    assert resp.status_code == 400
+
+
+def test_delete_social_unknown_id_404(temp_db_path):
+    client = _client(temp_db_path)
+    resp = client.delete("/api/social/nope")
+    assert resp.status_code == 404
+
+
+def test_social_spend_sums_amounts_on_scorecard(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    db.add_manual_social_event("manual:1", "Dinner", "2026-07-15T12:00:00", "2026-07-15T13:00:00", amount=30.0)
+    db.add_manual_social_event("manual:2", "Coffee", "2026-07-16T12:00:00", "2026-07-16T13:00:00")  # NULL amount
+    card = client.get("/api/scorecard?week_start=2026-07-13").json()
+    assert card["social_spend"] == 30.0
