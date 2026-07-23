@@ -22,6 +22,10 @@
   --chart-delivery: oklch(50% 0.185 277);
   --chart-rides: oklch(56% 0.135 60);
   --chart-social: oklch(55% 0.11 175);
+  /* alias of --chart-delivery's validated values -- see spec §7. Do not
+     substitute a new hue without running the six-check validation against
+     both surfaces. */
+  --chart-bank: oklch(50% 0.185 277);
   --shadow-item: 0 1px 2px oklch(25% 0.02 277 / 0.05), 0 6px 20px -12px oklch(25% 0.02 277 / 0.1);
   --r: 12px;
   --dur: 160ms;
@@ -50,6 +54,10 @@
     --chart-delivery: oklch(63% 0.17 277);
     --chart-rides: oklch(62% 0.14 60);
     --chart-social: oklch(64% 0.10 175);
+    /* alias of --chart-delivery's validated values -- see spec §7. Do not
+       substitute a new hue without running the six-check validation against
+       both surfaces. */
+    --chart-bank: oklch(63% 0.17 277);
   }
 }
 
@@ -593,6 +601,7 @@ button.quiet-btn:active { background: var(--accent-soft); }
 .spend-seg-delivery { fill: var(--chart-delivery); }
 .spend-seg-rides { fill: var(--chart-rides); }
 .spend-seg-social { fill: var(--chart-social); }
+.spend-seg-bank { fill: var(--chart-bank); }
 .spend-baseline { stroke: var(--line); stroke-width: 1; }
 .spend-axis { font-size: 9px; fill: var(--muted); }
 .spend-hit { fill: transparent; cursor: pointer; }
@@ -820,3 +829,42 @@ details.orders .quiet { margin: 10px 0 0; }
   font-weight: 600;
   background: var(--surface-2);
 }
+
+/* ── Bank triage queue (Money screen) ── */
+
+.triage-queue {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-item);
+  padding: 16px;
+  margin-bottom: 18px;
+}
+.triage-queue h3 { font-size: 1rem; margin-bottom: 2px; }
+.triage-prompt { font-size: 0.82rem; color: var(--muted); margin-bottom: 10px; }
+
+.triage-list { list-style: none; }
+.triage-row { padding: 12px 0; }
+.triage-row + .triage-row { border-top: 1px solid var(--line); }
+
+.triage-row-top {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  color: var(--ink-2);
+  margin-bottom: 8px;
+}
+.triage-detail { flex: 1; min-width: 0; }
+.triage-label { display: block; font-size: 0.9rem; }
+.triage-meta { display: block; font-size: 0.78rem; }
+.triage-amount { color: var(--ink); white-space: nowrap; }
+
+/* The choice buttons reuse .chips button's colors and interaction states —
+   only sizing changes, since that treatment was built for single-digit
+   alcohol-level chips and these carry multi-word labels. */
+.triage-queue .chips { flex-wrap: wrap; }
+.triage-queue .chips button { width: auto; height: auto; padding: 8px 12px; white-space: nowrap; }
+
+/* Same settle pulse the Today check-ins use (spec §6.2) — the row itself is
+   removed by the parent, this just gives the tap a moment of feedback first. */
+.triage-row.settle { animation: settle 200ms var(--ease); }
