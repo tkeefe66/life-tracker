@@ -328,26 +328,47 @@ def get_bank_triage(limit: int = 50):
 MAX_BULK_FLOW_IDS = 200
 
 
+MAX_NOTE_LEN = 500
+
+
 class FlowPatch(BaseModel):
     flow: Optional[str] = None
+    # Omitted, or explicit JSON null, both mean "leave the stored note
+    # untouched" -- there is no wire-level difference between the two, so
+    # the route checks `model_fields_set` rather than the value itself.
+    # Only a provided string (including "") is forwarded to the DB layer,
+    # where "" clears the note to NULL. This is what makes put-back
+    # ({flow: null}) preserve a note: the note explains the transaction,
+    # not the answer.
+    note: Optional[str] = None
 
 
 class BulkFlowPatch(BaseModel):
     simplefin_ids: list[str]
     flow: Optional[str] = None
+    # Bulk apply never takes a note -- one sentence shared across many rows
+    # explains nothing. Present only so a caller that includes it gets a
+    # loud 400 instead of the field being silently dropped.
+    note: Optional[str] = None
 
 
 @router.post("/bank/transactions/{simplefin_id}/flow")
 def set_bank_transaction_flow(simplefin_id: str, body: FlowPatch):
     if body.flow is not None and body.flow not in db.BANK_FLOWS:
         raise HTTPException(status_code=400, detail="unknown flow")
-    if not db.set_bank_flow_override(simplefin_id, body.flow):
+    note_provided = "note" in body.model_fields_set and body.note is not None
+    if note_provided and len(body.note) > MAX_NOTE_LEN:
+        raise HTTPException(status_code=400, detail=f"note too long (max {MAX_NOTE_LEN} chars)")
+    kwargs = {"note": body.note} if note_provided else {}
+    if not db.set_bank_flow_override(simplefin_id, body.flow, **kwargs):
         raise HTTPException(status_code=404, detail="unknown transaction")
     return {"ok": True, "simplefin_id": simplefin_id, "flow": body.flow}
 
 
 @router.post("/bank/transactions/flow")
 def set_bank_transactions_flow_bulk(body: BulkFlowPatch):
+    if body.note is not None:
+        raise HTTPException(status_code=400, detail="bulk apply does not take a note")
     if len(body.simplefin_ids) > MAX_BULK_FLOW_IDS:
         raise HTTPException(status_code=400, detail=f"too many ids (max {MAX_BULK_FLOW_IDS})")
     try:

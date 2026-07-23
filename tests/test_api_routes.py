@@ -864,6 +864,100 @@ def test_bulk_flow_override_unknown_flow_writes_nothing(client, temp_db_path):
     assert row["user_flow"] is None  # nothing written
 
 
+def test_patch_bank_transaction_flow_accepts_refund_verdict(client, temp_db_path):
+    import database as db
+
+    acct = _bank_account(db)
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01", 20.0, "AMBIG", "", "", None)
+    db.set_bank_transaction_derived("t1", "inflow_unknown", None, False)
+
+    resp = client.post("/api/bank/transactions/t1/flow", json={"flow": "refund"})
+    assert resp.status_code == 200
+
+
+def test_patch_bank_transaction_flow_with_note_shows_up_in_triage(client, temp_db_path):
+    import database as db
+
+    acct = _bank_account(db)
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01", 20.0, "AMBIG", "", "", None)
+    db.set_bank_transaction_derived("t1", "inflow_unknown", None, False)
+
+    resp = client.post("/api/bank/transactions/t1/flow", json={"flow": "income", "note": " why "})
+    assert resp.status_code == 200
+
+    triage = client.get("/api/bank/triage").json()
+    row = next(r for r in triage["recent"] if r["simplefin_id"] == "t1")
+    assert row["user_note"] == "why"
+
+
+def test_patch_bank_transaction_flow_putback_keeps_note(client, temp_db_path):
+    import database as db
+
+    acct = _bank_account(db)
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01", 20.0, "AMBIG", "", "", None)
+    db.set_bank_transaction_derived("t1", "inflow_unknown", None, False)
+
+    resp = client.post("/api/bank/transactions/t1/flow", json={"flow": "income", "note": "why"})
+    assert resp.status_code == 200
+
+    resp = client.post("/api/bank/transactions/t1/flow", json={"flow": None})
+    assert resp.status_code == 200
+
+    row = next(r for r in db.get_all_bank_transactions() if r["simplefin_id"] == "t1")
+    assert row["user_note"] == "why"  # note untouched by put-back
+
+
+def test_patch_bank_transaction_flow_empty_note_clears(client, temp_db_path):
+    import database as db
+
+    acct = _bank_account(db)
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01", 20.0, "AMBIG", "", "", None)
+    db.set_bank_transaction_derived("t1", "inflow_unknown", None, False)
+
+    resp = client.post("/api/bank/transactions/t1/flow", json={"flow": "income", "note": "why"})
+    assert resp.status_code == 200
+
+    resp = client.post("/api/bank/transactions/t1/flow", json={"flow": "income", "note": ""})
+    assert resp.status_code == 200
+
+    row = next(r for r in db.get_all_bank_transactions() if r["simplefin_id"] == "t1")
+    assert row["user_note"] is None
+
+
+def test_patch_bank_transaction_flow_note_too_long_rejects_before_write(client, temp_db_path):
+    import database as db
+
+    acct = _bank_account(db)
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01", -20.0, "AMBIG", "", "", None)
+    db.set_bank_transaction_derived("t1", "spending", None, True)
+
+    resp = client.post(
+        "/api/bank/transactions/t1/flow", json={"flow": "transfer", "note": "x" * 501}
+    )
+    assert resp.status_code == 400
+
+    row = next(r for r in db.get_all_bank_transactions() if r["simplefin_id"] == "t1")
+    assert row["user_flow"] is None  # flow unchanged
+    assert row["user_note"] is None  # note unchanged
+
+
+def test_bulk_flow_override_rejects_note(client, temp_db_path):
+    import database as db
+
+    acct = _bank_account(db)
+    db.upsert_bank_transaction("b1", acct["id"], "2026-07-01", "2026-07-01", -10.0, "X", "", "", None)
+    db.set_bank_transaction_derived("b1", "spending", None, False)
+
+    resp = client.post(
+        "/api/bank/transactions/flow",
+        json={"simplefin_ids": ["b1"], "flow": "transfer", "note": "x"},
+    )
+    assert resp.status_code == 400
+
+    row = next(r for r in db.get_all_bank_transactions() if r["simplefin_id"] == "b1")
+    assert row["user_flow"] is None  # nothing written
+
+
 def test_get_bank_accounts_no_balance_key_and_no_url_leak(client, temp_db_path):
     import database as db
 
