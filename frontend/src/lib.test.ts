@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayLabel, targetLabel, weekLabel } from "./lib";
+import { dayLabel, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel } from "./lib";
 
 describe("weekLabel", () => {
   it("formats a Monday week start as a Mon–Sun range", () => {
@@ -135,5 +135,101 @@ describe("buildSocialPatch", () => {
   it("combines multiple real changes", () => {
     const patch = buildSocialPatch({ ...loaded, title: "Dinner out", isSocial: false, amountText: "40" });
     expect(patch).toEqual({ title: "Dinner out", is_social: false, amount: 40 });
+  });
+});
+
+describe("serviceLabel", () => {
+  it("appends 'rides' to a ride service", () => {
+    expect(serviceLabel("ride", "Uber")).toBe("Uber rides");
+    expect(serviceLabel("ride", "Lyft")).toBe("Lyft rides");
+  });
+
+  it("leaves a delivery service label as-is", () => {
+    expect(serviceLabel("delivery", "Uber Eats")).toBe("Uber Eats");
+    expect(serviceLabel("delivery", "DoorDash")).toBe("DoorDash");
+  });
+
+  it("collapses any social service to 'Social'", () => {
+    expect(serviceLabel("social", "Social")).toBe("Social");
+    expect(serviceLabel("social", "anything")).toBe("Social");
+  });
+});
+
+describe("money", () => {
+  it("formats cents", () => {
+    expect(money(16.31)).toBe("$16.31");
+  });
+
+  it("trims a whole-dollar amount", () => {
+    expect(money(20)).toBe("$20");
+  });
+
+  it("shows a real zero rather than hiding it", () => {
+    expect(money(0)).toBe("$0");
+  });
+});
+
+describe("subtotalsFromDay", () => {
+  it("sums a mixed day of deliveries, personal rides, and social spend", () => {
+    const rows = subtotalsFromDay({
+      deliveries: [
+        { service: "Uber Eats", amount: 16.31 },
+        { service: "Uber Eats", amount: 10 },
+        { service: "DoorDash", amount: 8 },
+      ],
+      rides: [
+        { service: "Uber", amount: 12, user_is_work: false },
+      ],
+      social_events: [{ amount: 25 }],
+    });
+    expect(rows).toEqual([
+      { kind: "delivery", service: "Uber Eats", amount: 26.31 },
+      { kind: "social", service: "Social", amount: 25 },
+      { kind: "ride", service: "Uber", amount: 12 },
+      { kind: "delivery", service: "DoorDash", amount: 8 },
+    ]);
+  });
+
+  it("excludes a ride whose user_is_work is true", () => {
+    const rows = subtotalsFromDay({
+      deliveries: [],
+      rides: [
+        { service: "Uber", amount: 12, user_is_work: false },
+        { service: "Lyft", amount: 50, user_is_work: true },
+      ],
+      social_events: [],
+    });
+    expect(rows).toEqual([{ kind: "ride", service: "Uber", amount: 12 }]);
+  });
+
+  it("returns an empty array when nothing has an amount", () => {
+    const rows = subtotalsFromDay({
+      deliveries: [{ service: "Uber Eats", amount: null }],
+      rides: [{ service: "Uber", amount: null, user_is_work: false }],
+      social_events: [{ amount: null }],
+    });
+    expect(rows).toEqual([]);
+  });
+
+  it("excludes a social event whose end_at hasn't happened yet", () => {
+    const now = new Date("2026-07-22T12:00:00").getTime();
+    const rows = subtotalsFromDay({
+      deliveries: [],
+      rides: [],
+      social_events: [
+        { amount: 25, end_at: "2026-07-22T08:00:00" }, // already ended — counted
+        { amount: 80, end_at: "2026-07-22T21:00:00" }, // still to come — excluded
+      ],
+    }, now);
+    expect(rows).toEqual([{ kind: "social", service: "Social", amount: 25 }]);
+  });
+
+  it("still counts a social event with no end_at (backward-compatible default)", () => {
+    const rows = subtotalsFromDay({
+      deliveries: [],
+      rides: [],
+      social_events: [{ amount: 25 }],
+    });
+    expect(rows).toEqual([{ kind: "social", service: "Social", amount: 25 }]);
   });
 });

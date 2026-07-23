@@ -121,3 +121,36 @@ def test_today_snapshot_includes_rides_for_the_day(temp_db_path):
     snap = scorecard.today_snapshot()
     assert len(snap["rides"]) == 1
     assert snap["rides"][0]["service"] == "Uber"
+
+
+def test_spend_by_service_shape_sorting_and_exclusions(temp_db_path):
+    """Two delivery services (one with a null-amount order that must not appear as
+    its own zero row), a personal ride, a confirmed-work ride (excluded), and a
+    social event with a cost — one row per service, sorted by amount descending,
+    the work ride absent, no zero/None rows."""
+    import database as db
+    from app.scorecard import scorecard_for_week
+    db.seed_default_targets()
+    db.add_delivery_order("m1", "Uber Eats", "2026-07-15T19:30:00-06:00", "order", 16.31)
+    db.add_delivery_order("m2", "Uber Eats", "2026-07-16T19:30:00-06:00", "order", 10.0)
+    db.add_delivery_order("m3", "DoorDash", "2026-07-16T19:30:00-06:00", "order", 8.0)
+    db.add_delivery_order("m4", "DoorDash", "2026-07-17T19:30:00-06:00", "order")  # amount NULL
+    db.add_ride("r1", "Uber", "2026-07-15T08:00:00-06:00", "2026-07-15T08:00", "Personal", 12.0)
+    db.add_ride("r2", "Lyft", "2026-07-16T08:00:00-06:00", "2026-07-16T08:00", "Work trip", 50.0)
+    rides = db.get_rides_range("2026-07-13", "2026-07-19")
+    by_subject = {r["subject"]: r["id"] for r in rides}
+    db.set_ride_work_override(by_subject["Work trip"], True)  # confirmed work — excluded
+    db.upsert_calendar_event("ev1", "Dinner", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    db.set_event_overrides("ev1", {"amount": 25.0})
+
+    card = scorecard_for_week(date(2026, 7, 13))
+    rows = card["spend_by_service"]
+
+    assert rows == [
+        {"kind": "delivery", "service": "Uber Eats", "amount": 26.31},
+        {"kind": "social", "service": "Social", "amount": 25.0},
+        {"kind": "ride", "service": "Uber", "amount": 12.0},
+        {"kind": "delivery", "service": "DoorDash", "amount": 8.0},
+    ]
+    assert not any(r["service"] == "Lyft" for r in rows)  # confirmed-work ride excluded

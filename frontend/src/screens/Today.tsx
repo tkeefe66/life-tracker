@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
-import { addDays, buildSocialPatch, targetLabel } from "../lib";
+import { addDays, buildSocialPatch, subtotalsFromDay, targetLabel } from "../lib";
 import DayNav from "../components/DayNav";
+import SpendSubtotals from "../components/SpendSubtotals";
 
 interface SocialEvent {
   gcal_event_id: string;
@@ -357,6 +358,8 @@ export default function Today() {
       ) : (
         <button className="add-social-btn" onClick={openAddSocial}>+ Add social event</button>
       )}
+
+      <SpendSubtotals rows={subtotalsFromDay(data)} title="Spent today" />
 
       {week && (
         <>
