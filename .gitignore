@@ -21,3 +21,6 @@ __pycache__/
 
 # Brainstorm visual companion scratch
 .superpowers/brainstorm/
+
+# SimpleFIN credentials must never be committed
+simplefin_*.json
