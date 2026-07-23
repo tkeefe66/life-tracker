@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { apiGet, login, UnauthorizedError } from "./api";
 import Today from "./screens/Today";
 import Scorecard from "./screens/Scorecard";
+import Insights from "./screens/Insights";
 import Settings from "./screens/Settings";
 
-type Tab = "today" | "scorecard" | "settings";
+type Tab = "today" | "scorecard" | "insights" | "settings";
 
 const TAB_META: { id: Tab; label: string; icon: JSX.Element }[] = [
   {
@@ -23,6 +24,16 @@ const TAB_META: { id: Tab; label: string; icon: JSX.Element }[] = [
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
         <path d="M4 16V9M10 16V4M16 16v-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    id: "insights",
+    label: "Insights",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <path d="M3 14l4.5-5 3 3L17 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="17" cy="5" r="1.4" fill="currentColor" />
       </svg>
     ),
   },
@@ -103,6 +114,7 @@ export default function App() {
       <main>
         {tab === "today" && <Today />}
         {tab === "scorecard" && <Scorecard />}
+        {tab === "insights" && <Insights />}
         {tab === "settings" && <Settings />}
       </main>
       <nav className="tabs">
