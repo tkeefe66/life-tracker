@@ -105,6 +105,36 @@ Reply with only JSON: {{"is_social": true|false, "confidence": 0.0-1.0}}"""
     }
 
 
+def classify_work_ride(service: str, subject: str, snippet: str = "", examples=None) -> dict:
+    """Work vs personal ride. Returns {"is_work": bool, "confidence": float}.
+
+    `examples` — recent user corrections (see database.get_ride_examples) — are
+    folded into the prompt so the model learns from past overrides."""
+    example_block = ""
+    if examples:
+        lines = "\n".join(
+            f'- "{e["subject"]}" IS {"" if e["user_is_work"] else "NOT "}work' for e in examples
+        )
+        example_block = f"\nThe user has corrected past classifications:\n{lines}\n"
+    prompt = f"""You classify ride-hailing receipts as WORK travel or PERSONAL.
+
+Work rides usually involve airports, hotels, conference venues, out-of-town
+addresses, or weekday business hours while travelling. Personal rides are
+local trips, nights out, and errands.
+{example_block}
+Service: {service}
+Subject: {subject}
+Preview: {snippet[:200]}
+
+Reply with only JSON: {{"is_work": true|false, "confidence": 0.0-1.0}}"""
+    result = _call_json(prompt, default={"is_work": False, "confidence": 0.0})
+    try:
+        confidence = float(result.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return {"is_work": bool(result.get("is_work", False)), "confidence": confidence}
+
+
 def weekly_reflection(card: dict, noticings: list) -> str:
     """2-3 sentence reflection on a completed week. Returns "" on any failure."""
     lines = []

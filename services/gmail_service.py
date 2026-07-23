@@ -1,16 +1,16 @@
-"""Gmail service — finds food-delivery receipt candidates (gmail.readonly)."""
+"""Gmail service — finds food-delivery and ride receipt candidates (gmail.readonly)."""
 import datetime
 import logging
 
 import pytz
 
 from config import GMAIL_SCAN_LOOKBACK_DAYS, TIMEZONE
-from receipts import DELIVERY_DOMAINS
+from receipts import DELIVERY_DOMAINS, RIDE_DOMAINS
 from services import google_auth
 
 logger = logging.getLogger(__name__)
 
-_SENDERS = "from:(" + " OR ".join(DELIVERY_DOMAINS) + ")"
+_SENDERS = "from:(" + " OR ".join(sorted(set(DELIVERY_DOMAINS) | set(RIDE_DOMAINS))) + ")"
 
 
 def _query() -> str:

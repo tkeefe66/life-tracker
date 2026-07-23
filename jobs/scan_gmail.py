@@ -25,13 +25,32 @@ def run():
         return
     try:
         candidates = fetch_delivery_candidates()
-        added = ai_checked = 0
+        ride_examples = db.get_ride_examples()
+        added = ai_checked = rides_added = 0
         for cand in candidates:
-            if db.has_delivery_order(cand["gmail_message_id"]):
+            if db.has_delivery_order(cand["gmail_message_id"]) or db.has_ride(cand["gmail_message_id"]):
                 continue
             snippet = cand.get("snippet", "")
             amount = receipts.extract_amount(snippet)
             day = cand["ordered_at"][:10]
+
+            ride_verdict, ride_service = receipts.classify_ride(cand["sender"], cand["subject"])
+            if ride_verdict == "ride":
+                key = receipts.extract_ride_time(snippet) or f"{day}|{cand['subject']}|{amount}"
+                existing = db.find_ride_by_key(ride_service, key)
+                if existing:
+                    if amount is not None:
+                        db.set_ride_amount(existing["id"], amount)
+                    continue
+                if db.add_ride(cand["gmail_message_id"], ride_service, cand["ordered_at"],
+                               key, cand["subject"], amount):
+                    rides_added += 1
+                    stored = db.find_ride_by_key(ride_service, key)
+                    verdict = ai_metrics.classify_work_ride(
+                        ride_service, cand["subject"], snippet, ride_examples)
+                    db.set_ride_classification(stored["id"], verdict["is_work"], verdict["confidence"])
+                continue
+
             if receipts.is_followup(snippet):
                 _, service = receipts.classify_candidate(cand["sender"], cand["subject"])
                 if not service:
@@ -60,9 +79,13 @@ def run():
         db.set_setting("gmail_last_status", "ok")
         db.set_setting(
             "gmail_last_result",
-            f"{len(candidates)} candidates · {ai_checked} AI-checked · {added} new orders",
+            f"{len(candidates)} candidates · {ai_checked} AI-checked · {added} new orders · "
+            f"{rides_added} new rides",
         )
-        logger.info("Gmail scan: %d candidates, %d AI-checked, %d new orders", len(candidates), ai_checked, added)
+        logger.info(
+            "Gmail scan: %d candidates, %d AI-checked, %d new orders, %d new rides",
+            len(candidates), ai_checked, added, rides_added,
+        )
     except Exception as e:
         logger.exception("Gmail scan failed")
         db.set_setting("gmail_last_run", _now_iso())
