@@ -598,6 +598,15 @@ button.quiet-btn:active { background: var(--accent-soft); }
 .spend-hit { fill: transparent; cursor: pointer; }
 .spend-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
+/* The final bar is the current, still-accumulating week — same hues, just
+   lighter, plus a dashed top edge so it doesn't read as a spending decline. */
+.spend-seg-current { opacity: 0.55; }
+.spend-seg-current-edge {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 1.5;
+}
+
 /* ── Insights: Behavior/Money segmented control ── */
 .segment {
   display: flex;

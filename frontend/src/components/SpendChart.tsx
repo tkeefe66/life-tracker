@@ -43,7 +43,10 @@ export default function SpendChart({ weeks, onSelect }: Props) {
         const barX = colX + 1;
         const barWidth = Math.max(bw - 2, 1);
         const total = totals[i];
-        const title = `${weekRangeLabel(w.week_start)} · ${money(total)}`;
+        // The final bar is the current, still-accumulating week — mark it so
+        // it doesn't read as a spending decline (it's just not over yet).
+        const isCurrent = i === lastIndex;
+        const title = `${weekRangeLabel(w.week_start)} · ${money(total)}${isCurrent ? " · in progress" : ""}`;
 
         let y = BASELINE;
         const segments = CATS.map(({ key, cls }) => {
@@ -58,8 +61,19 @@ export default function SpendChart({ weeks, onSelect }: Props) {
         return (
           <g key={w.week_start}>
             {segments.map((s) => (
-              <rect key={s.cls} className={`spend-seg ${s.cls}`} x={barX} y={s.segY} width={barWidth} height={s.h} />
+              <rect
+                key={s.cls}
+                className={`spend-seg ${s.cls}${isCurrent ? " spend-seg-current" : ""}`}
+                x={barX} y={s.segY} width={barWidth} height={s.h}
+              />
             ))}
+            {isCurrent && segments.length > 0 && (
+              <line
+                className="spend-seg-current-edge"
+                x1={barX} x2={barX + barWidth}
+                y1={segments[segments.length - 1].segY} y2={segments[segments.length - 1].segY}
+              />
+            )}
             <rect
               className="spend-hit"
               x={colX} y={0} width={bw} height={VB_H}

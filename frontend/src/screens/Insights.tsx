@@ -215,6 +215,7 @@ export default function Insights() {
             <p className="trend-caption">
               {weekRangeLabel(selectedWeekPoint.week_start)} · Delivery {money(selectedWeekPoint.delivery)} ·
               {" "}Rides {money(selectedWeekPoint.rides)} · Social {money(selectedWeekPoint.social)}
+              {selectedWeek === spend.weeks.length - 1 && " · In progress"}
             </p>
           )}
 
