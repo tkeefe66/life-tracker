@@ -39,6 +39,8 @@ def _flow_amount(flow: str, rows: list) -> float:
         return sum(abs(t["amount"]) for t in rows if t["amount"] < 0)
     if flow in ("income", "refund"):
         return sum(t["amount"] for t in rows if t["amount"] > 0)
+    if flow == "spending":
+        return sum(abs(t["amount"]) for t in rows if t["amount"] < 0)
     return sum(abs(t["amount"]) for t in rows)
 
 
@@ -48,11 +50,13 @@ def _totals(txns: list) -> dict:
     same double-rounding trap app.scorecard.spend()'s by_service comment warns
     about. A flow with no rows in the window is simply absent, not a zero entry.
 
-    `refund` is a special case: count, like amount, only reflects the
-    positive-side rows (the mirror of the movement flows' outflow-side rule).
-    A `refund` verdict on a negative-amount row (a mis-tap) is inert — it
-    still keeps the "refund" key present (there IS a row), just at
-    count 0 / amount 0.0, never contributing to the total."""
+    `refund` and `spending` are both special cases: count, like amount, only
+    reflects the sign-filtered rows that actually contribute (refund's
+    positive side, spending's negative side -- the mirror of the movement
+    flows' outflow-side rule). A `refund` verdict on a negative-amount row
+    (a mis-tap), or a `spending` verdict on a positive-amount row, is inert —
+    it still keeps the flow's key present (there IS a row), just at count 0 /
+    amount 0.0, never contributing to the total."""
     grouped: dict = {}
     for t in txns:
         grouped.setdefault(t["resolved_flow"], []).append(t)
@@ -60,6 +64,8 @@ def _totals(txns: list) -> dict:
     for flow, rows in grouped.items():
         if flow == "refund":
             count = sum(1 for t in rows if t["amount"] > 0)
+        elif flow == "spending":
+            count = sum(1 for t in rows if t["amount"] < 0)
         else:
             count = len(rows)
         out[flow] = {"count": count, "amount": round(_flow_amount(flow, rows), 2)}
@@ -115,7 +121,8 @@ def summary(weeks: int) -> dict:
             continue  # entirely before coverage began -- absent, not a zero bar
         week_spending = sum(
             abs(t["amount"]) for t in txns
-            if t["resolved_flow"] == "spending" and ws_iso <= t["posted"][:10] <= we_iso
+            if t["resolved_flow"] == "spending" and t["amount"] < 0
+            and ws_iso <= t["posted"][:10] <= we_iso
         )
         # Refunds net within their OWN posted week, not the spending week's --
         # a week can go negative when refunds exceed spending, and that's the
@@ -138,14 +145,16 @@ def summary(weeks: int) -> dict:
 
     totals = _totals(txns)
     # Refunds net out of spend: spending_total - refund_total, rounded once at
-    # the end -- subtracting two already-rounded (2dp) amounts and rounding
-    # once more only cleans up float noise from the subtraction itself (e.g.
-    # 33.34 - 0.01 == 33.330000000000005 in binary float), never double-rounds
-    # the underlying figures.
-    spent = round(
-        totals.get("spending", {}).get("amount", 0) - totals.get("refund", {}).get("amount", 0),
-        2,
-    )
+    # the end. This must be computed from the RAW (unrounded) per-row sums,
+    # not from totals[...]["amount"] -- those are already rounded to 2dp, and
+    # subtracting two already-rounded values then rounding again is a second
+    # rounding pass, not a no-op cleanup: it can diverge from a true
+    # round-once result (e.g. spending -10.007 + refund +0.003 double-rounds
+    # to 10.01, while round-once of the raw difference is 10.0). Mirrors the
+    # weekly loop above, which rounds each week's raw sums once.
+    raw_spending = sum(abs(t["amount"]) for t in txns if t["resolved_flow"] == "spending" and t["amount"] < 0)
+    raw_refund = sum(t["amount"] for t in txns if t["resolved_flow"] == "refund" and t["amount"] > 0)
+    spent = round(raw_spending - raw_refund, 2)
 
     return {
         "covered_from": covered_from,

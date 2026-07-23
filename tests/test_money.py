@@ -478,6 +478,45 @@ def test_round_once_avoids_double_rounding_drift_in_spent(temp_db_path):
     assert result["spent"] == 33.33
 
 
+# ── Reviewer findings: round-once spent, sign-filtered spending term ───────────
+
+def test_spent_rounds_once_from_raw_sums_not_from_already_rounded_totals(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    # round(10.007, 2) - round(0.003, 2) == round(10.01, 2) - round(0.0, 2) == 10.01
+    # (double-rounded, wrong). round(10.007 - 0.003, 2) == round(10.004, 2) == 10.0
+    # (round-once, right, and matches the weekly path below).
+    _txn(db, "spend1", acct["id"], today, -10.007, "spending")
+    _txn(db, "refund1", acct["id"], today, 0.003, "spending", user_flow="refund")
+
+    result = money.summary(weeks=1)
+    assert result["spent"] == 10.0
+    # Must also agree with the weekly path, which rounds the raw per-week sums once.
+    assert result["spent"] == round(sum(w["spending"] for w in result["weeks"]), 2)
+
+
+def test_spending_term_excludes_positive_amount_rows_everywhere(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _txn(db, "spend1", acct["id"], today, -100.0, "spending")
+    # A positive-amount row resolved to "spending" via override -- reachable through
+    # the API since the route only validates flow membership, not sign.
+    _txn(db, "over1", acct["id"], today, 40.0, "income", user_flow="spending")
+
+    result = money.summary(weeks=1)
+    assert result["spent"] == 100.0
+    assert result["totals"]["spending"] == {"count": 1, "amount": 100.0}
+    assert result["weeks"][-1]["spending"] == 100.0
+
+
 # ── triage() rows carry user_note ───────────────────────────────────────────
 
 def test_triage_rows_carry_user_note(temp_db_path):
