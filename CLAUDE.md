@@ -166,7 +166,8 @@ signal:
 │   ├── auth.py               # Single-user password → HMAC session cookie
 │   ├── routes.py              # Protected API routes (checkins, scorecard, insights,
 │   │                        #   reflection, deliveries, rides, social, spend, targets,
-│   │                        #   settings, bank debug/role)
+│   │                        #   settings, bank debug/role/summary/triage/
+│   │                        #   accounts/flow-override)
 │   ├── scorecard.py            # DB → domain wiring: weekly cards, spend, insights, history
 │   └── money.py               # DB → domain wiring for the Money screen: summary(weeks) +
 │                            #   triage(limit) — the bank equivalent of scorecard.py
