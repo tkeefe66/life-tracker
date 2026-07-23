@@ -205,6 +205,12 @@ export default function Money() {
         // failed" recovery below.
         apiGet<BankTriageData>("/bank/triage?limit=50")
           .then((d) => {
+            // Accepted tradeoff: if this refetch lands while another row is still
+            // lingering (mid ANSWERED_LINGER_MS or its bulk-offer window), excluding
+            // it here ends that row's on-screen linger/bulk window early. It only
+            // shortens the window — the row's persisted state is untouched, and its
+            // own pending removal timer still fires on schedule — so it never
+            // corrupts state, just occasionally cuts a bulk-offer's visible time short.
             const lingering = new Set(Object.keys(timersRef.current));
             setAmbiguousRows(d.ambiguous.filter((r) => !lingering.has(r.simplefin_id)));
             setInflowRows(d.inflow_unknown.filter((r) => !lingering.has(r.simplefin_id)));
@@ -234,6 +240,9 @@ export default function Money() {
     : 0;
 
   const coverage = summary ? coverageNote(summary.covered_from) : "";
+
+  const trackedTotal = summary ? summary.tracked.reduce((sum, r) => sum + r.amount, 0) : 0;
+  const trackedShare = summary ? trackedShareSentence(trackedTotal, summary.spent) : "";
 
   return (
     <div>
@@ -300,20 +309,18 @@ export default function Money() {
 
       {summary && (
         <>
-          {trackedShareSentence(
-            summary.tracked.reduce((sum, r) => sum + r.amount, 0),
-            summary.spent,
-          ) && (
+          {trackedShare && (
             <p className="quiet">
-              <span>
-                {trackedShareSentence(
-                  summary.tracked.reduce((sum, r) => sum + r.amount, 0),
-                  summary.spent,
-                )}
-              </span>
+              <span>{trackedShare}</span>
             </p>
           )}
-          <SpendSubtotals rows={summary.tracked} title="Of that, the things you're tracking" />
+          <SpendSubtotals
+            rows={summary.tracked}
+            // The containment framing ("Of that...") only makes sense once the bank
+            // hero/total above it is actually on screen — without it, fall back to
+            // the neutral heading this block had on the old Insights money view.
+            title={bankSectionsVisible ? "Of that, the things you're tracking" : "By service · last 12 weeks"}
+          />
 
           {trackedSpend && trackedSpend.weeks.length > 0 && (
             <details className="money-details">

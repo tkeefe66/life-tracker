@@ -45,6 +45,18 @@ interface JustAnswered {
   flow: string;
 }
 
+/** Display-only capitalization for a bulk-offer signature ("venmo" -> "Venmo",
+ * "cash app" -> "Cash App", "atm" -> "ATM"). Purely presentational — the
+ * signature itself stays lowercase everywhere else (matching, grouping), so
+ * this lives here rather than in lib.ts. */
+function displaySignature(signature: string): string {
+  if (signature.toLowerCase() === "atm") return "ATM";
+  return signature
+    .split(" ")
+    .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : word))
+    .join(" ");
+}
+
 export default function TriageQueue({ title, prompt, rows, choices, onAnswer, onBulk }: Props) {
   const [justAnswered, setJustAnswered] = useState<JustAnswered | null>(null);
 
@@ -98,7 +110,7 @@ export default function TriageQueue({ title, prompt, rows, choices, onAnswer, on
 
               {answeredWith && row.signature_count >= 2 && (
                 <button className="quiet-btn" onClick={() => handleBulk(row, answeredWith.flow)}>
-                  Apply to the other {row.signature_count} {row.signature} charges · {money(row.signature_amount)}
+                  Apply to the other {row.signature_count} {displaySignature(row.signature)} charges · {money(row.signature_amount)}
                 </button>
               )}
             </li>
