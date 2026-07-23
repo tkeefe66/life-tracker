@@ -63,6 +63,33 @@ describe("mondayOf", () => {
   });
 });
 
+import { niceMax, weekRangeLabel } from "./lib";
+
+describe("niceMax", () => {
+  it("gives an all-zero series with a target of 3 a top of at least 3", () => {
+    expect(niceMax([0, 0, 0], 3)).toBeGreaterThanOrEqual(3);
+  });
+  it("gives a max of 7 against a target of 1 a top of at least 7", () => {
+    expect(niceMax([1, 7, 0], 1)).toBeGreaterThanOrEqual(7);
+  });
+  it("adds headroom above the target when the target is the series max, so the line isn't flush with the top", () => {
+    const top = niceMax([0, 2, 3], 3);
+    expect(top).toBeGreaterThan(3);
+  });
+  it("never returns less than 1", () => {
+    expect(niceMax([], 0)).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("weekRangeLabel", () => {
+  it("formats a week within a single month", () => {
+    expect(weekRangeLabel("2026-07-13")).toBe("Jul 13–19");
+  });
+  it("formats a week crossing months", () => {
+    expect(weekRangeLabel("2026-06-29")).toBe("Jun 29–Jul 5");
+  });
+});
+
 import { buildSocialPatch } from "./lib";
 
 describe("buildSocialPatch", () => {
