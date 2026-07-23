@@ -16,10 +16,9 @@ import pytz
 
 import bank_flows
 import database as db
-from config import (INCOME_PAYEE_HINTS, PAIR_WINDOW_DAYS, SIMPLEFIN_LOOKBACK_DAYS,
-                    TIMEZONE)
+from config import INCOME_PAYEE_HINTS, PAIR_WINDOW_DAYS, TIMEZONE
 from services import simplefin_service
-from services.safe_status import NOT_CONFIGURED, safe_status
+from services.safe_status import CLOSED_SET, NOT_CONFIGURED, safe_status
 from services.simplefin_service import SimpleFinError
 
 logger = logging.getLogger(__name__)
@@ -68,13 +67,21 @@ def run(payload=None):
             )
             added += 1
 
-        # Re-match and re-classify a window wide enough that a transfer whose
-        # halves arrived in different syncs still pairs on the later run.
-        start_day = (datetime.date.today()
-                     - datetime.timedelta(days=SIMPLEFIN_LOOKBACK_DAYS)).isoformat()
-        window = db.get_unclassified_window(start_day)
-        pair_map = bank_flows.match_pairs(window, window_days=PAIR_WINDOW_DAYS)
-        derived = bank_flows.classify_all(window, roles_by_id, pair_map, INCOME_PAYEE_HINTS)
+        # Re-match and re-classify the ENTIRE table on every run, not a sliding
+        # lookback window. A window that slides forward daily would freeze a
+        # row's classification the moment it ages out — and the 90-day initial
+        # backfill classifies everything while every account role is still
+        # "unknown", so an unpaired investment/savings outflow would read
+        # "spending" forever. Affordable: single-user app, low thousands of
+        # rows, pure/deterministic classification.
+        all_txns = db.get_all_bank_transactions()
+        # Clear pair_id before handing rows to the matcher so pairing is
+        # recomputed from scratch too — a pending amount that later settles to
+        # a different value must be free to lose its old pairing rather than
+        # keep a stale (and now wrong) pair_id/card_payment flow forever.
+        fresh = [{**t, "pair_id": None} for t in all_txns]
+        pair_map = bank_flows.match_pairs(fresh, window_days=PAIR_WINDOW_DAYS)
+        derived = bank_flows.classify_all(fresh, roles_by_id, pair_map, INCOME_PAYEE_HINTS)
 
         # Written in ONE database transaction (set_bank_transactions_derived_bulk),
         # not one commit per row. A per-row write left a hole: an interrupted run
@@ -96,7 +103,7 @@ def run(payload=None):
         db.set_setting("bank_last_status", "ok")
         db.set_setting(
             "bank_last_result",
-            f"{len(accounts)} accounts · {added} transactions · "
+            f"{len(accounts)} accounts · {added} transactions · {skipped} skipped · "
             f"{counts.get('spending', 0)} spending · {counts.get('transfer', 0)} transfers · "
             f"{counts.get('card_payment', 0)} card payments · "
             f"{counts.get('inflow_unknown', 0)} unknown inflows · "
@@ -105,10 +112,12 @@ def run(payload=None):
         logger.info("Bank sync: %d accounts, %d transactions, %d skipped, flows=%s",
                     len(accounts), added, skipped, counts)
     except SimpleFinError as e:
-        # Already logged server-side inside the service. `e.status` is closed-set
-        # by construction and carries no message text.
+        # Already logged server-side inside the service. `e.status` carries no
+        # message text, but `SimpleFinError.__init__` accepts any string — the
+        # closed-set invariant is only convention there, so re-check it here
+        # rather than trust it by construction.
         db.set_setting("bank_last_run", _now_iso())
-        db.set_setting("bank_last_status", e.status)
+        db.set_setting("bank_last_status", e.status if e.status in CLOSED_SET else "error: see logs")
     except Exception as e:
         # Full detail server-side only. The DB value must come from the closed
         # set — never str(e) — because the SimpleFIN URL carries the user's bank

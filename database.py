@@ -1212,3 +1212,14 @@ def get_unclassified_window(start_day):
         c.execute(f"{_BANK_TXN_SELECT} WHERE t.posted >= {p} "
                   f"ORDER BY t.posted, t.simplefin_id", (start_day,))
         return _bank_txn_rows(c.fetchall())
+
+
+def get_all_bank_transactions():
+    """Every transaction, unfiltered by date — same shape/ordering as
+    `get_unclassified_window`. The sync job reclassifies the whole table on
+    every run (see jobs/sync_bank.py) rather than a sliding lookback window,
+    so a row whose account role was unknown at ingest time gets corrected once
+    the user assigns a role, no matter how long ago it posted."""
+    with _cursor() as c:
+        c.execute(f"{_BANK_TXN_SELECT} ORDER BY t.posted, t.simplefin_id")
+        return _bank_txn_rows(c.fetchall())

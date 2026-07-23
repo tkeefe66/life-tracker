@@ -1,13 +1,12 @@
 """sync_bank: idempotent, never crashes, never leaks, never clobbers user data."""
+import datetime
 import time
 
-import pytest
-
-# sync_bank.run() reclassifies only a SIMPLEFIN_LOOKBACK_DAYS-wide window measured
-# back from the real wall clock (see jobs/sync_bank.py). A fixed epoch literal
-# would drift out of that window as the calendar advances and silently stop
-# being classified at all — so `posted` is computed relative to "now" at test
-# run time instead of hardcoded.
+# sync_bank.run() reclassifies the ENTIRE bank_transactions table on every run
+# (see jobs/sync_bank.py) rather than a sliding lookback window, so a fixed
+# epoch literal would work here too — but the fixture stays relative to the
+# real wall clock anyway, for consistency with the "old" fixtures below that
+# rely on being far outside SIMPLEFIN_LOOKBACK_DAYS.
 _POSTED = int(time.time()) - 5 * 86400
 
 
@@ -142,13 +141,113 @@ def test_an_unexpected_error_still_records_a_closed_set_status(temp_db_path, mon
 
 
 def test_transaction_for_an_unknown_account_is_skipped_not_crashed(temp_db_path, monkeypatch):
-    """A transaction whose account SimpleFIN did not report can't get an FK."""
+    """A transaction whose account SimpleFIN did not report can't get an FK.
+
+    normalize() only ever emits a transaction nested under an account it also
+    emitted, so the skip branch is unreachable through the normal payload
+    shape — reach it by monkeypatching normalize() itself to inject an orphan
+    transaction referencing an account id that was never reported. Appending
+    to accounts[0]["transactions"] (a *reported* account) would ingest it
+    normally and never touch the skip branch at all.
+    """
     import database as db
     from jobs import sync_bank
     monkeypatch.setattr(sync_bank.simplefin_service, "is_configured", lambda: True)
 
-    payload = _payload()
-    payload["accounts"][0]["transactions"].append(
-        {"id": "orphan", "posted": 1751328000, "amount": "-5.00", "description": "X"})
-    sync_bank.run(payload=payload)
+    real_normalize = sync_bank.simplefin_service.normalize
+    posted_day = datetime.datetime.fromtimestamp(_POSTED, tz=datetime.timezone.utc).date().isoformat()
+
+    def normalize_with_orphan(payload):
+        accounts, txns = real_normalize(payload)
+        txns = txns + [{
+            "simplefin_id": "orphan", "account_simplefin_id": "ghost-account",
+            "posted": posted_day, "transacted_at": posted_day, "amount": -5.0,
+            "description": "X", "payee": "", "memo": "", "mcc": None,
+        }]
+        return accounts, txns
+
+    monkeypatch.setattr(sync_bank.simplefin_service, "normalize", normalize_with_orphan)
+    sync_bank.run(payload=_payload())
+
     assert db.get_setting("bank_last_status") == "ok"
+    assert "1 skipped" in db.get_setting("bank_last_result")
+    stored_ids = {r["simplefin_id"] for r in db.get_bank_transactions_range("2020-01-01", "2030-01-01")}
+    assert "orphan" not in stored_ids
+
+
+def test_transactions_older_than_lookback_are_reclassified_once_roles_are_set(temp_db_path, monkeypatch):
+    """The initial 90-day backfill classifies everything while every account
+    role is still 'unknown'. A sliding SIMPLEFIN_LOOKBACK_DAYS window would
+    freeze that classification permanently the moment a row ages past it —
+    the fix is a full-table reclassify on every run, so a role assigned long
+    after ingest still corrects old rows."""
+    import database as db
+    from jobs import sync_bank
+
+    monkeypatch.setattr(sync_bank.simplefin_service, "is_configured", lambda: True)
+    monkeypatch.setattr(sync_bank, "INCOME_PAYEE_HINTS", [])
+
+    old_posted = int(time.time()) - 200 * 86400
+    old_payload = {
+        "accounts": [
+            {"id": "inv", "name": "Brokerage", "org": {"name": "Fidelity"},
+             "transactions": [
+                 {"id": "old1", "posted": old_posted, "amount": "-500.00",
+                  "description": "CONTRIBUTION"},
+             ]},
+        ],
+        "errors": [],
+    }
+    sync_bank.run(payload=old_payload)
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2000-01-01", "2030-01-01")}
+    assert rows["old1"]["resolved_flow"] == "spending"  # role unknown at ingest time
+
+    db.set_bank_account_role("inv", "investment")
+    sync_bank.run(payload=old_payload)  # re-sync well after roles are assigned
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2000-01-01", "2030-01-01")}
+    assert rows["old1"]["resolved_flow"] == "investment"
+
+
+def test_settled_amount_that_no_longer_matches_loses_its_pair_id_and_stops_being_card_payment(
+    temp_db_path, monkeypatch
+):
+    """A pending -2000 that settles to a different amount must stop pairing
+    with its old +2000 partner — a wrong pair must never be permanent."""
+    import database as db
+    sync_bank = _configure(monkeypatch)
+    sync_bank.run(payload=_payload())  # p1/p2 pair up as card_payment
+
+    settled = _payload()
+    settled["accounts"][0]["transactions"][0]["amount"] = "-1500.00"  # no longer matches p2's +2000
+    sync_bank.run(payload=settled)
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2020-01-01", "2030-01-01")}
+    assert rows["p1"]["pair_id"] is None
+    assert rows["p2"]["pair_id"] is None
+    assert rows["p1"]["resolved_flow"] != "card_payment"
+    assert rows["p2"]["resolved_flow"] != "card_payment"
+
+
+def test_simplefin_error_with_a_non_closed_set_status_is_normalized_before_storage(
+    temp_db_path, monkeypatch
+):
+    """SimpleFinError.__init__ accepts any string — the closed-set invariant on
+    that path holds only by convention. Defend it at the write site too."""
+    import database as db
+    from jobs import sync_bank
+    from services.safe_status import CLOSED_SET
+    from services.simplefin_service import SimpleFinError
+
+    monkeypatch.setattr(sync_bank.simplefin_service, "is_configured", lambda: True)
+
+    def boom(*a, **kw):
+        raise SimpleFinError("not a real status")
+
+    monkeypatch.setattr(sync_bank.simplefin_service, "fetch_accounts", boom)
+    sync_bank.run()
+
+    status = db.get_setting("bank_last_status")
+    assert status == "error: see logs"
+    assert status in CLOSED_SET
