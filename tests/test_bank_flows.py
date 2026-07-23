@@ -573,9 +573,44 @@ def test_payment_wording_requires_a_word_boundary():
     assert bank_flows.classify_flow(t, "credit_card", None, False, HINTS) == "inflow_unknown"
 
 
-def test_is_ambiguous_remains_unbounded_substring_match():
-    """`is_ambiguous` is explicitly NOT required to respect word boundaries —
-    over-flagging there is harmless (it never changes the flow), so this pins
-    that Finding 6's narrowing was NOT applied here."""
+def test_is_ambiguous_respects_word_boundaries():
+    """`is_ambiguous` routes through the module's own `_hint_matches_field`, the
+    same discipline every other hint match uses. Over-flagging is not free: each
+    false flag is a row the user has to triage by hand."""
     t = txn("a", 1, "2026-07-01", -10.0, description="XFERRED TO SAVINGS")
-    assert bank_flows.is_ambiguous(t, "spending") is True  # 'xfer' matches inside 'XFERRED'
+    assert bank_flows.is_ambiguous(t, "spending") is False
+
+
+def test_wire_hint_does_not_match_verizon_wireless():
+    """Real data: 'VERIZON WIRELESS PAYMENTS' is a phone bill, not a wire — 3
+    rows / $795.77 swept up by the raw substring test."""
+    t = txn("a", 1, "2026-07-01", -265.26, payee="Verizon Wireless",
+            description="VERIZON WIRELESS PAYMENTS")
+    assert bank_flows.is_ambiguous(t, "spending") is False
+
+
+def test_a_genuine_wire_transfer_is_still_flagged():
+    t = txn("a", 1, "2026-07-01", -2500.0, description="WIRE TRANSFER OUT")
+    assert bank_flows.is_ambiguous(t, "spending") is True
+
+
+def test_every_ambiguous_hint_still_matches_its_real_world_form():
+    """Word boundaries must not silently retire a hint. Each phrase below is the
+    wording the hint was written for."""
+    real_forms = {
+        "venmo": "VENMO PAYMENT 1044202",
+        "zelle": "ZELLE TO KEEFE T",
+        "cash app": "CASH APP*SARAH J",
+        "cashapp": "CASHAPP TRANSFER",
+        "apple cash": "APPLE CASH SENT MONEY",
+        "paypal": "PAYPAL *JOHNDOE",
+        "atm": "ATM WITHDRAWAL AUTHORIZED",
+        "withdrawal": "ATM WITHDRAWAL AUTHORIZED",
+        "transfer": "ONLINE TRANSFER TO SAVINGS",
+        "xfer": "MOBILE XFER TO CHECKING",
+        "wire": "WIRE TRANSFER OUT",
+    }
+    assert set(real_forms) == set(bank_flows.AMBIGUOUS_HINTS)
+    for hint, description in real_forms.items():
+        t = txn("a", 1, "2026-07-01", -10.0, description=description)
+        assert bank_flows.is_ambiguous(t, "spending") is True, hint

@@ -286,11 +286,18 @@ def is_ambiguous(txn, flow):
     It stays `spending` — an AI or keyword flag alone never excludes anything
     silently — but it is surfaced for later triage. The Venmo/Zelle/ATM policy is
     deliberately deferred; flagging costs nothing now.
+
+    Hints match through `_hint_matches_field`, exactly like every other hint in
+    this module. A raw substring test made "wire" fire on "VERIZON WIRELESS
+    PAYMENTS" (a phone bill, 3 rows / $795.77 in the 90-day dataset) — flagging
+    isn't actually free, since every false flag is a row the user must triage.
     """
     if flow != "spending":
         return False
-    haystack = f"{txn.get('payee') or ''} {txn.get('description') or ''}".lower()
-    return any(hint in haystack for hint in AMBIGUOUS_HINTS)
+    payee = txn.get("payee")
+    description = txn.get("description")
+    return any(_hint_matches_field(hint, payee) or _hint_matches_field(hint, description)
+               for hint in AMBIGUOUS_HINTS)
 
 
 def classify_all(txns, roles_by_account_id, pair_map, income_hints):
