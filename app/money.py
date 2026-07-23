@@ -4,6 +4,7 @@ through database.py. Bank data is not a metric: no targets, no hit/miss, anywher
 in this module."""
 from datetime import timedelta
 
+import bank_flows
 import database as db
 import metrics
 from app.scorecard import _local_today
@@ -21,9 +22,16 @@ MOVEMENT_FLOWS = ("transfer", "card_payment", "investment")
 MIN_WEEKS = 1
 MAX_WEEKS = 52
 
+MIN_TRIAGE_LIMIT = 1
+MAX_TRIAGE_LIMIT = 200
+
 
 def _clamp_weeks(weeks: int) -> int:
     return max(MIN_WEEKS, min(MAX_WEEKS, weeks))
+
+
+def _clamp_triage_limit(limit: int) -> int:
+    return max(MIN_TRIAGE_LIMIT, min(MAX_TRIAGE_LIMIT, limit))
 
 
 def _flow_amount(flow: str, rows: list) -> float:
@@ -119,4 +127,57 @@ def summary(weeks: int) -> dict:
         "spent": totals.get("spending", {}).get("amount", 0),
         "tracked": tracked,
         "triage_counts": _triage_counts(all_txns),
+    }
+
+
+def _decorate_bucket(rows: list) -> list:
+    """Attach `label` and the signature-grouping fields to one bucket's rows.
+
+    Grouping is computed from THIS bucket's rows alone, never pooled across
+    buckets: db.get_bank_triage's `ambiguous` and `inflow_unknown` buckets
+    answer different questions (spent-it-or-moved-it vs where-did-this-come-
+    from), so a Venmo row in one must never count toward a bulk offer in the
+    other. `signature_count`/`signature_amount` exclude the row itself and are
+    computed straight from the rows already in hand -- no extra DB query. By
+    construction db.get_bank_triage and db.get_bank_recently_sorted each only
+    return unanswered-in-this-bucket rows for that bucket (the ambiguous and
+    inflow_unknown queries both filter on user_flow, and recently-sorted rows
+    are decorated separately from the queues), so a row that has already been
+    overridden and dropped out of a bucket can never inflate another row's
+    offer in that same bucket.
+    """
+    signatures = [bank_flows.triage_signature(t) for t in rows]
+    out = []
+    for i, t in enumerate(rows):
+        sig = signatures[i]
+        others = [rows[j] for j in range(len(rows)) if j != i and signatures[j] == sig] if sig else []
+        out.append({
+            "simplefin_id": t["simplefin_id"],
+            "posted": t["posted"],
+            "amount": t["amount"],
+            "payee": t["payee"],
+            "description": t["description"],
+            "label": t["payee"] or t["description"],
+            "account_name": t["account_name"],
+            "resolved_flow": t["resolved_flow"],
+            "user_flow": t["user_flow"],
+            "signature": sig,
+            "signature_count": len(others),
+            "signature_amount": round(sum(abs(o["amount"]) for o in others), 2),
+        })
+    return out
+
+
+def triage(limit: int) -> dict:
+    """Assemble the triage worklist: the two un-triaged queues (`ambiguous`,
+    `inflow_unknown`) plus the `recent` undo list, each capped at `limit`
+    (clamped 1-200). Each bucket's signature grouping is independent -- see
+    _decorate_bucket."""
+    limit = _clamp_triage_limit(limit)
+    queue = db.get_bank_triage(limit)
+    recent = db.get_bank_recently_sorted(limit)
+    return {
+        "ambiguous": _decorate_bucket(queue["ambiguous"]),
+        "inflow_unknown": _decorate_bucket(queue["inflow_unknown"]),
+        "recent": _decorate_bucket(recent),
     }

@@ -270,3 +270,135 @@ def test_triage_counts_counts_unresolved_ambiguous_and_inflow_unknown(temp_db_pa
     result = money.summary(weeks=52)
     # Only one ambiguous (the unresolved one) and one inflow_unknown
     assert result["triage_counts"] == {"ambiguous": 1, "inflow_unknown": 1}
+
+
+# ── triage(): row shape, label fallback, signature grouping ────────────────────
+
+def test_triage_row_shape_and_label_fallback_from_payee_to_description(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+
+    db.upsert_bank_transaction("ambig1", acct["id"], today, today, -20.0,
+                                "AMBIG DESC", "AMBIG PAYEE", "", None)
+    db.set_bank_transaction_derived("ambig1", "spending", None, True)
+
+    db.upsert_bank_transaction("ambig2", acct["id"], today, today, -30.0,
+                                "FALLBACK DESC", "", "", None)
+    db.set_bank_transaction_derived("ambig2", "spending", None, True)
+
+    result = money.triage(limit=50)
+    rows = {r["simplefin_id"]: r for r in result["ambiguous"]}
+
+    row1 = rows["ambig1"]
+    assert set(row1.keys()) == {
+        "simplefin_id", "posted", "amount", "payee", "description",
+        "account_name", "resolved_flow", "user_flow", "signature",
+        "signature_count", "signature_amount", "label",
+    }
+    assert row1["label"] == "AMBIG PAYEE"  # payee present -> used verbatim
+
+    row2 = rows["ambig2"]
+    assert row2["payee"] == ""
+    assert row2["label"] == "FALLBACK DESC"  # payee empty -> falls back to description
+
+
+def test_signature_count_excludes_self_and_already_overridden_rows(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+
+    # Three Venmo-signature ambiguous rows, all unanswered.
+    db.upsert_bank_transaction("v1", acct["id"], today, today, -10.0, "VENMO PAYMENT", "", "", None)
+    db.set_bank_transaction_derived("v1", "spending", None, True)
+    db.upsert_bank_transaction("v2", acct["id"], today, today, -20.0, "VENMO PAYMENT", "", "", None)
+    db.set_bank_transaction_derived("v2", "spending", None, True)
+    db.upsert_bank_transaction("v3", acct["id"], today, today, -30.0, "VENMO PAYMENT", "", "", None)
+    db.set_bank_transaction_derived("v3", "spending", None, True)
+
+    result = money.triage(limit=50)
+    rows = {r["simplefin_id"]: r for r in result["ambiguous"]}
+
+    # v1's count/amount reflect v2 + v3 only -- itself is excluded.
+    assert rows["v1"]["signature"] == "venmo"
+    assert rows["v1"]["signature_count"] == 2
+    assert rows["v1"]["signature_amount"] == 50.0
+
+    # Overriding v3 removes it from the ambiguous queue entirely (db.get_bank_triage's
+    # `user_flow IS NULL` predicate), so it must not inflate v1's remaining offer.
+    db.set_bank_flow_override("v3", "transfer")
+    result2 = money.triage(limit=50)
+    rows2 = {r["simplefin_id"]: r for r in result2["ambiguous"]}
+    assert rows2["v1"]["signature_count"] == 1
+    assert rows2["v1"]["signature_amount"] == 20.0
+
+
+def test_empty_signature_reports_zero_count_and_amount(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+
+    db.upsert_bank_transaction("plain1", acct["id"], today, today, -15.0, "GROCERY STORE", "", "", None)
+    db.set_bank_transaction_derived("plain1", "spending", None, True)
+    db.upsert_bank_transaction("plain2", acct["id"], today, today, -25.0, "GROCERY STORE", "", "", None)
+    db.set_bank_transaction_derived("plain2", "spending", None, True)
+
+    result = money.triage(limit=50)
+    rows = {r["simplefin_id"]: r for r in result["ambiguous"]}
+    assert rows["plain1"]["signature"] == ""
+    assert rows["plain1"]["signature_count"] == 0
+    assert rows["plain1"]["signature_amount"] == 0
+
+
+def test_recent_is_recently_sorted_capped(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+
+    for i in range(5):
+        sfid = f"r{i}"
+        db.upsert_bank_transaction(sfid, acct["id"], today, today, -10.0 - i, f"TXN {i}", "", "", None)
+        db.set_bank_transaction_derived(sfid, "spending", None, False)
+        db.set_bank_flow_override(sfid, "spending")
+
+    result = money.triage(limit=3)
+    assert len(result["recent"]) == 3
+    assert all(r["user_flow"] == "spending" for r in result["recent"])
+
+
+def test_limit_clamps_to_one_and_two_hundred(temp_db_path, monkeypatch):
+    import database as db
+    import app.money as money
+
+    captured = {}
+
+    def fake_triage(limit):
+        captured["triage_limit"] = limit
+        return {"ambiguous": [], "inflow_unknown": []}
+
+    def fake_recent(limit):
+        captured["recent_limit"] = limit
+        return []
+
+    monkeypatch.setattr(db, "get_bank_triage", fake_triage)
+    monkeypatch.setattr(db, "get_bank_recently_sorted", fake_recent)
+
+    money.triage(limit=0)
+    assert captured["triage_limit"] == 1
+    assert captured["recent_limit"] == 1
+
+    money.triage(limit=99999)
+    assert captured["triage_limit"] == 200
+    assert captured["recent_limit"] == 200
