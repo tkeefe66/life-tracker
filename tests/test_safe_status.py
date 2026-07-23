@@ -123,16 +123,17 @@ def test_not_configured_constants_are_closed_set_members():
 
 
 def test_job_modules_use_the_shared_constants_not_ad_hoc_literals():
-    """jobs/backup_db.py, jobs/scan_gmail.py, jobs/scan_calendar.py each write a
-    literal "not configured" status outside the safe_status() call — they must
-    reference the named constants (so CLOSED_SET is the single source of truth)
-    rather than duplicating the string."""
-    from jobs import backup_db, scan_calendar, scan_gmail
+    """jobs/backup_db.py, jobs/scan_gmail.py, jobs/scan_calendar.py, jobs/sync_bank.py
+    each write a literal "not configured" status outside the safe_status() call —
+    they must reference the named constants (so CLOSED_SET is the single source of
+    truth) rather than duplicating the string."""
+    from jobs import backup_db, scan_calendar, scan_gmail, sync_bank
     from services.safe_status import GOOGLE_NOT_CONFIGURED, NOT_CONFIGURED
 
     assert backup_db.NOT_CONFIGURED == NOT_CONFIGURED
     assert scan_gmail.GOOGLE_NOT_CONFIGURED == GOOGLE_NOT_CONFIGURED
     assert scan_calendar.GOOGLE_NOT_CONFIGURED == GOOGLE_NOT_CONFIGURED
+    assert sync_bank.NOT_CONFIGURED == NOT_CONFIGURED
 
 
 def test_safe_status_never_returns_str_of_the_exception():

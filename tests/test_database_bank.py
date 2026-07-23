@@ -1,4 +1,5 @@
 """bank_accounts / bank_transactions: upserts preserve user data, COALESCE resolves in SQL."""
+import pytest
 
 
 def _account(db, sfid="acct-1", role=None):
@@ -68,6 +69,51 @@ def test_ambiguous_round_trips_as_a_real_bool(temp_db_path):
 def test_flow_override_returns_false_for_unknown_id(temp_db_path):
     import database as db
     assert db.set_bank_flow_override("nope", "transfer") is False
+
+
+def test_bulk_derived_write_commits_all_rows_together(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01",
+                               -10.0, "A", "", "", None)
+    db.upsert_bank_transaction("t2", acct["id"], "2026-07-02", "2026-07-01",
+                               20.0, "B", "", "", None)
+
+    db.set_bank_transactions_derived_bulk([
+        ("t1", "transfer", "t1", False),
+        ("t2", "transfer", "t1", False),
+    ])
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2026-06-01", "2026-08-01")}
+    assert rows["t1"]["flow"] == "transfer"
+    assert rows["t2"]["flow"] == "transfer"
+    assert rows["t1"]["pair_id"] == rows["t2"]["pair_id"] == "t1"
+
+
+def test_bulk_derived_write_is_atomic_an_exception_partway_leaves_no_rows_updated(temp_db_path):
+    """A review found the per-row version leaves a hole: if a run is interrupted
+    partway, one half of a matched pair keeps its pair_id and the other goes free
+    — and it does not self-heal on the next sync. The bulk write must commit
+    all-or-nothing."""
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01",
+                               -10.0, "A", "", "", None)
+    db.upsert_bank_transaction("t2", acct["id"], "2026-07-02", "2026-07-01",
+                               20.0, "B", "", "", None)
+
+    # The second item's pair_id is a list — sqlite3 (and psycopg2) cannot bind an
+    # unsupported parameter type, so execute() raises partway through the loop.
+    items = [
+        ("t1", "transfer", "t1", False),
+        ("t2", "transfer", ["not", "a", "valid", "param"], False),
+    ]
+    with pytest.raises(Exception):
+        db.set_bank_transactions_derived_bulk(items)
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2026-06-01", "2026-08-01")}
+    assert rows["t1"]["flow"] is None  # the first row's write was rolled back too
+    assert rows["t2"]["flow"] is None
 
 
 def test_balances_are_never_stored(temp_db_path):

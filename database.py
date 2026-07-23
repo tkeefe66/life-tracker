@@ -1145,6 +1145,28 @@ def set_bank_transaction_derived(simplefin_id, flow, pair_id, ambiguous):
         )
 
 
+def set_bank_transactions_derived_bulk(items):
+    """Write the derived columns for many transactions in ONE database transaction.
+
+    `items` is an iterable of (simplefin_id, flow, pair_id, ambiguous) tuples —
+    exactly bank_flows.classify_all()'s output shape. Writing the whole
+    classification pass atomically matters because a matched pair's two halves
+    are two separate rows: if a per-row write were interrupted partway through
+    (a crash, a deploy), one half would keep its pair_id while the other went
+    free, and the free half could then mis-pair with something else on the next
+    sync — it does not self-heal. Committing all-or-nothing closes that hole.
+    Deliberately does NOT touch user_flow."""
+    p = _p()
+    with _cursor(write=True) as c:
+        for simplefin_id, flow, pair_id, ambiguous in items:
+            c.execute(
+                f"""UPDATE bank_transactions
+                    SET flow = {p}, pair_id = {p}, ambiguous = {p}
+                    WHERE simplefin_id = {p}""",
+                (flow, pair_id, bool(ambiguous), simplefin_id),
+            )
+
+
 def set_bank_flow_override(simplefin_id, user_flow):
     """The confirmed user verdict. Returns True iff a row was updated."""
     if user_flow is not None and user_flow not in BANK_FLOWS:
