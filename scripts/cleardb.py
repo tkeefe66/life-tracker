@@ -14,6 +14,8 @@ from config import DATABASE_PATH, DATABASE_URL
 TABLES = [
     "checkins", "delivery_orders", "calendar_events", "rides", "weekly_reflections",
     "targets", "app_settings", "sessions",
+    # bank_transactions references bank_accounts — delete the referencing table first.
+    "bank_transactions", "bank_accounts",
     # v1 archive tables
     "life_log_entries", "life_log_people", "people", "activity_log", "categories",
     "habits", "habit_logs", "accomplishments", "weekly_focus", "later_items",

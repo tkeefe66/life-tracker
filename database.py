@@ -1134,7 +1134,10 @@ def upsert_bank_transaction(simplefin_id, account_id, posted, transacted_at, amo
 
 
 def set_bank_transaction_derived(simplefin_id, flow, pair_id, ambiguous):
-    """Write the derived columns. Deliberately does NOT touch user_flow."""
+    """Write the derived columns for a single row. Deliberately does NOT touch
+    user_flow. Production uses the bulk writer below (set_bank_transactions_derived_bulk)
+    for its atomicity guarantee — this single-row form exists for tests and any
+    future one-off correction."""
     p = _p()
     with _cursor(write=True) as c:
         c.execute(
@@ -1168,7 +1171,11 @@ def set_bank_transactions_derived_bulk(items):
 
 
 def set_bank_flow_override(simplefin_id, user_flow):
-    """The confirmed user verdict. Returns True iff a row was updated."""
+    """The confirmed user verdict. Returns True iff a row was updated.
+
+    No route wires this up yet — there is no bank UI in this phase — so a
+    future reader should not assume COALESCE(user_flow, flow) can currently
+    resolve to anything but `flow`."""
     if user_flow is not None and user_flow not in BANK_FLOWS:
         raise ValueError(f"unknown flow: {user_flow}")
     p = _p()
@@ -1204,22 +1211,13 @@ def get_bank_transactions_range(start_day, end_day):
         return _bank_txn_rows(c.fetchall())
 
 
-def get_unclassified_window(start_day):
-    """Every transaction posted on/after `start_day`, for the matcher and classifier.
-    Returns already-paired rows too — the matcher needs them to know what is taken."""
-    p = _p()
-    with _cursor() as c:
-        c.execute(f"{_BANK_TXN_SELECT} WHERE t.posted >= {p} "
-                  f"ORDER BY t.posted, t.simplefin_id", (start_day,))
-        return _bank_txn_rows(c.fetchall())
-
-
 def get_all_bank_transactions():
-    """Every transaction, unfiltered by date — same shape/ordering as
-    `get_unclassified_window`. The sync job reclassifies the whole table on
-    every run (see jobs/sync_bank.py) rather than a sliding lookback window,
-    so a row whose account role was unknown at ingest time gets corrected once
-    the user assigns a role, no matter how long ago it posted."""
+    """Every transaction, unfiltered by date — for the matcher and classifier.
+    Returns already-paired rows too — the matcher needs them to know what is
+    taken. The sync job reclassifies the whole table on every run (see
+    jobs/sync_bank.py) rather than a sliding lookback window, so a row whose
+    account role was unknown at ingest time gets corrected once the user
+    assigns a role, no matter how long ago it posted."""
     with _cursor() as c:
         c.execute(f"{_BANK_TXN_SELECT} ORDER BY t.posted, t.simplefin_id")
         return _bank_txn_rows(c.fetchall())

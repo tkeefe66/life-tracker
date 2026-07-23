@@ -3,7 +3,6 @@ import math
 
 import httpx
 import pytest
-import pytz
 
 
 def _payload():
@@ -32,7 +31,10 @@ def test_normalize_flattens_accounts_and_transactions(monkeypatch):
     from services import simplefin_service
     # Pin the conversion timezone so the expected date below is deterministic
     # regardless of the machine (or CI runner) actually running the test.
-    monkeypatch.setattr(simplefin_service, "_TZ", pytz.timezone("America/Denver"))
+    # TIMEZONE is resolved at point of use (pytz.timezone(TIMEZONE) inside
+    # _epoch_to_day), so patching the module-level TIMEZONE string is what
+    # actually pins behavior — patching a cached tzinfo object would not.
+    monkeypatch.setattr(simplefin_service, "TIMEZONE", "America/Denver")
     accounts, txns = simplefin_service.normalize(_payload())
 
     assert [a["simplefin_id"] for a in accounts] == ["acct-1", "acct-2"]
@@ -54,10 +56,10 @@ def test_epoch_to_day_uses_the_configured_timezone_not_the_machines(monkeypatch)
     from services import simplefin_service
 
     epoch = 1751328000  # 2025-07-01 UTC, 2025-06-30 in America/Denver
-    monkeypatch.setattr(simplefin_service, "_TZ", pytz.timezone("UTC"))
+    monkeypatch.setattr(simplefin_service, "TIMEZONE", "UTC")
     assert simplefin_service._epoch_to_day(epoch) == "2025-07-01"
 
-    monkeypatch.setattr(simplefin_service, "_TZ", pytz.timezone("America/Denver"))
+    monkeypatch.setattr(simplefin_service, "TIMEZONE", "America/Denver")
     assert simplefin_service._epoch_to_day(epoch) == "2025-06-30"
 
 
@@ -69,6 +71,22 @@ def test_normalize_tolerates_missing_optional_fields():
     assert txns[1]["payee"] == ""
     assert txns[1]["memo"] == ""
     assert txns[1]["transacted_at"] is None
+
+
+def test_normalize_coerces_an_integer_mcc_to_string():
+    """All 965 rows in the real snapshot are str/None, but the DB column is TEXT
+    and nothing upstream guarantees a bridge always sends mcc as a string. An
+    uncoerced int inserts fine in SQLite but raises against Postgres — failing
+    the whole sync, not one row."""
+    from services import simplefin_service
+    payload = _payload()
+    payload["accounts"][0]["transactions"].append(
+        {"id": "t-int-mcc", "posted": 1751328000, "amount": "-9.00", "mcc": 5814}
+    )
+    _, txns = simplefin_service.normalize(payload)
+    t = next(t for t in txns if t["simplefin_id"] == "t-int-mcc")
+    assert t["mcc"] == "5814"
+    assert isinstance(t["mcc"], str)
 
 
 def test_normalize_never_returns_a_balance():

@@ -88,10 +88,11 @@ def match_pairs(txns, window_days=3):
 
 
 def _hint_matches_field(hint, field):
-    """Word-boundary substring match: `hint` (already stripped + lowercased) must
-    match `field` (case-insensitive) with no word character immediately before or
-    after it. Prevents a short hint like "pay" or "ach" from sweeping up unrelated
-    deposits ("payroll", "beach") — see Finding 6 in the Task 4 review."""
+    """Word-boundary substring match: `hint` must already be stripped + lowercased
+    by the caller; this function lowercases `field` (case-insensitive) and matches
+    `hint` with no word character immediately before or after it. Prevents a short
+    hint like "pay" or "ach" from sweeping up unrelated deposits ("payroll",
+    "beach") — see Finding 6 in the Task 4 review."""
     if not hint:
         return False
     pattern = r"(?<!\w)" + re.escape(hint) + r"(?!\w)"

@@ -31,7 +31,12 @@ logger = logging.getLogger(__name__)
 # configured TIMEZONE, never the container's local tz. Railway runs UTC while
 # dev runs America/Denver — a naive conversion silently misfiles any
 # transaction posted after ~17:00 local into the next day/week.
-_TZ = pytz.timezone(TIMEZONE)
+#
+# Resolved at point of use (pytz.timezone(TIMEZONE) inside _epoch_to_day), not
+# cached at import — matching services/gmail_service.py. A module-level cache
+# is invisible to the repo's own test idiom (conftest.py: monkeypatch.setenv +
+# importlib.reload(config)), which reloads config but not every module that
+# already imported a value from it at import time.
 
 
 class SimpleFinError(Exception):
@@ -104,7 +109,7 @@ def _epoch_to_day(value):
     if value <= 0:
         return None
     try:
-        return datetime.datetime.fromtimestamp(value, _TZ).date().isoformat()
+        return datetime.datetime.fromtimestamp(value, pytz.timezone(TIMEZONE)).date().isoformat()
     except (OSError, OverflowError, ValueError):
         return None
 
@@ -163,6 +168,11 @@ def normalize(payload):
                 "description": t.get("description") or "",
                 "payee": t.get("payee") or "",
                 "memo": t.get("memo") or "",
-                "mcc": t.get("mcc") or None,
+                # Coerced to str: the column is TEXT, and while every real bridge
+                # observed so far sends mcc as a string, a bridge that sends it as
+                # an int would insert fine in SQLite and raise in Postgres — one
+                # bad field failing the entire sync rather than one row. Same
+                # falsy-collapses-to-None semantics as the other optional fields.
+                "mcc": str(t.get("mcc")) if t.get("mcc") else None,
             })
     return accounts, txns

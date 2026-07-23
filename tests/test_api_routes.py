@@ -688,11 +688,26 @@ def test_bank_debug_returns_accounts_and_flow_totals(client, temp_db_path):
 
 
 def test_bank_debug_never_exposes_the_access_url(client, temp_db_path, monkeypatch):
+    """The route never references `config` at all, so this monkeypatch exercises
+    nothing — the protection is structural (the route has no path to the access
+    URL), not behavioral. Kept as a guard against a future edit wiring the route
+    to config; don't over-trust the test's name as proof of live enforcement."""
     import config
     monkeypatch.setattr(config, "SIMPLEFIN_ACCESS_URL",
                         "https://user:sup3rsecret@bridge.example.com/simplefin")
     r = client.get("/api/bank/debug?start=2026-06-01&end=2026-08-01")
     assert "sup3rsecret" not in r.text and "bridge.example.com" not in r.text
+
+
+def test_bank_debug_rejects_a_malformed_date(client, temp_db_path):
+    """This route's entire purpose in this phase is being the surface for
+    eyeballing correctness — a typo'd date must 400, not silently return an
+    empty result set."""
+    r = client.get("/api/bank/debug?start=2026-06-01&end=not-a-date")
+    assert r.status_code == 400
+
+    r = client.get("/api/bank/debug?start=not-a-date&end=2026-08-01")
+    assert r.status_code == 400
 
 
 def test_set_account_role(client, temp_db_path):

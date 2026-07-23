@@ -276,6 +276,11 @@ def bank_debug(start: str, end: str):
     reality. Never returns the access URL (which lives only in config and is
     never read here) and never returns balances (which are never stored).
     """
+    try:
+        datetime.date.fromisoformat(start)
+        datetime.date.fromisoformat(end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="start/end must be YYYY-MM-DD")
     rows = db.get_bank_transactions_range(start, end)
     counts, totals = {}, {}
     for r in rows:
@@ -298,6 +303,9 @@ def bank_debug(start: str, end: str):
 
 @router.post("/bank/accounts/{simplefin_id}/role")
 def set_bank_account_role(simplefin_id: str, body: dict):
+    """Set an account's role. Does not reclassify transactions immediately —
+    flows are recomputed on the next sync (up to SIMPLEFIN_SYNC_INTERVAL_HOURS
+    later), which is why scripts/simplefin_backfill.py runs the sync twice."""
     role = (body or {}).get("role")
     if role not in db.BANK_ROLES:
         raise HTTPException(status_code=400, detail="unknown role")

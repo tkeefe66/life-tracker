@@ -95,6 +95,23 @@ no hit/miss, no ledger row. They surface only as counts and spend.
   so rewriting it would retroactively move a ride into a different week.
 - Amounts come from `receipts.extract_amount` (`Total $X` in the snippet).
 
+### Bank ingestion — hard-won facts
+
+- **SimpleFIN keeps a rolling 90 days; anything older is unrecoverable.**
+  `scripts/simplefin_snapshot.py` exists purely to stop that decay clock — it
+  archives the raw payload to disk (outside the repo, mode 0600) before the
+  window closes. `scripts/simplefin_backfill.py` replays saved snapshots
+  through `jobs.sync_bank.run(payload=...)` — the exact same path a live sync
+  uses, so backfilled and synced rows are indistinguishable and the two can
+  never drift apart.
+- **The sync reclassifies the entire table every run, not a recent window.**
+  That's deliberate: `bank_flows` is pure and deterministic, so a full
+  recompute is cheap, and it means assigning an account role retroactively
+  fixes every transaction that touched it, no matter how long ago it posted.
+  An earlier windowed version froze classifications made while accounts were
+  still `role="unknown"` — a row that aged out of the window kept its wrong
+  flow forever even after the user fixed the role.
+
 ---
 
 ## Override + Learning Pattern
@@ -125,23 +142,32 @@ signal:
 ├── metrics.py               # Pure metric math (week bounds, hit/miss, streaks)
 ├── receipts.py               # Rule-based rules: delivery vs ride vs neither, follow-up
 │                            #   detection, amount + ride-time parsing
+├── bank_flows.py              # Pure computation for bank ingestion: pair matching
+│                            #   (match_pairs) + flow classification (classify_all) —
+│                            #   no DB, no network, no Claude, same role as metrics.py
 ├── ai_metrics.py              # All Claude calls (receipt, calendar-event, work-ride,
 │                            #   weekly reflection)
 ├── app/
 │   ├── api.py               # FastAPI app factory: /api/health, /api/login, static SPA mount
 │   ├── auth.py               # Single-user password → HMAC session cookie
 │   ├── routes.py              # Protected API routes (checkins, scorecard, insights,
-│   │                        #   reflection, deliveries, rides, social, spend, targets, settings)
+│   │                        #   reflection, deliveries, rides, social, spend, targets,
+│   │                        #   settings, bank debug/role)
 │   └── scorecard.py            # DB → domain wiring: weekly cards, spend, insights, history
 ├── jobs/
 │   ├── scan_gmail.py          # Every GMAIL_SCAN_INTERVAL_HOURS + once at startup:
 │   │                        #   three-way route — delivery order / ride / neither
 │   ├── scan_calendar.py         # Daily @ CALENDAR_SCAN_HOUR: social event classification
+│   ├── sync_bank.py            # Every SIMPLEFIN_SYNC_INTERVAL_HOURS + once at startup:
+│   │                        #   fetch, upsert, then reclassify the WHOLE table via
+│   │                        #   bank_flows (see Bank Ingestion below)
 │   └── weekly_push.py           # Mon @ WEEKLY_PUSH_HOUR: optional Telegram push (skips private)
 ├── services/
 │   ├── google_auth.py           # Shared OAuth2 credentials (Calendar + Gmail scopes)
 │   ├── calendar_service.py        # Google Calendar event fetch
 │   ├── gmail_service.py           # Gmail message fetch (includes Trash — see above)
+│   ├── simplefin_service.py        # SimpleFIN transport + normalization — the redaction
+│   │                            #   boundary for the bank-access-URL credential
 │   └── telegram_notify.py         # notify(text) — send-only, no inbound handling
 ├── frontend/                # React + Vite SPA, built to dist/
 │   └── src/
@@ -151,6 +177,10 @@ signal:
 │       └── styles.css          # The whole design system: OKLCH tokens, both themes
 ├── scripts/
 │   ├── calendar_auth.py          # One-off: OAuth2 setup, prints refresh token
+│   ├── simplefin_snapshot.py       # One-off: archive the raw SimpleFIN payload to disk,
+│   │                            #   outside the repo, mode 0600 — stops the 90-day decay clock
+│   ├── simplefin_backfill.py       # One-off: replay saved snapshot(s) through
+│   │                            #   jobs.sync_bank.run(payload=...) — the live-sync code path
 │   └── cleardb.py               # One-off: wipe all DB data
 ├── docs/superpowers/        # specs/ and plans/ — one pair per feature, chronological
 └── tests/                   # pytest — metrics, receipts, routes, jobs, services
@@ -221,6 +251,8 @@ doesn't already have them, whether or not `.env.example` mentions them.
 | `rides` | unique `gmail_message_id` | `ride_key` = parsed trip time; `ai_is_work` / `user_is_work`; `ride_at` immutable after insert |
 | `calendar_events` | unique `gcal_event_id` | `user_title` / `user_is_social` overrides, `source` (`gcal`\|`manual`), `amount`. Manual events use id `manual:<uuid4>` |
 | `weekly_reflections` | unique `week_start` | Cached AI paragraph — at most one Claude call per week |
+| `bank_accounts` | unique `simplefin_id` | `role` (spending/bills/savings/investment/credit_card/unknown) and `active` are user-set; the sync overwrites `name`/`org`/`kind` but never those two |
+| `bank_transactions` | unique `simplefin_id` | `flow` (derived) / `user_flow` (override) resolved via `COALESCE(user_flow, flow)`, same Override + Learning pattern as social events and rides; `pair_id` links the two halves of a matched transfer/card-payment, set by `bank_flows.match_pairs` |
 | `targets` | metric PK | per-metric direction + value |
 | `app_settings` | key PK | Telegram toggle, `gmail_last_run` / `_status` / `_result`, calendar equivalents |
 
@@ -250,6 +282,7 @@ is enough. Tests only exercise the SQLite path; Postgres DDL is verified by depl
 - [ ] `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` set if using the weekly push
 - [ ] `SESSION_TTL_DAYS` / `SESSION_MAX_DAYS` set if the defaults (14 / 60 days) aren't right for this deploy
 - [ ] `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` set if weekly backups should actually run (unset = silent no-op)
+- [ ] `SIMPLEFIN_ACCESS_URL` set if bank sync should actually run — optional, unset means it no-ops cleanly
 
 ---
 
@@ -259,7 +292,7 @@ is enough. Tests only exercise the SQLite path; Postgres DDL is verified by depl
 - **`database.py`** is the only place with SQL — no DB calls from `app/`, `jobs/`, or `services/`
 - **`ai_metrics.py`** is the only place with Claude calls — uses `claude-haiku-4-5-20251001` via `_call_json()`. **Never change `MODEL` without checking cost impact** — jobs run multiple times per day
 - Ingestion jobs (`jobs/scan_gmail.py`, `jobs/scan_calendar.py`) must never crash the web app on failure — log and record status in `app_settings`, don't raise
-- **The redaction boundary.** Ingestion jobs (and `jobs/weekly_push.py`) never store `str(exception)` in `app_settings` — that value is read back by `/api/settings` and rendered in Settings. `except Exception as e:` blocks call `logger.exception(...)` for full server-side detail, then `db.set_setting(..., safe_status(e))` (`services/safe_status.py`), which maps the exception to one of `"ok"` / `"error: auth"` / `"error: unreachable"` / `"error: rate limited"` / `"error: see logs"` — never anything else. This exists because a future SimpleFIN bank-access URL carries its credentials inside the URL itself, and HTTP libraries routinely put the request URL into exception messages (a Gmail URL already leaked this way once). Rule: **prevent the credential-bearing string from being constructed; never scrub it afterwards.** Any new ingestion job follows the same pattern. The pre-flight "we never even tried" statuses (`services.safe_status.NOT_CONFIGURED`, `GOOGLE_NOT_CONFIGURED`) are also `CLOSED_SET` members — written outside the try/except, before `safe_status()` ever runs, but from the same named constants so the invariant holds everywhere, not just inside the exception path.
+- **The redaction boundary.** Ingestion jobs (and `jobs/weekly_push.py`) never store `str(exception)` in `app_settings` — that value is read back by `/api/settings` and rendered in Settings. `except Exception as e:` blocks call `logger.exception(...)` for full server-side detail, then `db.set_setting(..., safe_status(e))` (`services/safe_status.py`), which maps the exception to one of `"ok"` / `"error: auth"` / `"error: unreachable"` / `"error: rate limited"` / `"error: see logs"` — never anything else. This exists because the SimpleFIN bank-access URL (`services/simplefin_service.py`) carries its credentials inside the URL itself, and HTTP libraries routinely put the request URL into exception messages (a Gmail URL already leaked this way once, and it's the same failure mode SimpleFIN would hit without this boundary). Rule: **prevent the credential-bearing string from being constructed; never scrub it afterwards.** Any new ingestion job follows the same pattern. The pre-flight "we never even tried" statuses (`services.safe_status.NOT_CONFIGURED`, `GOOGLE_NOT_CONFIGURED`) are also `CLOSED_SET` members — written outside the try/except, before `safe_status()` ever runs, but from the same named constants so the invariant holds everywhere, not just inside the exception path.
 - Google auth expiry surfaces as a visible banner in the app, never silent missing data
 - **Money formats one way:** `$16.31`, whole dollars trimmed to `$20`, via `.toFixed(2).replace(/\.00$/, "")`. Always null-check, never truthiness — a real `$0` must display
 - **Secondary surfaces fail quietly.** A failed fetch for insights/reflection/spend hides that section; it never sets the screen-level error state that would blank the page
