@@ -111,8 +111,26 @@ Applied in order; the first match wins. Only the final fallback is a guess.
 3. **`transfer`** — any other matched pair between two known accounts.
    Checking → checking, or checking → savings.
 4. **`income`** — an unpaired positive amount into a `spending` or `bills`
-   account.
-5. **`spending`** — everything else. Category derived from `mcc` when present.
+   account **whose payee or description matches a configured payroll
+   signature** (`INCOME_PAYEE_HINTS`, e.g. the employer name). Conservative by
+   design, because of the SoFi hazard below.
+5. **`inflow_unknown`** — any other unpaired deposit. Flagged for triage, and
+   counted as neither income nor spending.
+6. **`spending`** — everything else. Category derived from `mcc` when present.
+
+**The SoFi hazard.** Payroll is split between SoFi and Wells Fargo 7395, and
+SoFi is not connected. Two consequences the arithmetic must respect:
+
+- Part of income is **invisible**. Any income figure is a floor, not a total,
+  and the UI must eventually say so rather than implying completeness.
+- Money moved **from SoFi into checking arrives as an unpaired deposit**. If
+  that were classified as income, the app would report earnings that are
+  actually savings being drawn down — overstating income and hiding the exact
+  behaviour the user flagged as having drifted. Hence rule 5: an unmatched
+  deposit is `inflow_unknown` until proven otherwise, never silently income.
+
+Connecting SoFi later resolves both: those movements become ordinary matched
+transfers, and the income total becomes complete.
 
 ### 4. Pair matching
 
@@ -166,9 +184,11 @@ Venmo/Zelle/ATM policy, and backfill beyond SimpleFIN's 90-day window.
   appears in no stored value, log line, or API response (property test with a
   credential-bearing URL in the exception).
 
-## Open questions
+## Resolved
 
-1. **SoFi** is not connected — add it in SimpleFIN, or accept the blind spot?
-2. **Citi Simplicity** returns zero transactions — dormant, or a sync problem?
-3. Which Wells Fargo account actually receives payroll? Needed for income in a
-   later phase, not for ingestion.
+- **Payroll** arrives from the employer into **SoFi and Wells Fargo 7395**.
+  Drives rule 4's payroll signature and the SoFi hazard above.
+- **Citi Simplicity**'s zero transactions are genuine inactivity, not a sync
+  fault. No action.
+- **SoFi** will be connected later. Until then the blind spot is explicit and
+  handled by rule 5 rather than papered over.
