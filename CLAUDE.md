@@ -1,10 +1,13 @@
 # On Track — Claude Code Guide
 
 A single-user web app that answers one question weekly: **are you doing the things you
-said you'd do?** Four metrics — delivery orders, gym sessions, social events, alcohol
-days — tracked mostly passively (Gmail receipts, Google Calendar) plus two manual
-check-in buttons. Pull-based: you open the app, nothing pushes proposals at you.
-Telegram survives only as an optional send-only weekly scorecard push.
+said you'd do?** Five scored metrics — delivery orders, gym sessions, social events,
+alcohol days, substances — tracked partly passively (Gmail receipts, Google Calendar)
+plus three manual check-in buttons. Uber/Lyft rides are tracked too, but as an
+unscored series (no target). Delivery orders, rides, and social events also carry
+dollar amounts, so the app answers "what did this cost?" alongside "did I do it?".
+Pull-based: you open the app, nothing pushes proposals at you. Telegram survives only
+as an optional send-only weekly scorecard push.
 
 ---
 
@@ -45,11 +48,70 @@ table; a count `hit`s if it's on the right side of `direction`.
 |---|---|---|---|
 | Delivery orders | Ceiling (≤ N/week) | Gmail receipts | `receipts.py` sender/subject rules, ambiguous cases → `ai_metrics.classify_receipt` |
 | Gym sessions | Floor (≥ N/week) | Manual check-in | One tap on Today screen, one per day |
-| Social events | Floor (≥ N/week) | Google Calendar | `jobs/scan_calendar.py` pulls events, `ai_metrics.classify_social_event` scores social/not; counts once the event has occurred and wasn't declined |
+| Social events | Floor (≥ N/week) | Google Calendar + manual | `jobs/scan_calendar.py` pulls events, `ai_metrics.classify_social_event` scores social/not; counts once the event has occurred. Users can add events manually and override any detected one |
 | Alcohol days | Ceiling (≤ N/week) | Manual check-in + level (1–3) | Level shown as trend only, not scored |
+| Substances | Ceiling (≤ N/week, default 0) | Manual check-in | **`private: True`** — see Private metrics below |
+
+**Manual check-ins are dated.** Every check-in route accepts an optional `date`
+(defaults to today); past dates are allowed without limit, future dates are rejected
+with 400. The Today screen is really a Day screen with ‹ › navigation, so backfill
+works everywhere.
+
+**Private metrics.** A `METRICS` entry may carry `private: True`. Read it with
+`.get("private")` — the other entries deliberately omit the key. Privacy is enforced
+in exactly two places, and nowhere else: the `format_scorecard_text` builder in
+`jobs/weekly_push.py` (Telegram) and the `/api/reflection` route (which strips private
+metrics from the card and drops noticings naming them before calling Claude). Private
+metrics still appear on every on-screen surface.
+
+**Rides are not a metric.** They are deliberately absent from `METRICS` — no target,
+no hit/miss, no ledger row. They surface only as counts and spend.
 
 `metrics.py` is pure computation (no DB, no I/O): `week_bounds`, `is_hit`,
-`build_scorecard`, `streaks`. `app/scorecard.py` wires DB counts into it.
+`build_scorecard`, `streaks`, plus the insight math (`weekday_counts`,
+`trend_direction`, `weekday_skew`, `co_occurrence`, `noticings`).
+`app/scorecard.py` wires DB counts into it.
+
+---
+
+## Passive Ingestion — hard-won facts
+
+- **The Gmail scan reads Trash** (`includeSpamTrash=True`). This is load-bearing, not
+  incidental: the user's Uber receipts are auto-trashed, so without it the scan sees
+  nothing. Gmail purges trash after ~30 days, which caps how far any backfill can
+  reach.
+- **The scan also runs once at startup** (`next_run_time=now` in `main.py`), so
+  `railway redeploy --yes` forces an immediate re-scan instead of waiting up to
+  `GMAIL_SCAN_INTERVAL_HOURS`. `gmail_last_status`/`gmail_last_result` in Settings only
+  change when a scan actually runs.
+- **One trip or order produces several emails.** Delivery: order receipt, tip receipt,
+  refund adjustment — `receipts.is_followup()` skips the follow-ups, and a tip receipt
+  with no existing order row *creates* it (many orders leave only the tip email).
+  Rides: a "charge summary" and a "thanks for riding" receipt per trip.
+- **Ride dedupe keys on the ride timestamp parsed from the snippet**
+  (`receipts.extract_ride_time`), never the subject — two distinct trips the same
+  morning share the subject "Your Sunday morning trip with Uber".
+- **`rides.ride_at` is immutable after insert.** `get_rides_range` buckets on its date,
+  so rewriting it would retroactively move a ride into a different week.
+- Amounts come from `receipts.extract_amount` (`Total $X` in the snippet).
+
+---
+
+## Override + Learning Pattern
+
+Social events and rides share one pattern; follow it for any future AI-classified
+signal:
+
+1. Store the AI verdict and the user override in **separate nullable columns**
+   (`is_social` / `user_is_social`; `ai_is_work` / `user_is_work`).
+2. **Resolve in SQL** so every caller agrees — `COALESCE(user_title, title)`,
+   `COALESCE(user_is_social, is_social)`. Never resolve in Python at one call site.
+3. The scan may overwrite its own columns but must never touch the user's.
+4. Feed recent overrides back as few-shot examples in the classification prompt
+   (`db.get_classification_examples`, `db.get_ride_examples`) so one correction fixes
+   a recurring event.
+5. Only a **confirmed** user verdict changes behavior — an AI flag alone never
+   excludes anything silently.
 
 ---
 
@@ -61,28 +123,42 @@ table; a count `hit`s if it's on the right side of `direction`.
 ├── config.py               # All env vars — secrets and feature flags
 ├── database.py              # DB layer: PostgreSQL (prod) / SQLite (local dev)
 ├── metrics.py               # Pure metric math (week bounds, hit/miss, streaks)
-├── receipts.py               # Rule-based delivery-receipt sender/subject matching
-├── ai_metrics.py              # All Claude calls (receipt + calendar-event classification)
+├── receipts.py               # Rule-based rules: delivery vs ride vs neither, follow-up
+│                            #   detection, amount + ride-time parsing
+├── ai_metrics.py              # All Claude calls (receipt, calendar-event, work-ride,
+│                            #   weekly reflection)
 ├── app/
 │   ├── api.py               # FastAPI app factory: /api/health, /api/login, static SPA mount
 │   ├── auth.py               # Single-user password → HMAC session cookie
-│   ├── routes.py              # Protected API routes (checkins, scorecard, targets, settings)
-│   └── scorecard.py            # Assembles weekly scorecards from DB counts
+│   ├── routes.py              # Protected API routes (checkins, scorecard, insights,
+│   │                        #   reflection, deliveries, rides, social, spend, targets, settings)
+│   └── scorecard.py            # DB → domain wiring: weekly cards, spend, insights, history
 ├── jobs/
-│   ├── scan_gmail.py          # Scheduled every GMAIL_SCAN_INTERVAL_HOURS: delivery receipts
-│   ├── scan_calendar.py         # Scheduled daily @ CALENDAR_SCAN_HOUR: social event classification
-│   └── weekly_push.py           # Scheduled Mon @ WEEKLY_PUSH_HOUR: optional Telegram scorecard push
+│   ├── scan_gmail.py          # Every GMAIL_SCAN_INTERVAL_HOURS + once at startup:
+│   │                        #   three-way route — delivery order / ride / neither
+│   ├── scan_calendar.py         # Daily @ CALENDAR_SCAN_HOUR: social event classification
+│   └── weekly_push.py           # Mon @ WEEKLY_PUSH_HOUR: optional Telegram push (skips private)
 ├── services/
 │   ├── google_auth.py           # Shared OAuth2 credentials (Calendar + Gmail scopes)
 │   ├── calendar_service.py        # Google Calendar event fetch
-│   ├── gmail_service.py           # Gmail message fetch
+│   ├── gmail_service.py           # Gmail message fetch (includes Trash — see above)
 │   └── telegram_notify.py         # notify(text) — send-only, no inbound handling
-├── frontend/                # React + Vite SPA (Today / Scorecard / Settings), built to dist/
+├── frontend/                # React + Vite SPA, built to dist/
+│   └── src/
+│       ├── screens/          # Today, Scorecard (Week), Insights, Settings
+│       ├── components/        # DayNav, WeekNav, TrendChart, WeekdayHeatmap, SpendSubtotals…
+│       ├── lib.ts             # Pure helpers (dates, labels, money, chart scales) — unit-tested
+│       └── styles.css          # The whole design system: OKLCH tokens, both themes
 ├── scripts/
 │   ├── calendar_auth.py          # One-off: OAuth2 setup, prints refresh token
 │   └── cleardb.py               # One-off: wipe all DB data
+├── docs/superpowers/        # specs/ and plans/ — one pair per feature, chronological
 └── tests/                   # pytest — metrics, receipts, routes, jobs, services
 ```
+
+There is **no component test framework**. Pure frontend logic lives in `lib.ts` and is
+tested in `lib.test.ts` (vitest); components are verified by `tsc --noEmit` + `vite build`
+plus a manual look.
 
 ---
 
@@ -118,9 +194,17 @@ Matches `.env.example`.
 - `DATABASE_URL` set → PostgreSQL (Railway prod)
 - Not set → SQLite at `./weekly_updates.db` (local dev)
 
-**Active v2 tables:** `checkins` (gym/alcohol, unique per date+type), `delivery_orders`
-(unique on `gmail_message_id`), `calendar_events` (unique on `gcal_event_id`), `targets`
-(per-metric direction + value), `app_settings` (key/value, e.g. Telegram push toggle).
+**Active v2 tables:**
+
+| Table | Key | Notes |
+|---|---|---|
+| `checkins` | unique `(date, type)` | `type` ∈ gym / alcohol / substances; `level` is alcohol-only |
+| `delivery_orders` | unique `gmail_message_id` | `amount` nullable; cluster key for dedupe is `(service, day, subject)` |
+| `rides` | unique `gmail_message_id` | `ride_key` = parsed trip time; `ai_is_work` / `user_is_work`; `ride_at` immutable after insert |
+| `calendar_events` | unique `gcal_event_id` | `user_title` / `user_is_social` overrides, `source` (`gcal`\|`manual`), `amount`. Manual events use id `manual:<uuid4>` |
+| `weekly_reflections` | unique `week_start` | Cached AI paragraph — at most one Claude call per week |
+| `targets` | metric PK | per-metric direction + value |
+| `app_settings` | key PK | Telegram toggle, `gmail_last_run` / `_status` / `_result`, calendar equivalents |
 
 **Archive tables (v1, no new writes):** `life_log_entries`, `people`, `life_log_people`,
 `activity_log`, `habits`, `habit_logs`, `categories`, `conversation_state`,
@@ -128,7 +212,10 @@ Matches `.env.example`.
 read or written by any v2 code path.
 
 If you add a column, add a migration — do not rely on `CREATE TABLE IF NOT EXISTS` to
-catch schema changes in production.
+catch schema changes in production. The established pattern lives in `_init_v2_tables()`:
+Postgres `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, SQLite a `PRAGMA table_info` guard
+before `ALTER TABLE`. A brand-new table needs no migration — `CREATE TABLE IF NOT EXISTS`
+is enough. Tests only exercise the SQLite path; Postgres DDL is verified by deploying.
 
 ---
 
@@ -153,13 +240,31 @@ catch schema changes in production.
 - **`ai_metrics.py`** is the only place with Claude calls — uses `claude-haiku-4-5-20251001` via `_call_json()`. **Never change `MODEL` without checking cost impact** — jobs run multiple times per day
 - Ingestion jobs (`jobs/scan_gmail.py`, `jobs/scan_calendar.py`) must never crash the web app on failure — log and record status in `app_settings`, don't raise
 - Google auth expiry surfaces as a visible banner in the app, never silent missing data
+- **Money formats one way:** `$16.31`, whole dollars trimmed to `$20`, via `.toFixed(2).replace(/\.00$/, "")`. Always null-check, never truthiness — a real `$0` must display
+- **Secondary surfaces fail quietly.** A failed fetch for insights/reflection/spend hides that section; it never sets the screen-level error state that would blank the page
+- **Charts:** hand-rolled SVG, no chart library. Never set a fixed pixel height on a chart — use a wide viewBox with `width:100%; height:auto`, or the plot letterboxes into the middle of its container. The x-axis band lives inside the viewBox so labels can't clip
+- **Chart colors are validated, not chosen.** `--chart-*` tokens were checked for colorblind separation and contrast against each theme's surface (dark needed its own steps — the UI tokens are too light for chart marks). Don't substitute values or add hues without re-validating, and keep legends/labels wherever a pair's separation is marginal
 
 ---
 
 ## Adding a New Feature — Checklist
 
-1. **New metric?** Add to `METRICS` in `metrics.py`, a DB source table + query in `database.py`, wire counting into `app/scorecard.py`, add a target row via `db.seed_default_targets()`
-2. **New AI task?** Add to `ai_metrics.py` only — keep the `_call_json()` pattern
-3. **New DB table/column?** Add to `database.py` schema + a migration; test local SQLite and prod Postgres
+1. **New metric?** Add to `METRICS` in `metrics.py`, a DB source table + query in `database.py`, wire counting into `app/scorecard.py`, add a target row via `db.seed_default_targets()`. Targets seed automatically at startup. Adding a key breaks tests that assert on `METRICS`-derived key sets — widen them, don't weaken them. Sensitive? Mark it `private: True`
+2. **New AI task?** Add to `ai_metrics.py` only — keep the `_call_json()` pattern. If a user can disagree with the verdict, follow the Override + Learning Pattern above
+3. **New DB table/column?** Add to `database.py` schema + a migration (see Database); test local SQLite and prod Postgres
 4. **New env var?** Add to `config.py`, document above, add to `.env.example`
 5. **New scheduled job?** Add to `jobs/`, wire into the `lifespan()` scheduler in `main.py`
+6. **New passive signal from email?** Extend `receipts.py`'s rules and the three-way route in `jobs/scan_gmail.py`. Assume one real-world event produces several emails — decide the cluster key before writing the ingest, and never key on a subject line
+7. **Anything with a dollar amount?** It belongs in the per-service spend breakdown, and work-excluded rides must stay excluded from every figure
+
+---
+
+## Working On This Repo
+
+Each feature has a spec and a plan in `docs/superpowers/`, written before the code and
+committed alongside it. They are the record of *why* — read the relevant pair before
+changing a subsystem; several encode decisions (and rejected alternatives) that aren't
+recoverable from the code.
+
+Verify with the real suites — `pytest tests/ -v` and, in `frontend/`,
+`npm test -- --run && npm run build` — before claiming anything works.
