@@ -56,6 +56,26 @@ def _personal_rides(rides: list) -> list:
     return [r for r in rides if not r.get("user_is_work")]
 
 
+def _spend_by_service(orders: list, rides: list, social_spend: float) -> list:
+    """Per-service spend rows (kind: delivery | ride | social), zero/None amounts
+    dropped, each rounded to 2dp, sorted by amount descending."""
+    by_service: dict = {}
+    for o in orders:
+        by_service[("delivery", o["service"])] = by_service.get(("delivery", o["service"]), 0) + (o["amount"] or 0)
+    for r in rides:
+        by_service[("ride", r["service"])] = by_service.get(("ride", r["service"]), 0) + (r["amount"] or 0)
+    if social_spend:
+        by_service[("social", "Social")] = social_spend
+
+    rows = [
+        {"kind": kind, "service": service, "amount": round(amount, 2)}
+        for (kind, service), amount in by_service.items()
+        if amount
+    ]
+    rows.sort(key=lambda r: r["amount"], reverse=True)
+    return rows
+
+
 def scorecard_for_week(week_start: date) -> dict:
     ws, we = metrics.week_bounds(week_start)
     card = metrics.build_scorecard(week_start, counts_for_week(week_start), db.get_targets())
@@ -66,6 +86,7 @@ def scorecard_for_week(week_start: date) -> dict:
     rides = _personal_rides(db.get_rides_range(ws.isoformat(), we.isoformat()))
     card["rides_count"] = len(rides)
     card["rides_spend"] = round(sum(r["amount"] or 0 for r in rides), 2)
+    card["spend_by_service"] = _spend_by_service(orders, rides, card["social_spend"])
     return card
 
 
