@@ -217,3 +217,56 @@ def test_weeks_above_52_clamps_to_52(temp_db_path):
     assert len(result["weeks"]) == 52
     expected_first = this_monday - timedelta(weeks=51)
     assert result["weeks"][0]["week_start"] == expected_first.isoformat()
+    # Pin the partial-flag reading: covered_from predates the window, so the
+    # first surviving week is not partial (coverage began before the window starts)
+    weeks = result["weeks"]
+    assert weeks[0]["partial"] is False
+
+
+# ── covered_to pin ──────────────────────────────────────────────────────────────
+
+def test_covered_to_equals_latest_posted_date(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    twenty_days_ago = (scorecard._local_today() - timedelta(days=20)).isoformat()
+    three_days_ago = (scorecard._local_today() - timedelta(days=3)).isoformat()
+
+    # Seed two transactions in reverse chronological order to test the max() logic.
+    _txn(db, "t1", acct["id"], twenty_days_ago, -50.0, "spending")
+    _txn(db, "t2", acct["id"], three_days_ago, -30.0, "spending")
+
+    result = money.summary(weeks=52)
+    # covered_to should equal the LATER (more recent) of the two posted dates
+    assert result["covered_to"] == three_days_ago
+
+
+# ── triage_counts: ambiguous and inflow_unknown ─────────────────────────────────
+
+def test_triage_counts_counts_unresolved_ambiguous_and_inflow_unknown(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+
+    # (a) ambiguous with no user_flow: should be counted
+    db.upsert_bank_transaction("ambig1", acct["id"], today, today, -20.0, "AMBIG TX", "", "", None)
+    db.set_bank_transaction_derived("ambig1", "spending", None, True)
+
+    # (b) ambiguous with user_flow set: should NOT be counted
+    db.upsert_bank_transaction("ambig2", acct["id"], today, today, -30.0, "AMBIG TX 2", "", "", None)
+    db.set_bank_transaction_derived("ambig2", "spending", None, True)
+    db.set_bank_flow_override("ambig2", "transfer")
+
+    # (c) inflow_unknown with no override: should be counted
+    db.upsert_bank_transaction("inflow1", acct["id"], today, today, 100.0, "UNKNOWN INFLOW", "", "", None)
+    db.set_bank_transaction_derived("inflow1", "inflow_unknown", None, False)
+
+    result = money.summary(weeks=52)
+    # Only one ambiguous (the unresolved one) and one inflow_unknown
+    assert result["triage_counts"] == {"ambiguous": 1, "inflow_unknown": 1}
