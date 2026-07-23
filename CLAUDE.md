@@ -67,6 +67,11 @@ metrics still appear on every on-screen surface.
 **Rides are not a metric.** They are deliberately absent from `METRICS` — no target,
 no hit/miss, no ledger row. They surface only as counts and spend.
 
+**Bank data is not a metric either.** Same reasoning, same absence from
+`METRICS` — no target, no hit/miss, no green/red. The Money tab surfaces it
+only as counts, spend, and flows (income / spending / transfer / …), never
+as a scored line.
+
 `metrics.py` is pure computation (no DB, no I/O): `week_bounds`, `is_hit`,
 `build_scorecard`, `streaks`, plus the insight math (`weekday_counts`,
 `trend_direction`, `weekday_skew`, `co_occurrence`, `noticings`).
@@ -111,6 +116,15 @@ no hit/miss, no ledger row. They surface only as counts and spend.
   An earlier windowed version froze classifications made while accounts were
   still `role="unknown"` — a row that aged out of the window kept its wrong
   flow forever even after the user fixed the role.
+- **A triaged row must be excluded by `user_flow IS NOT NULL`, not by clearing
+  `ambiguous`.** `ambiguous` is derived and recomputed from scratch every
+  sync, and `bank_flows.is_ambiguous` reads `flow`, not `resolved_flow` — so a
+  row the user has already ruled on classifies as ambiguous again on the very
+  next run and returns to the queue. Filtering the triage query on
+  `user_flow IS NULL` is the fix: it keeps `bank_flows` pure (which is what
+  lets the sync reclassify the whole table), keeps `ambiguous` meaning "the
+  text looks transfer-ish" rather than "the user hasn't looked at this", and
+  needs no new column.
 
 ---
 
@@ -153,7 +167,9 @@ signal:
 │   ├── routes.py              # Protected API routes (checkins, scorecard, insights,
 │   │                        #   reflection, deliveries, rides, social, spend, targets,
 │   │                        #   settings, bank debug/role)
-│   └── scorecard.py            # DB → domain wiring: weekly cards, spend, insights, history
+│   ├── scorecard.py            # DB → domain wiring: weekly cards, spend, insights, history
+│   └── money.py               # DB → domain wiring for the Money screen: summary(weeks) +
+│                            #   triage(limit) — the bank equivalent of scorecard.py
 ├── jobs/
 │   ├── scan_gmail.py          # Every GMAIL_SCAN_INTERVAL_HOURS + once at startup:
 │   │                        #   three-way route — delivery order / ride / neither
@@ -171,8 +187,9 @@ signal:
 │   └── telegram_notify.py         # notify(text) — send-only, no inbound handling
 ├── frontend/                # React + Vite SPA, built to dist/
 │   └── src/
-│       ├── screens/          # Today, Scorecard (Week), Insights, Settings
-│       ├── components/        # DayNav, WeekNav, TrendChart, WeekdayHeatmap, SpendSubtotals…
+│       ├── screens/          # Today, Scorecard (Week), Money, Insights, Settings
+│       ├── components/        # DayNav, WeekNav, TrendChart, WeekdayHeatmap, SpendSubtotals,
+│       │                    #   BankSpendChart, TriageQueue…
 │       ├── lib.ts             # Pure helpers (dates, labels, money, chart scales) — unit-tested
 │       └── styles.css          # The whole design system: OKLCH tokens, both themes
 ├── scripts/
@@ -296,6 +313,7 @@ is enough. Tests only exercise the SQLite path; Postgres DDL is verified by depl
 - Ingestion jobs (`jobs/scan_gmail.py`, `jobs/scan_calendar.py`) must never crash the web app on failure — log and record status in `app_settings`, don't raise
 - **The redaction boundary.** Ingestion jobs (and `jobs/weekly_push.py`) never store `str(exception)` in `app_settings` — that value is read back by `/api/settings` and rendered in Settings. `except Exception as e:` blocks call `logger.exception(...)` for full server-side detail, then `db.set_setting(..., safe_status(e))` (`services/safe_status.py`), which maps the exception to one of `"ok"` / `"error: auth"` / `"error: unreachable"` / `"error: rate limited"` / `"error: see logs"` — never anything else. This exists because the SimpleFIN bank-access URL (`services/simplefin_service.py`) carries its credentials inside the URL itself, and HTTP libraries routinely put the request URL into exception messages (a Gmail URL already leaked this way once, and it's the same failure mode SimpleFIN would hit without this boundary). Rule: **prevent the credential-bearing string from being constructed; never scrub it afterwards.** Any new ingestion job follows the same pattern. The pre-flight "we never even tried" statuses (`services.safe_status.NOT_CONFIGURED`, `GOOGLE_NOT_CONFIGURED`) are also `CLOSED_SET` members — written outside the try/except, before `safe_status()` ever runs, but from the same named constants so the invariant holds everywhere, not just inside the exception path.
 - **HTTP client loggers are the third leak path, and the boundary above does not cover them.** `httpx` logs the full request URL at INFO — and since the SimpleFIN access URL *is* the credential, an INFO-level `httpx` logger writes the bearer token to the deploy logs on every sync. Nothing is raised and nothing is stored, so neither `safe_status()` nor `app_settings` ever sees it: the exception-based boundary is bypassed entirely rather than defeated. `main.py` pins `httpx` and `httpcore` to `WARNING` immediately after `logging.basicConfig`, and a test in `tests/test_simplefin_service.py` locks it. That test asserts an **explicit** level on those loggers, not the effective level — under pytest the root logger already has handlers, so `basicConfig` no-ops and an effective-level assertion passes while production still leaks. This happened for real on 2026-07-23, the first time the credential was set in Railway — the token reached the deploy logs and was knowingly left in place rather than rotated, so the logs from that date should be treated as sensitive. Never lower those levels, and treat any new logging config or HTTP client as subject to the same check.
+- **Bank text never reaches Claude or Telegram.** `/api/reflection` builds its prompt from `METRICS`-derived cards and noticings, and `jobs/weekly_push.py`'s `format_scorecard_text` builds the Telegram card the same way. Bank data is not in `METRICS` (see Metrics above), so neither outbound path ever sees a bank transaction description or counterparty — this holds by construction, not by an explicit filter, so it keeps holding only as long as bank data stays out of `METRICS`.
 - Google auth expiry surfaces as a visible banner in the app, never silent missing data
 - **Money formats one way:** `$16.31`, whole dollars trimmed to `$20`, via `.toFixed(2).replace(/\.00$/, "")`. Always null-check, never truthiness — a real `$0` must display
 - **Secondary surfaces fail quietly.** A failed fetch for insights/reflection/spend hides that section; it never sets the screen-level error state that would blank the page
