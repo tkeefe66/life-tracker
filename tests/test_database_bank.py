@@ -360,3 +360,169 @@ def test_user_note_key_present_and_none_by_default(temp_db_path):
     rows = db.get_bank_transactions_range("2026-06-01", "2026-08-01")
     assert "user_note" in rows[0]
     assert rows[0]["user_note"] is None
+
+
+# ── suggested_flow: examples query, unsuggested queue, bulk writer ─────────────
+
+def test_suggested_flow_key_present_and_none_by_default(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("a", acct["id"], "2026-07-01", "2026-07-01", -10.0, "X", "", "", None)
+    db.set_bank_transaction_derived("a", "spending", None, False)
+
+    rows = db.get_bank_transactions_range("2026-06-01", "2026-08-01")
+    assert "suggested_flow" in rows[0]
+    assert rows[0]["suggested_flow"] is None
+
+
+def test_examples_query_returns_only_answered_rows_newest_first_capped(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("unanswered", acct["id"], "2026-07-05", "2026-07-05",
+                               -10.0, "NO OVERRIDE", "No Override", "", None)
+    db.set_bank_transaction_derived("unanswered", "spending", None, False)
+
+    for sfid, posted, payee, desc, amount, user_flow in [
+        ("t1", "2026-07-01", "Coffee Shop", "COFFEE", -5.0, "spending"),
+        ("t2", "2026-07-02", "Employer Inc", "PAYROLL", 1000.0, "income"),
+        ("t3", "2026-07-03", "Savings Xfer", "TRANSFER", -200.0, "transfer"),
+    ]:
+        db.upsert_bank_transaction(sfid, acct["id"], posted, posted, amount, desc, payee, "", None)
+        db.set_bank_transaction_derived(sfid, "spending", None, False)
+        db.set_bank_flow_override(sfid, user_flow)
+
+    examples = db.get_bank_flow_examples(limit=20)
+    assert [e["user_flow"] for e in examples] == ["transfer", "income", "spending"]  # newest first
+    assert all("unanswered" not in str(e) for e in examples)
+
+    capped = db.get_bank_flow_examples(limit=2)
+    assert len(capped) == 2
+    assert [e["user_flow"] for e in capped] == ["transfer", "income"]
+
+
+def test_examples_query_side_correct_both_directions(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("out1", acct["id"], "2026-07-01", "2026-07-01",
+                               -25.0, "COFFEE", "Coffee Shop", "", None)
+    db.set_bank_transaction_derived("out1", "spending", None, False)
+    db.set_bank_flow_override("out1", "spending")
+
+    db.upsert_bank_transaction("in1", acct["id"], "2026-07-02", "2026-07-02",
+                               500.0, "PAYROLL", "Employer Inc", "", None)
+    db.set_bank_transaction_derived("in1", "inflow_unknown", None, False)
+    db.set_bank_flow_override("in1", "income")
+
+    examples = {e["payee"]: e for e in db.get_bank_flow_examples(limit=20)}
+    assert examples["Coffee Shop"]["side"] == "outflow"
+    assert examples["Employer Inc"]["side"] == "inflow"
+
+
+def test_examples_query_returns_exactly_the_four_key_shape(temp_db_path):
+    """Pins the never-send-notes contract at the source: no user_note, no amount,
+    no dates, no account fields can leak into the model's input."""
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("a", acct["id"], "2026-07-01", "2026-07-01",
+                               -25.0, "COFFEE", "Coffee Shop", "", None)
+    db.set_bank_transaction_derived("a", "spending", None, False)
+    db.set_bank_flow_override("a", "spending", note="a personal note")
+
+    examples = db.get_bank_flow_examples(limit=20)
+    assert len(examples) == 1
+    assert set(examples[0].keys()) == {"payee", "description", "side", "user_flow"}
+
+
+def test_unsuggested_triage_excludes_rows_with_a_suggestion(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01",
+                               -40.0, "VENMO PAYMENT", "Venmo", "", None)
+    db.set_bank_transaction_derived("t1", "spending", None, True)
+    db.upsert_bank_transaction("t2", acct["id"], "2026-07-02", "2026-07-02",
+                               -50.0, "VENMO PAYMENT 2", "Venmo", "", None)
+    db.set_bank_transaction_derived("t2", "spending", None, True)
+
+    written = db.set_bank_suggestions_bulk({"t1": "spending"})
+    assert written == 1
+
+    ids = [r["simplefin_id"] for r in db.get_bank_unsuggested_triage(50)]
+    assert ids == ["t2"]
+
+
+def test_unsuggested_triage_excludes_answered_rows(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01",
+                               -40.0, "VENMO PAYMENT", "Venmo", "", None)
+    db.set_bank_transaction_derived("t1", "spending", None, True)
+    db.set_bank_flow_override("t1", "transfer")
+
+    ids = [r["simplefin_id"] for r in db.get_bank_unsuggested_triage(50)]
+    assert "t1" not in ids
+
+
+def test_unsuggested_triage_includes_both_bucket_kinds(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("amb", acct["id"], "2026-07-01", "2026-07-01",
+                               -40.0, "VENMO PAYMENT", "Venmo", "", None)
+    db.set_bank_transaction_derived("amb", "spending", None, True)
+
+    db.upsert_bank_transaction("inflow", acct["id"], "2026-07-02", "2026-07-02",
+                               500.0, "MYSTERY DEPOSIT", "", "", None)
+    db.set_bank_transaction_derived("inflow", "inflow_unknown", None, False)
+
+    ids = {r["simplefin_id"] for r in db.get_bank_unsuggested_triage(50)}
+    assert ids == {"amb", "inflow"}
+
+
+def test_unsuggested_triage_ordering_and_cap(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    for sfid, posted in [("b", "2026-07-01"), ("a", "2026-07-01"), ("c", "2026-07-03")]:
+        db.upsert_bank_transaction(sfid, acct["id"], posted, posted, -10.0, "X", "", "", None)
+        db.set_bank_transaction_derived(sfid, "spending", None, True)
+
+    ids = [r["simplefin_id"] for r in db.get_bank_unsuggested_triage(50)]
+    assert ids == ["c", "a", "b"]  # newest posted first; 07-01 tie broken a < b
+
+    capped = [r["simplefin_id"] for r in db.get_bank_unsuggested_triage(2)]
+    assert capped == ["c", "a"]
+
+
+def test_bulk_suggestions_writes_both_rows_and_returns_count(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("a", acct["id"], "2026-07-01", "2026-07-01", -10.0, "X", "", "", None)
+    db.upsert_bank_transaction("b", acct["id"], "2026-07-02", "2026-07-02", -10.0, "X", "", "", None)
+
+    written = db.set_bank_suggestions_bulk({"a": "spending", "b": "transfer"})
+    assert written == 2
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2026-06-01", "2026-08-01")}
+    assert rows["a"]["suggested_flow"] == "spending"
+    assert rows["b"]["suggested_flow"] == "transfer"
+
+
+def test_bulk_suggestions_unknown_id_skipped(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("a", acct["id"], "2026-07-01", "2026-07-01", -10.0, "X", "", "", None)
+
+    written = db.set_bank_suggestions_bulk({"a": "spending", "nope": "transfer"})
+    assert written == 1
+
+
+def test_bulk_suggestions_invalid_value_raises_before_any_write(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("a", acct["id"], "2026-07-01", "2026-07-01", -10.0, "X", "", "", None)
+    db.upsert_bank_transaction("b", acct["id"], "2026-07-02", "2026-07-02", -10.0, "X", "", "", None)
+
+    with pytest.raises(ValueError):
+        db.set_bank_suggestions_bulk({"a": "spending", "b": "not-a-real-flow"})
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2026-06-01", "2026-08-01")}
+    assert rows["a"]["suggested_flow"] is None  # nothing written, including the valid entry
+    assert rows["b"]["suggested_flow"] is None

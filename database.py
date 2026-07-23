@@ -603,6 +603,7 @@ def _init_v2_tables():
                 pair_id TEXT,
                 ambiguous {bool_t} NOT NULL DEFAULT FALSE,
                 user_note TEXT,
+                suggested_flow TEXT,
                 detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -643,6 +644,16 @@ def _init_v2_tables():
             cols = [r["name"] for r in c.execute("PRAGMA table_info(bank_transactions)").fetchall()]
             if "user_note" not in cols:
                 c.execute("ALTER TABLE bank_transactions ADD COLUMN user_note TEXT")
+
+        # suggested_flow: nullable TEXT on bank_transactions. A DERIVED column the
+        # sync owns exclusively (see set_bank_suggestions_bulk) — never read by any
+        # aggregate (app/money.py must not reference it).
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS suggested_flow TEXT")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(bank_transactions)").fetchall()]
+            if "suggested_flow" not in cols:
+                c.execute("ALTER TABLE bank_transactions ADD COLUMN suggested_flow TEXT")
 
 
 # ── Check-ins ─────────────────────────────────────────────────────────────────
@@ -1282,10 +1293,92 @@ def set_bank_flow_overrides_bulk(simplefin_ids, user_flow):
     return updated
 
 
+# BANK_SUGGESTION_FLOWS is the union of both triage queues' button flows — the
+# outflow queue's spending/transfer/card_payment/investment plus the inflow
+# queue's income/refund. "inflow_unknown" is deliberately excluded: it is a
+# queue-membership state, never something the model should suggest as an
+# answer. Kept separate from BANK_FLOWS (the override union, which does
+# include inflow_unknown) so a bad model output can't slip through under a
+# validator meant for a different write path.
+BANK_SUGGESTION_FLOWS = ("spending", "transfer", "card_payment", "investment", "income", "refund")
+
+
+def get_bank_flow_examples(limit=20):
+    """Few-shot examples for ai_metrics.suggest_bank_flows: the most recently
+    answered rows, newest first. Mirrors get_classification_examples /
+    get_ride_examples.
+
+    Returns EXACTLY {payee, description, side, user_flow} per row — this is a
+    security contract, not a convenience shape: it is the only bank data
+    allowed to reach the model, so no user_note, amount, date, or account
+    field may ever be added here (see spec §1, §3). `side` is computed in SQL
+    from the sign of `amount` and is not itself selected."""
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"""SELECT payee, description,
+                       CASE WHEN amount > 0 THEN 'inflow' ELSE 'outflow' END AS side,
+                       user_flow
+                FROM bank_transactions
+                WHERE user_flow IS NOT NULL
+                ORDER BY posted DESC, simplefin_id ASC LIMIT {p}""",
+            (limit,),
+        )
+        return [dict(r) for r in c.fetchall()]
+
+
+def get_bank_unsuggested_triage(limit):
+    """Queue rows still awaiting a suggestion: the same two predicates as
+    get_bank_triage's buckets (ambiguous-and-unanswered, or resolved to
+    inflow_unknown-and-unanswered), further restricted to
+    `suggested_flow IS NULL` so the sync never re-spends a call on a row it
+    already suggested for. Newest-posted first, tie-broken by simplefin_id,
+    capped — same ordering as get_bank_triage."""
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"""{_BANK_TXN_SELECT}
+                WHERE ((t.ambiguous AND t.user_flow IS NULL)
+                       OR (COALESCE(t.user_flow, t.flow) = 'inflow_unknown' AND t.user_flow IS NULL))
+                  AND t.suggested_flow IS NULL
+                ORDER BY t.posted DESC, t.simplefin_id ASC LIMIT {p}""",
+            (limit,),
+        )
+        return _bank_txn_rows(c.fetchall())
+
+
+def set_bank_suggestions_bulk(mapping):
+    """Write `suggested_flow` for many rows in ONE database transaction —
+    same atomicity rationale as set_bank_transactions_derived_bulk and
+    set_bank_flow_overrides_bulk.
+
+    This is a DERIVED write the sync owns exclusively (jobs/sync_bank.py,
+    after ai_metrics.suggest_bank_flows returns) — never something a route
+    handler calls on the user's behalf, and it never touches `user_flow`.
+    Every value in `mapping` is validated against BANK_SUGGESTION_FLOWS
+    BEFORE any write: a single bad entry raises ValueError and leaves the
+    table untouched. This validation is what keeps a malformed or
+    hallucinated model output out of the database — the model's raw response
+    must never be trusted onto a row unchecked. Unknown simplefin_ids are
+    skipped, not an error. Returns the count of rows actually updated."""
+    for flow in mapping.values():
+        if flow not in BANK_SUGGESTION_FLOWS:
+            raise ValueError(f"unknown flow: {flow}")
+    p = _p()
+    updated = 0
+    with _cursor(write=True) as c:
+        for simplefin_id, flow in mapping.items():
+            c.execute(f"UPDATE bank_transactions SET suggested_flow = {p} WHERE simplefin_id = {p}",
+                      (flow, simplefin_id))
+            updated += c.rowcount
+    return updated
+
+
 _BANK_TXN_SELECT = """
     SELECT t.id, t.simplefin_id, t.account_id, t.posted, t.transacted_at, t.amount,
            t.description, t.payee, t.memo, t.mcc, t.flow, t.user_flow, t.pair_id,
-           t.ambiguous, t.user_note, a.role AS account_role, a.name AS account_name,
+           t.ambiguous, t.user_note, t.suggested_flow, a.role AS account_role,
+           a.name AS account_name,
            COALESCE(t.user_flow, t.flow) AS resolved_flow
     FROM bank_transactions t JOIN bank_accounts a ON a.id = t.account_id
 """

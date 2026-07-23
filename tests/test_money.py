@@ -570,3 +570,27 @@ def test_limit_clamps_to_one_and_two_hundred(temp_db_path, monkeypatch):
     money.triage(limit=99999)
     assert captured["triage_limit"] == 200
     assert captured["recent_limit"] == 200
+
+
+# ── suggested_flow is never read by any aggregate ───────────────────────────
+
+def test_summary_ignores_suggested_flow(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _txn(db, "spend1", acct["id"], today, -100.0, "spending")
+    _txn(db, "income1", acct["id"], today, 500.0, "income")
+    _txn(db, "amb1", acct["id"], today, -20.0, "spending", ambiguous=True)
+
+    before = money.summary(weeks=12)
+
+    written = db.set_bank_suggestions_bulk({
+        "spend1": "spending", "income1": "income", "amb1": "spending",
+    })
+    assert written == 3
+
+    after = money.summary(weeks=12)
+    assert after == before
