@@ -37,7 +37,7 @@ def _clamp_triage_limit(limit: int) -> int:
 def _flow_amount(flow: str, rows: list) -> float:
     if flow in MOVEMENT_FLOWS:
         return sum(abs(t["amount"]) for t in rows if t["amount"] < 0)
-    if flow == "income":
+    if flow in ("income", "refund"):
         return sum(t["amount"] for t in rows if t["amount"] > 0)
     return sum(abs(t["amount"]) for t in rows)
 
@@ -46,14 +46,24 @@ def _totals(txns: list) -> dict:
     """Group by resolved_flow and aggregate. Round once, at the end — summing
     already-rounded per-row amounts can drift a cent from the true total, the
     same double-rounding trap app.scorecard.spend()'s by_service comment warns
-    about. A flow with no rows in the window is simply absent, not a zero entry."""
+    about. A flow with no rows in the window is simply absent, not a zero entry.
+
+    `refund` is a special case: count, like amount, only reflects the
+    positive-side rows (the mirror of the movement flows' outflow-side rule).
+    A `refund` verdict on a negative-amount row (a mis-tap) is inert — it
+    still keeps the "refund" key present (there IS a row), just at
+    count 0 / amount 0.0, never contributing to the total."""
     grouped: dict = {}
     for t in txns:
         grouped.setdefault(t["resolved_flow"], []).append(t)
-    return {
-        flow: {"count": len(rows), "amount": round(_flow_amount(flow, rows), 2)}
-        for flow, rows in grouped.items()
-    }
+    out = {}
+    for flow, rows in grouped.items():
+        if flow == "refund":
+            count = sum(1 for t in rows if t["amount"] > 0)
+        else:
+            count = len(rows)
+        out[flow] = {"count": count, "amount": round(_flow_amount(flow, rows), 2)}
+    return out
 
 
 def _triage_counts(all_txns: list) -> dict:
@@ -107,7 +117,16 @@ def summary(weeks: int) -> dict:
             abs(t["amount"]) for t in txns
             if t["resolved_flow"] == "spending" and ws_iso <= t["posted"][:10] <= we_iso
         )
-        weeks_out.append({"week_start": ws_iso, "spending": round(week_spending, 2), "partial": False})
+        # Refunds net within their OWN posted week, not the spending week's --
+        # a week can go negative when refunds exceed spending, and that's the
+        # true figure; flooring it for the chart is presentation, not here.
+        week_refund = sum(
+            t["amount"] for t in txns
+            if t["resolved_flow"] == "refund" and t["amount"] > 0
+            and ws_iso <= t["posted"][:10] <= we_iso
+        )
+        week_net = round(week_spending - week_refund, 2)
+        weeks_out.append({"week_start": ws_iso, "spending": week_net, "partial": False})
 
     if weeks_out:
         # covered_from can only fall strictly after the first surviving week's
@@ -118,13 +137,22 @@ def summary(weeks: int) -> dict:
         weeks_out[-1]["partial"] = True  # always in progress
 
     totals = _totals(txns)
+    # Refunds net out of spend: spending_total - refund_total, rounded once at
+    # the end -- subtracting two already-rounded (2dp) amounts and rounding
+    # once more only cleans up float noise from the subtraction itself (e.g.
+    # 33.34 - 0.01 == 33.330000000000005 in binary float), never double-rounds
+    # the underlying figures.
+    spent = round(
+        totals.get("spending", {}).get("amount", 0) - totals.get("refund", {}).get("amount", 0),
+        2,
+    )
 
     return {
         "covered_from": covered_from,
         "covered_to": covered_to,
         "weeks": weeks_out,
         "totals": totals,
-        "spent": totals.get("spending", {}).get("amount", 0),
+        "spent": spent,
         "tracked": tracked,
         "triage_counts": _triage_counts(all_txns),
     }
@@ -161,6 +189,7 @@ def _decorate_bucket(rows: list) -> list:
             "account_name": t["account_name"],
             "resolved_flow": t["resolved_flow"],
             "user_flow": t["user_flow"],
+            "user_note": t["user_note"],
             "signature": sig,
             "signature_count": len(others),
             "signature_amount": round(sum(abs(o["amount"]) for o in others), 2),

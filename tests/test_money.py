@@ -296,7 +296,7 @@ def test_triage_row_shape_and_label_fallback_from_payee_to_description(temp_db_p
     row1 = rows["ambig1"]
     assert set(row1.keys()) == {
         "simplefin_id", "posted", "amount", "payee", "description",
-        "account_name", "resolved_flow", "user_flow", "signature",
+        "account_name", "resolved_flow", "user_flow", "user_note", "signature",
         "signature_count", "signature_amount", "label",
     }
     assert row1["label"] == "AMBIG PAYEE"  # payee present -> used verbatim
@@ -376,6 +376,135 @@ def test_recent_is_recently_sorted_capped(temp_db_path):
     result = money.triage(limit=3)
     assert len(result["recent"]) == 3
     assert all(r["user_flow"] == "spending" for r in result["recent"])
+
+
+# ── Refund netting ───────────────────────────────────────────────────────────
+
+def test_refund_nets_out_of_spending_total(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _txn(db, "spend1", acct["id"], today, -100.0, "spending")
+    _txn(db, "refund1", acct["id"], today, 30.0, "spending", user_flow="refund")
+
+    result = money.summary(weeks=1)
+    assert result["spent"] == 70.0
+    assert result["totals"]["refund"] == {"count": 1, "amount": 30.0}
+
+
+def test_refund_nets_within_its_own_posted_week_same_week(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _txn(db, "spend1", acct["id"], today, -100.0, "spending")
+    _txn(db, "refund1", acct["id"], today, 30.0, "spending", user_flow="refund")
+
+    result = money.summary(weeks=1)
+    assert result["weeks"][-1]["spending"] == 70.0
+
+
+def test_refund_in_different_week_nets_that_week_not_the_spending_week(temp_db_path):
+    import database as db
+    from app import scorecard
+    import metrics
+    import app.money as money
+
+    acct = _account(db)
+    this_monday = _this_monday(scorecard, metrics)
+    last_monday = this_monday - timedelta(weeks=1)
+    _txn(db, "spend1", acct["id"], last_monday.isoformat(), -100.0, "spending")
+    _txn(db, "refund1", acct["id"], this_monday.isoformat(), 30.0, "spending", user_flow="refund")
+
+    result = money.summary(weeks=2)
+    weeks = {w["week_start"]: w["spending"] for w in result["weeks"]}
+    # The spending week is untouched by a refund posted in a different week.
+    assert weeks[last_monday.isoformat()] == 100.0
+    # The refund's own (later) week nets to negative -- no spending of its own.
+    assert weeks[this_monday.isoformat()] == -30.0
+    # Total spent still reflects the whole-window net.
+    assert result["spent"] == 70.0
+
+
+def test_week_net_goes_negative_when_refunds_exceed_spending(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _txn(db, "spend1", acct["id"], today, -20.0, "spending")
+    _txn(db, "refund1", acct["id"], today, 50.0, "spending", user_flow="refund")
+
+    result = money.summary(weeks=1)
+    # The backend reports the true negative net -- flooring is the chart's job.
+    assert result["weeks"][-1]["spending"] == -30.0
+
+
+def test_inert_mistap_negative_amount_refund_contributes_to_neither(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _txn(db, "spend1", acct["id"], today, -100.0, "spending")
+    _txn(db, "mistap", acct["id"], today, -15.0, "spending", user_flow="refund")
+
+    result = money.summary(weeks=1)
+    assert result["spent"] == 100.0
+    assert result["totals"]["refund"] == {"count": 0, "amount": 0.0}
+
+
+def test_round_once_avoids_double_rounding_drift_in_spent(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    # Chosen so round(33.335, 2) - round(0.005, 2) == 33.330000000000005 (a
+    # real float artifact) while a single round of the final difference lands
+    # exactly on 33.33 -- proves the subtraction is rounded once, at the end.
+    _txn(db, "spend1", acct["id"], today, -33.335, "spending")
+    _txn(db, "refund1", acct["id"], today, 0.005, "spending", user_flow="refund")
+
+    result = money.summary(weeks=1)
+    assert result["spent"] == 33.33
+
+
+# ── triage() rows carry user_note ───────────────────────────────────────────
+
+def test_triage_rows_carry_user_note(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+
+    db.upsert_bank_transaction("ambig1", acct["id"], today, today, -20.0,
+                                "AMBIG DESC", "AMBIG PAYEE", "", None)
+    db.set_bank_transaction_derived("ambig1", "spending", None, True)
+
+    db.upsert_bank_transaction("sorted1", acct["id"], today, today, -10.0,
+                                "SORTED DESC", "", "", None)
+    db.set_bank_transaction_derived("sorted1", "spending", None, False)
+    db.set_bank_flow_override("sorted1", "spending", note="explained already")
+
+    result = money.triage(limit=50)
+
+    ambiguous = {r["simplefin_id"]: r for r in result["ambiguous"]}
+    assert "user_note" in ambiguous["ambig1"]
+    assert ambiguous["ambig1"]["user_note"] is None
+
+    recent = {r["simplefin_id"]: r for r in result["recent"]}
+    assert recent["sorted1"]["user_note"] == "explained already"
 
 
 def test_limit_clamps_to_one_and_two_hundred(temp_db_path, monkeypatch):
