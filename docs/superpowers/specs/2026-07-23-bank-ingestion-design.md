@@ -9,12 +9,20 @@ The app tracks spending only where a receipt email exists. The user wants all
 spending, to answer "I make a lot yet I'm broke." A SimpleFIN connection is
 live and a redacted probe of 90 days across 12 accounts tells us what we have.
 
-**The central risk is not ingestion, it is arithmetic.** 25% of the user's
-transactions are money *moving*, not money *spent*. Summing outflows naively
-would double-count every credit-card purchase, invent spending from
-checking-to-checking transfers, and classify saving and debt paydown as
-profligacy — producing a confidently wrong answer to the exact question being
-asked.
+**The central risk is not ingestion, it is arithmetic.** ~25% of the user's
+transactions are money *moving*, not money *spent* — a **lower bound**: the
+probe's 244/965 figure came from matching transfer-ish wording in the
+description/payee text, which only catches movements that describe themselves
+as such. Task 8's snapshot backfill, run against the real classifier (pair
+matching + account roles, not keywords), measured the true non-spending share
+at **32.8% (317/965)** — higher, not lower, because the classifier catches
+transfers, card payments, and investment activity whose description never
+contains a transfer-ish word. A future reader should not treat 25% as a target
+the implementation missed; a measured share below 25% would have been the
+worrying direction. Summing outflows naively would double-count every
+credit-card purchase, invent spending from checking-to-checking transfers, and
+classify saving and debt paydown as profligacy — producing a confidently wrong
+answer to the exact question being asked.
 
 ## What the probe established
 
@@ -48,10 +56,10 @@ asked.
 
 | Account | Role |
 |---|---|
-| Wells Fargo 7395 | `spending` — primary day-to-day, pays the Amex |
+| Wells Fargo 7395 | `spending` — primary day-to-day |
 | Wells Fargo 4116 | `bills` |
 | Wells Fargo 0407 | `savings_dynamic` — money in and out by design |
-| Amex Platinum | `credit_card` — primary spender, paid from 7395 |
+| Amex Platinum | `credit_card` — primary spender, paid from **multiple** Wells Fargo accounts, not exclusively 7395 as originally believed. Task 8's backfill measured the actual split across 32 matched payment pairs: 18 from 4116 (bills), 9 from 0407 (savings), 4 from 7395 (spending). Classification is unaffected either way — rule 2 (card payment) keys on either side of a matched pair being a `credit_card` role, never on which specific checking/bills/savings account pays. |
 | Chase United, Barclays JetBlue | `credit_card` — being paid down |
 | Citi Simplicity | `credit_card` — zero transactions; dormant or not syncing |
 | Fidelity ×5 (401k, Roth, Traditional, Rollover, Individual) | `investment` |
