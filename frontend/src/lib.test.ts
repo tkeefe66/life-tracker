@@ -335,6 +335,7 @@ describe("TRIAGE_CHOICES", () => {
     expect(TRIAGE_CHOICES.inflow).toEqual([
       { label: "It's income", flow: "income" },
       { label: "Moved from another account", flow: "transfer" },
+      { label: "Refunded", flow: "refund" },
     ]);
   });
 });
@@ -345,6 +346,7 @@ describe("flowLabel", () => {
     expect(flowLabel("transfer")).toBe("Moved between accounts");
     expect(flowLabel("investment")).toBe("Into investments");
     expect(flowLabel("income")).toBe("Money in");
+    expect(flowLabel("refund")).toBe("Refunded");
   });
 
   it("returns an unknown value as-is rather than throwing", () => {
@@ -381,6 +383,12 @@ describe("weekCaption", () => {
   it("renders a real zero spending total, not an empty string", () => {
     expect(weekCaption({ week_start: "2026-07-13", spending: 0, partial: false })).toBe(
       "Jul 13–19 · $0"
+    );
+  });
+
+  it("formats a negative (refund-net) week with a U+2212 minus before the $", () => {
+    expect(weekCaption({ week_start: "2026-07-13", spending: -12.5, partial: false })).toBe(
+      "Jul 13–19 · −$12.50"
     );
   });
 });

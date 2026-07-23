@@ -124,6 +124,7 @@ export const TRIAGE_CHOICES: { outflow: TriageChoice[]; inflow: TriageChoice[] }
   inflow: [
     { label: "It's income", flow: "income" },
     { label: "Moved from another account", flow: "transfer" },
+    { label: "Refunded", flow: "refund" },
   ],
 };
 
@@ -132,6 +133,7 @@ const FLOW_LABELS: Record<string, string> = {
   transfer: "Moved between accounts",
   investment: "Into investments",
   income: "Money in",
+  refund: "Refunded",
 };
 
 /** Display label for a resolved bank flow (§5.2 row headings). An unresolved
@@ -154,10 +156,13 @@ export interface WeekSpendPoint { week_start: string; spending: number; partial:
 
 /** Tap caption for a bar in the weekly bank-spending chart (spec §5.1): the
  * week range, the total, and "partial week" only when the week is partial —
- * a zero-spend week still shows `$0`, never an empty gap. */
+ * a zero-spend week still shows `$0`, never an empty gap. A week that nets
+ * negative (refunds outweighing spending) shows the true net with a U+2212
+ * minus before the `$`, rather than `money()`'s own `$-12.50`. */
 export function weekCaption(week: WeekSpendPoint): string {
   const suffix = week.partial ? " · partial week" : "";
-  return `${weekRangeLabel(week.week_start)} · ${money(week.spending)}${suffix}`;
+  const amount = week.spending < 0 ? `−${money(Math.abs(week.spending))}` : money(week.spending);
+  return `${weekRangeLabel(week.week_start)} · ${amount}${suffix}`;
 }
 
 /**
