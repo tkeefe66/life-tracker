@@ -1769,6 +1769,41 @@ def _load(path: Path) -> dict:
     return envelope.get("payload", envelope)
 
 
+# The account roles the user gave, from the spec's "Account roles" table. Matched
+# as case-insensitive substrings against "<org> <name>", first match wins.
+#
+# This seeds the INITIAL load only: seed_roles never touches an account whose
+# role is already set, so "a new account is surfaced, never silently guessed"
+# stays true for everything that arrives later. Roles remain data, not code —
+# editable via the API without a deploy.
+ROLE_SEEDS = [
+    ("wells fargo", "7395", "spending"),   # primary day-to-day, pays the Amex
+    ("wells fargo", "4116", "bills"),
+    ("wells fargo", "0407", "savings"),    # savings_dynamic — in and out by design
+    ("american express", "", "credit_card"),
+    ("chase", "", "credit_card"),
+    ("barclays", "", "credit_card"),
+    ("citi", "", "credit_card"),
+    ("fidelity", "", "investment"),        # covers all five: 401k, Roth, Trad, Rollover, Individual
+]
+
+
+def seed_roles(db) -> int:
+    """Apply ROLE_SEEDS to accounts still marked `unknown`. Returns how many changed."""
+    changed = 0
+    for acct in db.get_bank_accounts():
+        if acct["role"] != "unknown":
+            continue
+        haystack = f"{acct['org']} {acct['name']}".lower()
+        for org_hint, id_hint, role in ROLE_SEEDS:
+            if org_hint in haystack and (not id_hint or id_hint in haystack):
+                db.set_bank_account_role(acct["simplefin_id"], role)
+                print(f"  role: {acct['name'][:34]:36} -> {role}")
+                changed += 1
+                break
+    return changed
+
+
 def main() -> int:
     args = [a for a in sys.argv[1:]]
     if "--all" in args:
@@ -1797,6 +1832,15 @@ def main() -> int:
         sync_bank(payload=_load(path))
         print(f"  {db.get_setting('bank_last_result')}")
 
+    seeded = seed_roles(db)
+    if seeded:
+        # Roles drive pair matching, so the first pass classified against
+        # `unknown` everywhere. Re-run to let card payments and transfers resolve.
+        print(f"\nSeeded {seeded} account role(s); re-classifying …")
+        for path in paths:
+            sync_bank(payload=_load(path))
+        print(f"  {db.get_setting('bank_last_result')}")
+
     unknown = [a for a in db.get_bank_accounts() if a["role"] == "unknown"]
     if unknown:
         print(f"\n{len(unknown)} account(s) still need a role — classification "
@@ -1815,16 +1859,24 @@ if __name__ == "__main__":
 - [ ] **Step 2: Verify against the real snapshot, locally**
 
 Run: `./venv/bin/python scripts/simplefin_backfill.py`
-Expected: `Replaying simplefin-2026-07-22.json …` followed by a result line reporting 12 accounts and ~965 transactions, then a list of 12 accounts needing roles.
 
-- [ ] **Step 3: Set the roles and re-run to see classification settle**
+Expected, in order: `Replaying simplefin-2026-07-22.json …`, a result line reporting **12 accounts and ~965 transactions**, then `Seeded 11 account role(s)` (Citi Simplicity has zero transactions but should still receive `credit_card`; the 12th account is seeded only if its org matches a `ROLE_SEEDS` entry), a per-account `role:` line for each, then a second result line.
 
-Set each account's role per the spec's Account roles table (Wells Fargo 7395 → `spending`, 4116 → `bills`, 0407 → `savings`, Amex/Chase/Barclays/Citi → `credit_card`, all five Fidelity → `investment`), then:
+If any account is left `unknown`, the script prints it — report that rather than editing `ROLE_SEEDS` to force a match, since an unmatched name means the seed table and reality disagree.
 
-Run: `./venv/bin/python scripts/simplefin_backfill.py`
-Expected: the result line now shows a meaningful `card payments` count and a much smaller `spending` count than the first pass, because pairs now resolve.
+- [ ] **Step 3: Confirm the arithmetic is actually right**
 
-**This is the real acceptance test for the whole feature.** Sanity-check the output against the spec's premise: roughly a quarter of transactions should land in a non-spending flow.
+**This is the real acceptance test for the whole feature** — it is the first moment anyone can see whether the classification does the job the spec exists to do.
+
+Compare the two result lines from Step 2. The second pass must show a **materially larger `card payments` + `transfers` count and a correspondingly smaller `spending` count** than the first, because roles now let pairs resolve.
+
+Check the totals against the spec's central premise: roughly **a quarter of transactions (~240 of 965)** should land in a non-spending flow. Also verify by hand:
+
+- The Amex has 255 transactions and is paid from Wells Fargo 7395. Those payments must appear as `card_payment` on **both** sides, never as spending on either.
+- The five Fidelity accounts (101 transactions total) must be entirely `investment` — a Traditional → Roth conversion must contribute nothing to any spend figure.
+- `inflow_unknown` should be non-empty. That is the SoFi drawdown showing up correctly as neither income nor spending, not a bug.
+
+Report the actual numbers. If the non-spending share is far off ~25%, stop and say so rather than proceeding — it means the matcher or the roles are wrong, and a wrong answer here is exactly the failure the spec was written to prevent.
 
 - [ ] **Step 4: Commit**
 
