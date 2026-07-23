@@ -1,6 +1,7 @@
 """Protected API routes."""
 import datetime
 from typing import Literal, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
@@ -134,6 +135,58 @@ class SettingsBody(BaseModel):
 @router.put("/settings")
 def put_settings(body: SettingsBody):
     db.set_setting("telegram_push", body.telegram_push)
+    return {"ok": True}
+
+
+class SocialCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    date: Optional[str] = None
+    amount: Optional[float] = Field(default=None, ge=0)
+
+
+class SocialPatch(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    is_social: Optional[bool] = None
+    amount: Optional[float] = Field(default=None, ge=0)
+
+
+@router.post("/social")
+def post_social(body: SocialCreate):
+    day = (_parse_date(body.date) if body.date else _local_today()).isoformat()
+    event_id = "manual:" + uuid4().hex
+    start_at, end_at = f"{day}T12:00:00", f"{day}T13:00:00"
+    db.add_manual_social_event(event_id, body.name, start_at, end_at, body.amount)
+    return {
+        "gcal_event_id": event_id, "title": body.name,
+        "start_at": start_at, "end_at": end_at,
+        "source": "manual", "amount": body.amount,
+    }
+
+
+@router.patch("/social/{event_id}")
+def patch_social(event_id: str, body: SocialPatch):
+    if db.get_event(event_id) is None:
+        raise HTTPException(status_code=404, detail="event not found")
+    updates = {}
+    if body.title is not None:
+        updates["user_title"] = body.title
+    if body.is_social is not None:
+        updates["user_is_social"] = body.is_social
+    if body.amount is not None:
+        updates["amount"] = body.amount
+    if updates:
+        db.set_event_overrides(event_id, updates)
+    return {"ok": True}
+
+
+@router.delete("/social/{event_id}")
+def delete_social(event_id: str):
+    ev = db.get_event(event_id)
+    if ev is None:
+        raise HTTPException(status_code=404, detail="event not found")
+    if ev.get("source") != "manual":
+        raise HTTPException(status_code=400, detail="detected events can only be turned off, not deleted")
+    db.delete_event(event_id)
     return {"ok": True}
 
 

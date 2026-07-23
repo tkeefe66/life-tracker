@@ -49,6 +49,8 @@ def scorecard_for_week(week_start: date) -> dict:
     card = metrics.build_scorecard(week_start, counts_for_week(week_start), db.get_targets())
     orders = db.get_delivery_orders_range(ws.isoformat(), we.isoformat())
     card["delivery_spend"] = round(sum(o["amount"] or 0 for o in orders), 2)
+    social = [e for e in db.get_social_events_range(ws.isoformat(), we.isoformat()) if _occurred(e["end_at"])]
+    card["social_spend"] = round(sum(e["amount"] or 0 for e in social), 2)
     return card
 
 
