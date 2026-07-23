@@ -17,6 +17,18 @@ logging.basicConfig(
     format="%(asctime)s  %(name)s  %(levelname)s  %(message)s",
     level=logging.INFO,
 )
+
+# httpx logs the full request URL at INFO, and the SimpleFIN access URL *is*
+# the credential (services/simplefin_service.py) — so at INFO every sync
+# publishes the bearer token to the deploy logs. This bypasses the redaction
+# boundary described in CLAUDE.md completely: nothing is raised and nothing is
+# stored, so neither safe_status() nor app_settings ever sees it. Prevent the
+# line from being emitted rather than scrubbing it afterwards. Leaked in
+# production on 2026-07-23; locked by a test in tests/test_simplefin_service.py.
+# Never lower these.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 

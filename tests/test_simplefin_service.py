@@ -231,3 +231,28 @@ def test_successful_fetch_returns_the_payload(monkeypatch):
                         lambda *a, **kw: httpx.Response(200, json=_payload()))
     data = simplefin_service.fetch_accounts(days=90)
     assert len(data["accounts"]) == 2
+
+
+@pytest.mark.parametrize("logger_name", ["httpx", "httpcore"])
+def test_http_client_logging_cannot_publish_the_access_url(logger_name):
+    """httpx logs every request URL at INFO — and the SimpleFIN access URL *is*
+    the credential, so an INFO-level httpx logger publishes it to the deploy
+    logs on every sync. That path bypasses the exception-based redaction
+    boundary entirely: nothing raised, nothing stored, credential leaked.
+
+    This happened in production on 2026-07-23, the first time the credential
+    was set in Railway. Importing main must leave these loggers above INFO.
+
+    Asserts the level is set *explicitly on that logger*, not inherited: under
+    pytest the root logger already has handlers, so main's basicConfig no-ops
+    and the inherited level is WARNING regardless. An effective-level assertion
+    passes here while production still leaks.
+    """
+    import logging
+
+    import main  # noqa: F401  — import applies the logging configuration
+
+    assert logging.getLogger(logger_name).level > logging.INFO, (
+        f"{logger_name} has no explicit level above INFO; it will log full "
+        "request URLs, including the SimpleFIN credential"
+    )
