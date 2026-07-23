@@ -365,6 +365,31 @@ button.quiet-btn:active { background: var(--accent-soft); }
   max-width: 60ch;
 }
 
+/* ─── Spend subtotals (Today + Week) ─── */
+
+.spend {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-item);
+  padding: 4px 16px;
+}
+
+.spend-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  font-size: 0.9rem;
+}
+.spend-row + .spend-row { border-top: 1px solid var(--line); }
+
+.spend-service { color: var(--ink-2); }
+.spend-amount { color: var(--ink); }
+
+.spend-total { font-weight: 600; color: var(--ink); }
+
 /* ─── Settings groups ─── */
 
 .group {
