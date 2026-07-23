@@ -435,6 +435,17 @@ button.quiet-btn:active { background: var(--accent-soft); }
   border-radius: 8px;
 }
 
+.row select {
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  flex-shrink: 0;
+}
+
 /* Switch */
 
 .switch {

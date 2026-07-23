@@ -14,9 +14,24 @@ interface SettingsData {
   calendar_last_status: string | null;
   backup_last_run: string | null;
   backup_last_status: string | null;
+  bank_last_run: string | null;
+  bank_last_status: string | null;
+  bank_last_result: string | null;
 }
 
 interface Delivery { service: string; subject: string; ordered_at: string; amount: number | null }
+
+interface BankAccount {
+  simplefin_id: string;
+  name: string;
+  org: string;
+  kind: string;
+  role: string;
+  active: boolean;
+  last_synced_at: string | null;
+}
+
+const BANK_ROLES = ["spending", "bills", "savings", "investment", "credit_card", "unknown"] as const;
 
 function orderDate(iso: string): string {
   const d = new Date(iso);
@@ -44,6 +59,7 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [targets, setTargets] = useState<Record<string, Target> | null>(null);
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [deliveries, setDeliveries] = useState<Delivery[] | null>(null);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[] | null>(null);
   const [error, setError] = useState("");
   const [saveError, setSaveError] = useState("");
 
@@ -53,6 +69,9 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
     apiGet<{ orders: Delivery[] }>("/deliveries?days=60")
       .then((r) => setDeliveries(r.orders))
       .catch(() => setDeliveries(null));
+    apiGet<BankAccount[]>("/bank/accounts")
+      .then(setBankAccounts)
+      .catch(() => setBankAccounts(null));
   }, []);
 
   if (error) return <p className="error">{error}</p>;
@@ -77,6 +96,20 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
   const signOut = async () => {
     await logout();
     onLoggedOut();
+  };
+
+  const updateRole = async (simplefinId: string, role: string) => {
+    setSaveError("");
+    const prev = bankAccounts;
+    setBankAccounts((accts) =>
+      accts ? accts.map((a) => (a.simplefin_id === simplefinId ? { ...a, role } : a)) : accts
+    );
+    try {
+      await apiSend("POST", `/bank/accounts/${simplefinId}/role`, { role });
+    } catch (e) {
+      setBankAccounts(prev);
+      setSaveError((e as Error).message);
+    }
   };
 
   const togglePush = async () => {
@@ -179,7 +212,46 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
             </span>
           </span>
         </div>
+        <div className="row">
+          <span className="grow">
+            Bank sync
+            <span className="hint">
+              {settings.bank_last_status ? (
+                <>
+                  {statusLine(settings.bank_last_status, settings.bank_last_run)}
+                  {settings.bank_last_result ? ` · ${settings.bank_last_result}` : ""}
+                </>
+              ) : (
+                "Not set up"
+              )}
+            </span>
+          </span>
+        </div>
       </div>
+
+      {bankAccounts && bankAccounts.length > 0 && (
+        <>
+          <p className="section-label">Bank accounts</p>
+          <div className="group">
+            {bankAccounts.map((a) => (
+              <label className="row" key={a.simplefin_id}>
+                <span className="grow">{a.org} — {a.name}</span>
+                <select
+                  value={a.role}
+                  onChange={(e) => updateRole(a.simplefin_id, e.target.value)}
+                >
+                  {BANK_ROLES.map((role) => (
+                    <option key={role} value={role}>{role}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+          <p className="footnote">
+            Roles decide what counts as spending. A change takes effect on the next sync.
+          </p>
+        </>
+      )}
 
       {deliveries && (
         <>
