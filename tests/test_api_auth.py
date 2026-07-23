@@ -164,3 +164,76 @@ def test_logout_clears_the_cookie(temp_db_path):
     # httpx/starlette expresses "clear this cookie" as an immediately-expired Set-Cookie.
     set_cookie = resp.headers.get("set-cookie", "")
     assert "ontrack_session=" in set_cookie
+
+
+# ── Login throttling ──────────────────────────────────────────────────────────
+
+def test_lockout_triggers_after_five_failures_even_with_correct_password(temp_db_path):
+    client = _client(temp_db_path)
+    for _ in range(5):
+        resp = client.post("/api/login", json={"password": "wrong"})
+        assert resp.status_code == 401
+    # The 6th attempt is rejected outright — even with the CORRECT password —
+    # because the lockout is checked before verify_password runs at all.
+    resp = client.post("/api/login", json={"password": "test-password"})
+    assert resp.status_code == 429
+
+
+def test_successful_login_before_threshold_clears_the_counter(temp_db_path):
+    client = _client(temp_db_path)
+    for _ in range(4):
+        assert client.post("/api/login", json={"password": "wrong"}).status_code == 401
+    assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
+    # Counter reset — a fresh run of 4 more wrong attempts must not trip the lockout.
+    for _ in range(4):
+        assert client.post("/api/login", json={"password": "wrong"}).status_code == 401
+    assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
+
+
+def test_every_failed_attempt_is_logged(temp_db_path, caplog):
+    import logging
+    client = _client(temp_db_path)
+    with caplog.at_level(logging.WARNING):
+        client.post("/api/login", json={"password": "wrong"})
+    assert any("Failed login attempt" in r.message for r in caplog.records)
+
+
+def test_lockout_expires_and_access_is_restored(temp_db_path, monkeypatch):
+    """Clock-controlled — no real sleeping. The lockout window (60s the first
+    time) must pass and then a correct password must succeed again."""
+    import datetime
+
+    from app import api as api_mod
+
+    client = _client(temp_db_path)
+    for _ in range(5):
+        assert client.post("/api/login", json={"password": "wrong"}).status_code == 401
+    assert client.post("/api/login", json={"password": "test-password"}).status_code == 429
+
+    future = api_mod._utcnow() + datetime.timedelta(seconds=61)
+    monkeypatch.setattr(api_mod, "_utcnow", lambda: future)
+    assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
+
+
+def test_lockout_window_doubles_on_repeated_failure_after_expiry(temp_db_path, monkeypatch):
+    """First lockout is 60s; if the attacker keeps failing after it expires, the
+    next lockout window must be longer (doubling), not reset back to 60s."""
+    import datetime
+
+    from app import api as api_mod
+    import database as db
+
+    client = _client(temp_db_path)
+    for _ in range(5):
+        client.post("/api/login", json={"password": "wrong"})
+    first_locked_until = api_mod._parse(db.get_setting(api_mod.LOGIN_LOCKED_UNTIL_KEY))
+
+    # Jump past the first lockout window and fail once more.
+    just_after_first = first_locked_until + datetime.timedelta(seconds=1)
+    monkeypatch.setattr(api_mod, "_utcnow", lambda: just_after_first)
+    resp = client.post("/api/login", json={"password": "wrong"})
+    assert resp.status_code == 401  # lockout had expired, so this attempt is processed normally
+
+    second_locked_until = api_mod._parse(db.get_setting(api_mod.LOGIN_LOCKED_UNTIL_KEY))
+    second_window = second_locked_until - just_after_first
+    assert second_window > datetime.timedelta(seconds=60)  # longer than the base window — it doubled, not reset
