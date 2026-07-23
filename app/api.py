@@ -1,14 +1,15 @@
 """FastAPI app factory."""
 import datetime
 import logging
+import threading
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import database as db
-from app.auth import create_session, set_session_cookie, verify_password
+from app.auth import create_session, has_valid_session, set_session_cookie, verify_password
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +27,32 @@ SECURITY_HEADERS = {
 # State lives in app_settings (not memory) so it survives a redeploy. Single-user
 # app: a global counter is correct — per-IP tracking would be trivially bypassed
 # anyway and adds complexity for no real benefit here.
+#
+# Concurrency: `login()` is a sync `def`, so Starlette dispatches it onto the
+# anyio threadpool (default up to 40 workers) rather than running it on the
+# event loop. `_LOGIN_LOCK` serializes the whole check-verify-record sequence
+# across those worker threads within this one process — this is a single
+# Railway service/deploy (see CLAUDE.md), so a process-wide lock is sufficient;
+# it would NOT be if this ever ran as multiple replicas sharing one DB.
+#
+# Manual recovery: if the owner is ever locked out and needs an emergency
+# reset (e.g. to rule out an active attack before waiting it out), clear the
+# three app_settings rows: `login_fail_count`, `login_locked_until`,
+# `login_last_fail_at` — e.g. via `scripts/cleardb.py`-style direct SQL:
+#   DELETE FROM app_settings WHERE key IN
+#     ('login_fail_count', 'login_locked_until', 'login_last_fail_at');
+# A successful login from any device holding a still-valid session cookie
+# also bypasses the lockout entirely (see `has_valid_session` below), and an
+# abandoned attack (no failures for 30+ minutes) heals itself automatically.
 LOGIN_FAIL_COUNT_KEY = "login_fail_count"
 LOGIN_LOCKED_UNTIL_KEY = "login_locked_until"
+LOGIN_LAST_FAIL_AT_KEY = "login_last_fail_at"
 LOCKOUT_THRESHOLD = 5
 LOCKOUT_BASE_SECONDS = 60
 LOCKOUT_MAX_SECONDS = 15 * 60
+LOGIN_FAIL_RESET_MINUTES = 30
+
+_LOGIN_LOCK = threading.Lock()
 
 
 def _utcnow() -> datetime.datetime:
@@ -56,18 +78,31 @@ def _check_login_lockout() -> None:
 
 
 def _record_login_failure() -> None:
+    now = _utcnow()
+
+    # Self-healing: if the last failure was long enough ago, treat this one as
+    # a fresh start rather than letting a stale, already-abandoned attack keep
+    # extending the lockout indefinitely (one guess a minute is slower than any
+    # lockout window, so without this the count — and the lock — never resets).
+    last_fail_raw = db.get_setting(LOGIN_LAST_FAIL_AT_KEY)
+    if last_fail_raw and now - _parse(last_fail_raw) > datetime.timedelta(minutes=LOGIN_FAIL_RESET_MINUTES):
+        db.set_setting(LOGIN_FAIL_COUNT_KEY, "0")
+        db.set_setting(LOGIN_LOCKED_UNTIL_KEY, "")
+
     count = int(db.get_setting(LOGIN_FAIL_COUNT_KEY, "0") or "0") + 1
     db.set_setting(LOGIN_FAIL_COUNT_KEY, str(count))
+    db.set_setting(LOGIN_LAST_FAIL_AT_KEY, _iso(now))
     logger.warning("Failed login attempt (count=%d)", count)
     if count >= LOCKOUT_THRESHOLD:
         extra = count - LOCKOUT_THRESHOLD
         seconds = min(LOCKOUT_BASE_SECONDS * (2 ** extra), LOCKOUT_MAX_SECONDS)
-        db.set_setting(LOGIN_LOCKED_UNTIL_KEY, _iso(_utcnow() + datetime.timedelta(seconds=seconds)))
+        db.set_setting(LOGIN_LOCKED_UNTIL_KEY, _iso(now + datetime.timedelta(seconds=seconds)))
 
 
 def _record_login_success() -> None:
     db.set_setting(LOGIN_FAIL_COUNT_KEY, "0")
     db.set_setting(LOGIN_LOCKED_UNTIL_KEY, "")
+    db.set_setting(LOGIN_LAST_FAIL_AT_KEY, "")
 
 
 class LoginBody(BaseModel):
@@ -89,13 +124,22 @@ def create_app(lifespan=None) -> FastAPI:
         return {"status": "ok"}
 
     @app.post("/api/login")
-    def login(body: LoginBody, response: Response):
-        _check_login_lockout()
-        if not verify_password(body.password):
-            _record_login_failure()
-            raise HTTPException(status_code=401, detail="Wrong password")
-        _record_login_success()
-        token = create_session()
+    def login(body: LoginBody, request: Request, response: Response):
+        # The whole check-verify-record sequence runs under one process-wide
+        # lock — see the "Login throttling" section comment above for why a
+        # lock (rather than just an atomic counter) is both necessary and
+        # sufficient here.
+        with _LOGIN_LOCK:
+            # A request that already carries a still-valid session cookie is
+            # never blocked by a lockout an unauthenticated attacker triggered
+            # — the owner's already-authenticated devices always work (M2a).
+            if not has_valid_session(request):
+                _check_login_lockout()
+            if not verify_password(body.password):
+                _record_login_failure()
+                raise HTTPException(status_code=401, detail="Wrong password")
+            _record_login_success()
+            token = create_session()
         set_session_cookie(response, token)
         return {"ok": True}
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet, login, onUnauthorized, UnauthorizedError } from "./api";
+import { apiGet, LockedOutError, login, onUnauthorized, UnauthorizedError } from "./api";
 import Today from "./screens/Today";
 import Scorecard from "./screens/Scorecard";
 import Insights from "./screens/Insights";
@@ -58,8 +58,9 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
     try {
       if (await login(password)) onLogin();
       else setError("Wrong password");
-    } catch {
-      setError("Can't reach the server.");
+    } catch (err) {
+      if (err instanceof LockedOutError) setError("Too many attempts — try again shortly.");
+      else setError("Can't reach the server.");
     }
   };
   return (

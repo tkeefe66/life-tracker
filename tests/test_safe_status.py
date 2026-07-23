@@ -112,6 +112,29 @@ def test_credential_bearing_url_never_survives_the_boundary(exc_factory):
     assert result in {"ok", "error: auth", "error: unreachable", "error: rate limited", "error: see logs"}
 
 
+# ── L3: every literal status string written outside safe_status() must still
+# be a CLOSED_SET member, via a named constant rather than an ad hoc literal ──
+
+def test_not_configured_constants_are_closed_set_members():
+    from services.safe_status import CLOSED_SET, GOOGLE_NOT_CONFIGURED, NOT_CONFIGURED
+
+    assert NOT_CONFIGURED in CLOSED_SET
+    assert GOOGLE_NOT_CONFIGURED in CLOSED_SET
+
+
+def test_job_modules_use_the_shared_constants_not_ad_hoc_literals():
+    """jobs/backup_db.py, jobs/scan_gmail.py, jobs/scan_calendar.py each write a
+    literal "not configured" status outside the safe_status() call — they must
+    reference the named constants (so CLOSED_SET is the single source of truth)
+    rather than duplicating the string."""
+    from jobs import backup_db, scan_calendar, scan_gmail
+    from services.safe_status import GOOGLE_NOT_CONFIGURED, NOT_CONFIGURED
+
+    assert backup_db.NOT_CONFIGURED == NOT_CONFIGURED
+    assert scan_gmail.GOOGLE_NOT_CONFIGURED == GOOGLE_NOT_CONFIGURED
+    assert scan_calendar.GOOGLE_NOT_CONFIGURED == GOOGLE_NOT_CONFIGURED
+
+
 def test_safe_status_never_returns_str_of_the_exception():
     """Even for a completely generic exception, the boundary must not fall back to
     str(exc) — that would defeat the whole point on any exception type this module

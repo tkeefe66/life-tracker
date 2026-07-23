@@ -7,12 +7,25 @@ deploy are unaffected. Retains the last RETENTION dumps at the destination.
 
 Follows the redaction boundary (services/safe_status.py): a real pg_dump
 failure or S3 error can embed DATABASE_URL or the S3 credentials in its
-message, so only safe_status(e) is ever stored — never str(e)."""
+message, so only safe_status(e) is ever stored — never str(e).
+
+Credential handling for pg_dump specifically goes further than the redaction
+boundary requires elsewhere: DATABASE_URL itself carries the password, and
+passing it to pg_dump as a positional argument would put the password in
+/proc/<pid>/cmdline and `ps` for any other process on the box to read — a
+leak that happens on every successful run, not just on failure. So pg_dump is
+invoked with -h/-p/-U/-d flags (never the raw URL) and the password is passed
+only via the subprocess environment (PGPASSWORD), never as an argv element.
+subprocess.run is also called without check=True: CalledProcessError's str()
+embeds the full argv it was given, so a non-zero exit is instead detected by
+inspecting returncode and raised as our own exception with a message we fully
+control (never one a library assembled from the command line)."""
 import datetime
 import logging
 import os
 import subprocess
 import tempfile
+from urllib.parse import urlparse
 
 import pytz
 
@@ -25,12 +38,33 @@ from config import (
     DATABASE_URL,
     TIMEZONE,
 )
-from services.safe_status import safe_status
+from services.safe_status import NOT_CONFIGURED, safe_status
 
 logger = logging.getLogger(__name__)
 
 RETENTION = 8
 BACKUP_PREFIX = "on-track-backups/"
+
+# Conservative floor for "this dump is real, not truncated/empty." Even an
+# essentially-empty custom-format pg_dump carries header/TOC overhead well
+# past this; a file smaller than this means pg_dump exited 0 without actually
+# writing a usable dump, and it must never be uploaded or (worse) allowed to
+# trigger pruning of the last-known-good backups.
+MIN_DUMP_BYTES = 512
+
+
+class BackupDumpError(Exception):
+    """Raised when pg_dump exits non-zero. Message is ours alone — never
+    str(CalledProcessError), which embeds the full argv it was given."""
+
+
+class BackupTooSmallError(Exception):
+    """Raised when the dump file is implausibly small for a real database dump."""
+
+
+class BackupUnverifiedError(Exception):
+    """Raised when the just-uploaded key doesn't show up in a post-upload
+    listing — the upload can't be trusted, so pruning must not run."""
 
 
 def _now_iso() -> str:
@@ -60,21 +94,65 @@ def _s3_client():
     )
 
 
+def _pg_dump_args() -> list:
+    """Connection flags for pg_dump, parsed from DATABASE_URL. Never includes
+    the password — that goes through _pg_dump_env() instead."""
+    parsed = urlparse(DATABASE_URL)
+    args = ["pg_dump", "--format=custom"]
+    if parsed.hostname:
+        args += ["-h", parsed.hostname]
+    if parsed.port:
+        args += ["-p", str(parsed.port)]
+    if parsed.username:
+        args += ["-U", parsed.username]
+    dbname = (parsed.path or "").lstrip("/")
+    if dbname:
+        args += ["-d", dbname]
+    return args
+
+
+def _pg_dump_env() -> dict:
+    """Subprocess environment for pg_dump: the real process env plus
+    PGPASSWORD, parsed from DATABASE_URL — the only place the password goes."""
+    env = os.environ.copy()
+    password = urlparse(DATABASE_URL).password
+    if password:
+        env["PGPASSWORD"] = password
+    return env
+
+
 def _dump_to_file(path: str) -> None:
-    """Runs pg_dump against DATABASE_URL, writing a custom-format dump to `path`.
-    Raises on failure — the caller wraps this in safe_status(), never str(e),
-    since a pg_dump error message can embed DATABASE_URL itself."""
+    """Runs pg_dump against DATABASE_URL, writing a custom-format dump to
+    `path`. Raises BackupDumpError on a non-zero exit — never
+    subprocess.CalledProcessError, whose str() embeds the full argv."""
     with open(path, "wb") as f:
-        subprocess.run(
-            ["pg_dump", DATABASE_URL, "--format=custom"],
-            stdout=f, stderr=subprocess.PIPE, check=True,
+        result = subprocess.run(
+            _pg_dump_args(), stdout=f, stderr=subprocess.PIPE, env=_pg_dump_env(),
         )
+    if result.returncode != 0:
+        stderr_text = result.stderr.decode("utf-8", "replace") if result.stderr else ""
+        logger.error("pg_dump exited %d: %s", result.returncode, stderr_text[:2000])
+        raise BackupDumpError(f"pg_dump exited with status {result.returncode}")
+
+
+def _assert_dump_is_plausible(path: str) -> None:
+    size = os.path.getsize(path)
+    if size < MIN_DUMP_BYTES:
+        raise BackupTooSmallError(f"pg_dump output implausibly small ({size} bytes)")
 
 
 def _upload(local_path: str, key: str) -> None:
     """Isolated so tests can assert it's called with the expected key without
     exercising a real S3-compatible client."""
     _s3_client().upload_file(local_path, BACKUP_S3_BUCKET, key)
+
+
+def _verify_uploaded(key: str) -> bool:
+    """Confirms `key` actually shows up in a post-upload listing. Isolated so
+    tests can assert the prune-gating behavior without a real S3 client."""
+    client = _s3_client()
+    resp = client.list_objects_v2(Bucket=BACKUP_S3_BUCKET, Prefix=key)
+    return any(obj["Key"] == key for obj in resp.get("Contents", []))
 
 
 def _prune_old_backups() -> None:
@@ -92,7 +170,7 @@ def run():
         return
     if not _is_configured():
         logger.warning("Backup skipped: BACKUP_S3_* env vars not fully set")
-        db.set_setting("backup_last_status", "error: not configured")
+        db.set_setting("backup_last_status", NOT_CONFIGURED)
         return
     try:
         stamp = datetime.datetime.now(pytz.timezone(TIMEZONE)).strftime("%Y%m%dT%H%M%S")
@@ -101,7 +179,10 @@ def run():
         os.close(fd)
         try:
             _dump_to_file(tmp_path)
+            _assert_dump_is_plausible(tmp_path)
             _upload(tmp_path, key)
+            if not _verify_uploaded(key):
+                raise BackupUnverifiedError(f"Uploaded key not found in post-upload listing: {key}")
             _prune_old_backups()
         finally:
             os.unlink(tmp_path)

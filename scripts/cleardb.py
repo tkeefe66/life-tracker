@@ -12,8 +12,8 @@ import database as db
 from config import DATABASE_PATH, DATABASE_URL
 
 TABLES = [
-    "checkins", "delivery_orders", "calendar_events", "targets", "app_settings",
-    "sessions",
+    "checkins", "delivery_orders", "calendar_events", "rides", "weekly_reflections",
+    "targets", "app_settings", "sessions",
     # v1 archive tables
     "life_log_entries", "life_log_people", "people", "activity_log", "categories",
     "habits", "habit_logs", "accomplishments", "weekly_focus", "later_items",

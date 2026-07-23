@@ -12,7 +12,7 @@ import secrets
 from fastapi import HTTPException, Request, Response
 
 import database as db
-from config import APP_PASSWORD, SESSION_TTL_DAYS
+from config import APP_PASSWORD, SESSION_MAX_DAYS, SESSION_TTL_DAYS
 
 COOKIE_NAME = "ontrack_session"
 
@@ -72,12 +72,42 @@ def require_auth(request: Request, response: Response) -> None:
         db.delete_session(token)
         raise HTTPException(status_code=401, detail="Session expired")
 
+    # Absolute lifetime cap: sliding renewal below only ever advances
+    # expires_at, never created_at, so without this an actively-used (or
+    # stolen-and-replayed) cookie would renew forever. Checked before renewal
+    # so a session past the cap is rejected regardless of how far renewal has
+    # already pushed expires_at into the future.
+    created_at = _parse(session["created_at"])
+    if now - created_at > datetime.timedelta(days=SESSION_MAX_DAYS):
+        db.delete_session(token)
+        raise HTTPException(status_code=401, detail="Session expired")
+
     # Sliding renewal: once a session is more than halfway to expiry, extend it.
     # Keeps normal use from logging the user out mid-session while still
     # bounding how long a stolen cookie stays valid if never used again.
-    created_at = _parse(session["created_at"])
     half_life = (expires_at - created_at) / 2
     if now - created_at > half_life:
         new_expires_at = now + datetime.timedelta(days=SESSION_TTL_DAYS)
         db.update_session_expiry(token, _iso(new_expires_at))
         set_session_cookie(response, token)
+
+
+def has_valid_session(request: Request) -> bool:
+    """Read-only validity check — does NOT renew or delete anything, unlike
+    require_auth. Used by the login lockout (see app/api.py) so a request that
+    already carries a still-valid session cookie is never blocked by a lockout
+    an unauthenticated attacker triggered against the login endpoint."""
+    token = request.cookies.get(COOKIE_NAME, "")
+    if not token:
+        return False
+    session = db.get_session(token)
+    if session is None:
+        return False
+    now = _utcnow()
+    expires_at = _parse(session["expires_at"])
+    if now >= expires_at:
+        return False
+    created_at = _parse(session["created_at"])
+    if now - created_at > datetime.timedelta(days=SESSION_MAX_DAYS):
+        return False
+    return True

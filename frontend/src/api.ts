@@ -1,5 +1,10 @@
 export class UnauthorizedError extends Error {}
 
+// A 429 from /api/login is a lockout, not a wrong password — previously
+// login() returned resp.ok (false for both), so the owner saw "wrong
+// password" during a lockout and kept retrying, extending it further.
+export class LockedOutError extends Error {}
+
 // Sessions now really expire (server-side, revocable) instead of the old
 // 365-day static cookie, so a 401 can legitimately happen mid-use on ANY
 // screen, not just the initial probe. App.tsx registers a single handler here
@@ -31,6 +36,7 @@ export async function login(password: string): Promise<boolean> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ password }),
   });
+  if (resp.status === 429) throw new LockedOutError();
   return resp.ok;
 }
 

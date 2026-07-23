@@ -136,11 +136,12 @@ def test_reflection_204_on_generation_failure(temp_db_path, mock_anthropic):
 
 def test_reflection_get_is_rejected(temp_db_path, mock_anthropic):
     # GET must no longer trigger a write / paid AI call from a top-level cross-site nav.
-    # The SPA catch-all mount claims any unmatched path, so this surfaces as a plain
-    # 404 rather than a routing-level 405 — either way, GET performs no write and
-    # makes no Claude call.
+    # When frontend/dist exists, the SPA catch-all mount claims any unmatched path and
+    # this surfaces as a plain 404; on a clean clone with no built frontend, FastAPI's
+    # own routing returns 405 instead. Either way, GET performs no write and makes no
+    # Claude call — that's the actual property under test, not the exact status code.
     client = _client(temp_db_path)
-    assert client.get("/api/reflection").status_code == 404
+    assert client.get("/api/reflection").status_code in (404, 405)
     assert mock_anthropic.messages.create.call_count == 0
 
 

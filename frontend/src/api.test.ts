@@ -1,5 +1,34 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiGet, logout, onUnauthorized, UnauthorizedError } from "./api";
+import { apiGet, login, LockedOutError, logout, onUnauthorized, UnauthorizedError } from "./api";
+
+describe("login", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("resolves true on a successful login", async () => {
+    fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(login("correct")).resolves.toBe(true);
+  });
+
+  it("resolves false on a wrong password (401), distinct from a lockout", async () => {
+    fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 401 });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(login("wrong")).resolves.toBe(false);
+  });
+
+  it("throws LockedOutError on 429 instead of resolving false", async () => {
+    // A 429 previously read as resp.ok === false, indistinguishable from a
+    // wrong password — the owner would keep retrying and extend their own
+    // lockout. It must be surfaced distinctly.
+    fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 429 });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(login("anything")).rejects.toBeInstanceOf(LockedOutError);
+  });
+});
 
 describe("logout", () => {
   let fetchMock: ReturnType<typeof vi.fn>;

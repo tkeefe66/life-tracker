@@ -164,7 +164,10 @@ plus a manual look.
 
 ## Environment Variables
 
-Matches `.env.example`.
+`.env.example` may lag this table — it's hand-maintained and has fallen behind
+before. This table is the source of truth; if a var is missing from
+`.env.example`, add it there too, but don't assume its absence means the var
+doesn't exist.
 
 ### Required
 
@@ -186,12 +189,15 @@ Matches `.env.example`.
 | `CALENDAR_SCAN_HOUR` | Daily calendar scan hour, local time (default 6) |
 | `WEEKLY_PUSH_HOUR` | Monday scorecard push hour, local time (default 9) |
 | `SESSION_TTL_DAYS` | Session lifetime before expiry, with sliding renewal past the halfway point (default 14) |
+| `SESSION_MAX_DAYS` | Absolute session lifetime cap regardless of renewal — closes off an actively-used or stolen cookie renewing forever (default 60) |
 | `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` | Off-Railway S3-compatible destination for the weekly `pg_dump` backup (`jobs/backup_db.py`). All unset = backups no-op with a logged warning |
 | `BACKUP_HOUR` | Sunday backup hour, local time (default 4) |
 
-**Note:** `.env.example` could not be updated in this pass (path is blocked by a
-sandbox permission guardrail on dotenv files). Add the four `SESSION_TTL_DAYS` /
-`BACKUP_S3_*` / `BACKUP_HOUR` lines above to it by hand.
+**Note:** `.env.example` has historically lagged this table (a sandbox
+permission guardrail on dotenv files has blocked editing it directly in past
+sessions) — `SESSION_TTL_DAYS`, `SESSION_MAX_DAYS`, `BACKUP_S3_*`, and
+`BACKUP_HOUR` in particular must be set manually in any environment that
+doesn't already have them, whether or not `.env.example` mentions them.
 
 ---
 
@@ -237,6 +243,8 @@ is enough. Tests only exercise the SQLite path; Postgres DDL is verified by depl
 - [ ] PostgreSQL plugin attached
 - [ ] Google OAuth vars set, refresh token carries both Calendar + Gmail scopes
 - [ ] `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` set if using the weekly push
+- [ ] `SESSION_TTL_DAYS` / `SESSION_MAX_DAYS` set if the defaults (14 / 60 days) aren't right for this deploy
+- [ ] `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` set if weekly backups should actually run (unset = silent no-op)
 
 ---
 
@@ -246,7 +254,7 @@ is enough. Tests only exercise the SQLite path; Postgres DDL is verified by depl
 - **`database.py`** is the only place with SQL — no DB calls from `app/`, `jobs/`, or `services/`
 - **`ai_metrics.py`** is the only place with Claude calls — uses `claude-haiku-4-5-20251001` via `_call_json()`. **Never change `MODEL` without checking cost impact** — jobs run multiple times per day
 - Ingestion jobs (`jobs/scan_gmail.py`, `jobs/scan_calendar.py`) must never crash the web app on failure — log and record status in `app_settings`, don't raise
-- **The redaction boundary.** Ingestion jobs (and `jobs/weekly_push.py`) never store `str(exception)` in `app_settings` — that value is read back by `/api/settings` and rendered in Settings. `except Exception as e:` blocks call `logger.exception(...)` for full server-side detail, then `db.set_setting(..., safe_status(e))` (`services/safe_status.py`), which maps the exception to one of `"ok"` / `"error: auth"` / `"error: unreachable"` / `"error: rate limited"` / `"error: see logs"` — never anything else. This exists because a future SimpleFIN bank-access URL carries its credentials inside the URL itself, and HTTP libraries routinely put the request URL into exception messages (a Gmail URL already leaked this way once). Rule: **prevent the credential-bearing string from being constructed; never scrub it afterwards.** Any new ingestion job follows the same pattern.
+- **The redaction boundary.** Ingestion jobs (and `jobs/weekly_push.py`) never store `str(exception)` in `app_settings` — that value is read back by `/api/settings` and rendered in Settings. `except Exception as e:` blocks call `logger.exception(...)` for full server-side detail, then `db.set_setting(..., safe_status(e))` (`services/safe_status.py`), which maps the exception to one of `"ok"` / `"error: auth"` / `"error: unreachable"` / `"error: rate limited"` / `"error: see logs"` — never anything else. This exists because a future SimpleFIN bank-access URL carries its credentials inside the URL itself, and HTTP libraries routinely put the request URL into exception messages (a Gmail URL already leaked this way once). Rule: **prevent the credential-bearing string from being constructed; never scrub it afterwards.** Any new ingestion job follows the same pattern. The pre-flight "we never even tried" statuses (`services.safe_status.NOT_CONFIGURED`, `GOOGLE_NOT_CONFIGURED`) are also `CLOSED_SET` members — written outside the try/except, before `safe_status()` ever runs, but from the same named constants so the invariant holds everywhere, not just inside the exception path.
 - Google auth expiry surfaces as a visible banner in the app, never silent missing data
 - **Money formats one way:** `$16.31`, whole dollars trimmed to `$20`, via `.toFixed(2).replace(/\.00$/, "")`. Always null-check, never truthiness — a real `$0` must display
 - **Secondary surfaces fail quietly.** A failed fetch for insights/reflection/spend hides that section; it never sets the screen-level error state that would blank the page

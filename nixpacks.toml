@@ -1,8 +1,13 @@
 providers = ["python"]
 
 [phases.setup]
-# postgresql: provides the pg_dump binary jobs/backup_db.py shells out to.
-nixPkgs = ["python311", "gcc", "nodejs_20", "postgresql"]
+# postgresql_17: provides the pg_dump binary jobs/backup_db.py shells out to.
+# Pinned to an explicit major, not the unversioned "postgresql" alias: pg_dump
+# refuses to dump from a server *newer* than itself, so if nixpkgs' unpinned
+# default ever drifted below Railway's Postgres plugin version, every backup
+# would start failing permanently with only a Settings line nobody reads.
+# Bump this if Railway's Postgres plugin major version changes.
+nixPkgs = ["python311", "gcc", "nodejs_20", "postgresql_17"]
 
 [phases.build]
 cmds = ["cd frontend && npm ci && npm run build"]

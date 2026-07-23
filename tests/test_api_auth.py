@@ -237,3 +237,129 @@ def test_lockout_window_doubles_on_repeated_failure_after_expiry(temp_db_path, m
     second_locked_until = api_mod._parse(db.get_setting(api_mod.LOGIN_LOCKED_UNTIL_KEY))
     second_window = second_locked_until - just_after_first
     assert second_window > datetime.timedelta(seconds=60)  # longer than the base window — it doubled, not reset
+
+
+# ── H1: atomic lockout counter ────────────────────────────────────────────────
+
+def test_concurrent_failed_logins_increment_the_counter_atomically(temp_db_path, monkeypatch):
+    """Regression for the non-atomic read-modify-write in _record_login_failure:
+    `count = int(get_setting(...)) + 1; set_setting(...)` run from N concurrent
+    threads (Starlette dispatches sync `def` routes onto the anyio threadpool)
+    all read the same stale value and all write the same next value — the
+    counter advances once per burst instead of once per request. Threshold is
+    raised so this burst never trips the lockout itself; the assertion isolates
+    the atomicity property from the separate lockout-cap behavior."""
+    import concurrent.futures
+
+    from app import api as api_mod
+    import database as db
+
+    monkeypatch.setattr(api_mod, "LOCKOUT_THRESHOLD", 10_000)
+
+    client = _client(temp_db_path)
+    n = 40
+
+    def attempt(_):
+        return client.post("/api/login", json={"password": "wrong"})
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n) as pool:
+        responses = list(pool.map(attempt, range(n)))
+
+    assert all(r.status_code == 401 for r in responses)
+    assert int(db.get_setting(api_mod.LOGIN_FAIL_COUNT_KEY)) == n
+
+
+# ── M1: absolute session lifetime cap ─────────────────────────────────────────
+
+def test_session_older_than_max_days_is_rejected_even_if_not_yet_expired(temp_db_path):
+    """Sliding renewal only ever advances expires_at, never created_at, so an
+    actively-used (or stolen-and-replayed) cookie could otherwise renew forever.
+    A session created long ago must be rejected once it exceeds SESSION_MAX_DAYS,
+    regardless of how far renewal has pushed expires_at into the future."""
+    import datetime
+
+    import database as db
+    from config import SESSION_MAX_DAYS
+
+    client = _client(temp_db_path)
+    created = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=SESSION_MAX_DAYS + 1)
+    far_future_expiry = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365)
+    db.create_session(
+        "ancient-but-renewed-token",
+        created.isoformat(timespec="microseconds"),
+        far_future_expiry.isoformat(timespec="microseconds"),
+    )
+    client.cookies.set("ontrack_session", "ancient-but-renewed-token")
+
+    assert client.get("/api/targets").status_code == 401
+    assert db.get_session("ancient-but-renewed-token") is None  # swept on the attempt
+
+
+def test_session_within_max_days_is_accepted(temp_db_path):
+    """Sanity check the cap doesn't false-positive on an ordinary, recent session."""
+    client = _client(temp_db_path)
+    resp = client.post("/api/login", json={"password": "test-password"})
+    assert resp.status_code == 200
+    import database as db
+    db.seed_default_targets()
+    assert client.get("/api/targets").status_code == 200
+
+
+# ── M2: lockout can't permanently lock the owner out ──────────────────────────
+
+def test_valid_session_cookie_bypasses_the_lockout(temp_db_path):
+    """An unauthenticated attacker must not be able to lock the owner out of an
+    already-authenticated device: a request to /api/login that itself carries a
+    still-valid session cookie skips the lockout check entirely."""
+    owner_client = _client(temp_db_path)
+    assert owner_client.post("/api/login", json={"password": "test-password"}).status_code == 200
+
+    attacker_client = _client(temp_db_path)
+    for _ in range(5):
+        attacker_client.post("/api/login", json={"password": "wrong"})
+    # Confirm the lockout is really in effect for anyone without the cookie.
+    assert attacker_client.post("/api/login", json={"password": "test-password"}).status_code == 429
+
+    # The owner's own already-authenticated browser is unaffected.
+    resp = owner_client.post("/api/login", json={"password": "test-password"})
+    assert resp.status_code == 200
+
+
+def test_abandoned_attack_heals_after_30_minutes_of_inactivity(temp_db_path, monkeypatch):
+    """The failure counter only ever reset on a successful login — impossible
+    while locked — so one wrong guess a minute could keep the owner locked out
+    forever. If the last failure was more than 30 minutes ago, the next failed
+    attempt must be treated as a fresh #1, not as a continuation of the old
+    count (which would otherwise instantly re-trigger a fresh lock)."""
+    import datetime
+
+    from app import api as api_mod
+    import database as db
+
+    client = _client(temp_db_path)
+
+    # Simulate an ongoing attack: each failure's lockout window is allowed to
+    # naturally expire before the next attempt, so the count keeps climbing —
+    # exactly the "one guess a minute, forever" pattern from the finding.
+    now = api_mod._utcnow()
+    for _ in range(7):
+        monkeypatch.setattr(api_mod, "_utcnow", lambda n=now: n)
+        client.post("/api/login", json={"password": "wrong"})
+        raw_locked_until = db.get_setting(api_mod.LOGIN_LOCKED_UNTIL_KEY)
+        if raw_locked_until:
+            now = api_mod._parse(raw_locked_until) + datetime.timedelta(seconds=1)
+        else:
+            now = now + datetime.timedelta(seconds=1)  # below threshold — no lock set yet
+
+    # The attacker gives up. No attempts land for 31 minutes.
+    stale = now + datetime.timedelta(minutes=31)
+    monkeypatch.setattr(api_mod, "_utcnow", lambda: stale)
+
+    # One stray wrong attempt after the abandoned window must count as failure
+    # #1, not #8 — which would otherwise instantly re-lock for another 15 min.
+    resp = client.post("/api/login", json={"password": "wrong"})
+    assert resp.status_code == 401
+    assert int(db.get_setting(api_mod.LOGIN_FAIL_COUNT_KEY)) == 1
+
+    # The owner's very next correct-password attempt succeeds immediately.
+    assert client.post("/api/login", json={"password": "test-password"}).status_code == 200

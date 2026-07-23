@@ -38,6 +38,11 @@ WEEKLY_PUSH_HOUR = int(os.getenv("WEEKLY_PUSH_HOUR", "9"))
 # used to compute a valid cookie offline.
 SESSION_TTL_DAYS = int(os.getenv("SESSION_TTL_DAYS", "14"))
 
+# Absolute session lifetime cap, in days, regardless of sliding renewal. Sliding
+# renewal only ever advances expires_at, never created_at — without a cap, an
+# actively-used (or stolen and replayed) cookie would renew forever.
+SESSION_MAX_DAYS = int(os.getenv("SESSION_MAX_DAYS", "60"))
+
 # Weekly database backup — an off-Railway S3-compatible destination (e.g.
 # Cloudflare R2, Backblaze B2). All optional: jobs/backup_db.py logs a warning
 # and no-ops when any is unset, so local dev and an un-configured deploy are

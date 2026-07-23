@@ -19,12 +19,22 @@ Callers are responsible for full-detail logging themselves:
         db.set_setting("x_last_status", safe_status(e))   # closed-set value only
 """
 
+# Not returned by safe_status() itself — these cover the "we never even tried"
+# case that jobs check for *before* entering the try/except that calls
+# safe_status(). They're named constants (not ad hoc literals at each call
+# site) so the invariant "every status a job ever writes is a CLOSED_SET
+# member" is actually enforceable and tested, not just true by convention.
+NOT_CONFIGURED = "error: not configured"
+GOOGLE_NOT_CONFIGURED = "error: Google not configured"
+
 CLOSED_SET = frozenset({
     "ok",
     "error: auth",
     "error: unreachable",
     "error: rate limited",
     "error: see logs",
+    NOT_CONFIGURED,
+    GOOGLE_NOT_CONFIGURED,
 })
 
 # Matched against every class name in the exception's MRO, so this recognizes

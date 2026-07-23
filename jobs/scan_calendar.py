@@ -8,7 +8,7 @@ import ai_metrics
 import database as db
 from config import TIMEZONE
 from services import calendar_service, google_auth
-from services.safe_status import safe_status
+from services.safe_status import GOOGLE_NOT_CONFIGURED, safe_status
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def _now_iso() -> str:
 def run():
     if not google_auth.is_configured():
         logger.warning("Calendar scan skipped: Google not configured")
-        db.set_setting("calendar_last_status", "error: Google not configured")
+        db.set_setting("calendar_last_status", GOOGLE_NOT_CONFIGURED)
         return
     try:
         events = calendar_service.get_events_range(days_back=DAYS_BACK)
