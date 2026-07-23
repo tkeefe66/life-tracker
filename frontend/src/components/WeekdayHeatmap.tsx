@@ -26,11 +26,13 @@ export default function WeekdayHeatmap({ rows }: { rows: Row[] }) {
         ))}
       </div>
       {rows.map((r, rowIndex) => {
+        const hasData = r.counts.some(c => c > 0);
         const max = Math.max(...r.counts, 1);
+        const displayMax = hasData ? max : 0;
         return (
           <div className="hm-row" key={r.label}>
             <span className="hm-label">
-              {r.label} <span className="hm-max">max {max}</span>
+              {r.label} <span className="hm-max">max {displayMax}</span>
             </span>
             {r.counts.map((c, dayIndex) => {
               const title = `${r.label} · ${DAY_NAMES[dayIndex]}s: ${c}`;
@@ -56,16 +58,24 @@ export default function WeekdayHeatmap({ rows }: { rows: Row[] }) {
         );
       })}
 
-      <div className="hm-legend">
-        <span className="hm-legend-word">less</span>
-        {LEGEND_STEPS.map((pct) => (
-          <span
-            key={pct}
-            className="hm-swatch"
-            style={{ background: `color-mix(in oklch, var(--chart-hit) ${pct}%, var(--surface-2))` }}
-          />
+      <div className="hm-legend" style={{ flexDirection: "column", alignItems: "flex-start", gap: "8px" }}>
+        {[
+          { label: "at least", color: "var(--chart-hit)" },
+          { label: "at most", color: "var(--chart-over)" }
+        ].map((row) => (
+          <div key={row.label} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span className="hm-legend-word" style={{ minWidth: "42px" }}>{row.label}</span>
+            <span className="hm-legend-word">less</span>
+            {LEGEND_STEPS.map((pct) => (
+              <span
+                key={pct}
+                className="hm-swatch"
+                style={{ background: `color-mix(in oklch, ${row.color} ${pct}%, var(--surface-2))` }}
+              />
+            ))}
+            <span className="hm-legend-word">more</span>
+          </div>
         ))}
-        <span className="hm-legend-word">more</span>
       </div>
 
       {selected && (
