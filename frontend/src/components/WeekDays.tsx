@@ -46,6 +46,8 @@ export default function WeekDays({ days, weekTotal, onOpenDay }: Props) {
               >
                 {isEmpty ? (
                   <span className="day-empty muted">Nothing logged</span>
+                ) : chips.length === 0 ? (
+                  <span className="day-chips muted">Work travel</span>
                 ) : (
                   <span className="day-chips">
                     {chips.map((c) => (
@@ -58,26 +60,24 @@ export default function WeekDays({ days, weekTotal, onOpenDay }: Props) {
               </button>
             </div>
 
-            {isOpen && (
-              <div className="day-panel" id={panelId}>
-                {day.items.length === 0 ? (
-                  <p className="day-panel-empty muted">Nothing logged</p>
-                ) : (
-                  day.items.map((item, i) => (
-                    <div className="day-panel-item" key={i}>
-                      <span className="day-panel-label">
-                        {item.label}
-                        {item.is_work && <span className="day-panel-tag muted"> · work</span>}
-                      </span>
-                      <span className="day-panel-amount num">{money(item.amount)}</span>
-                    </div>
-                  ))
-                )}
-                <button className="day-panel-link" onClick={() => onOpenDay(day.date)}>
-                  Open {label} →
-                </button>
-              </div>
-            )}
+            <div className="day-panel" id={panelId} hidden={!isOpen}>
+              {day.items.length === 0 ? (
+                <p className="day-panel-empty muted">Nothing logged</p>
+              ) : (
+                day.items.map((item, i) => (
+                  <div className="day-panel-item" key={i}>
+                    <span className="day-panel-label">
+                      {item.label}
+                      {item.is_work && <span className="day-panel-tag muted"> · work</span>}
+                    </span>
+                    <span className="day-panel-amount num">{money(item.amount)}</span>
+                  </div>
+                ))
+              )}
+              <button className="day-panel-link" onClick={() => onOpenDay(day.date)}>
+                Open {label} →
+              </button>
+            </div>
           </div>
         );
       })}
