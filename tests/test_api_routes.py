@@ -728,3 +728,179 @@ def test_set_account_role_rejects_an_unknown_role(client, temp_db_path):
 def test_set_account_role_404s_for_an_unknown_account(client, temp_db_path):
     r = client.post("/api/bank/accounts/nope/role", json={"role": "spending"})
     assert r.status_code == 404
+
+
+# ── Bank: summary, triage, flow overrides, accounts (Task 5) ──────────────────
+
+def _bank_account(db, sfid="acct-1", role="spending"):
+    db.upsert_bank_account(sfid, "Everyday Checking", "Test Bank", "checking")
+    db.set_bank_account_role(sfid, role)
+    return next(a for a in db.get_bank_accounts() if a["simplefin_id"] == sfid)
+
+
+def test_bank_summary_empty_db_returns_shaped_200(client, temp_db_path):
+    resp = client.get("/api/bank/summary")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body.keys()) == {
+        "covered_from", "covered_to", "weeks", "totals", "spent", "tracked", "triage_counts",
+    }
+    assert body["weeks"] == []
+    assert body["covered_from"] is None
+    assert body["triage_counts"] == {"ambiguous": 0, "inflow_unknown": 0}
+
+
+def test_bank_summary_weeks_param_clamps_to_52(client, temp_db_path):
+    import database as db
+    import metrics
+    from app.scorecard import _local_today
+
+    acct = _bank_account(db)
+    this_monday = metrics.week_bounds(_local_today())[0]
+    far_back = (this_monday - datetime.timedelta(weeks=60)).isoformat()
+    today = _local_today().isoformat()
+    db.upsert_bank_transaction("ancient", acct["id"], far_back, far_back, -10.0, "OLD", "", "", None)
+    db.set_bank_transaction_derived("ancient", "spending", None, False)
+    db.upsert_bank_transaction("recent", acct["id"], today, today, -5.0, "NEW", "", "", None)
+    db.set_bank_transaction_derived("recent", "spending", None, False)
+
+    body = client.get("/api/bank/summary?weeks=999").json()
+    assert len(body["weeks"]) == 52  # not 999 -- proves the route clamps, not just money.summary in isolation
+
+
+def test_bank_triage_shape(client, temp_db_path):
+    resp = client.get("/api/bank/triage")
+    assert resp.status_code == 200
+    assert set(resp.json().keys()) == {"ambiguous", "inflow_unknown", "recent"}
+
+
+def test_bank_triage_limit_caps_each_bucket(client, temp_db_path):
+    import database as db
+
+    acct = _bank_account(db)
+    for i in range(3):
+        sfid = f"ambig{i}"
+        db.upsert_bank_transaction(sfid, acct["id"], "2026-07-01", "2026-07-01", -10.0 - i, "AMBIG", "", "", None)
+        db.set_bank_transaction_derived(sfid, "spending", None, True)
+    for i in range(3):
+        sfid = f"inflow{i}"
+        db.upsert_bank_transaction(sfid, acct["id"], "2026-07-01", "2026-07-01", 10.0 + i, "INFLOW", "", "", None)
+        db.set_bank_transaction_derived(sfid, "inflow_unknown", None, False)
+
+    body = client.get("/api/bank/triage?limit=1").json()
+    assert len(body["ambiguous"]) == 1
+    assert len(body["inflow_unknown"]) == 1
+
+
+def test_patch_bank_transaction_flow_sets_and_clears_override(client, temp_db_path):
+    import database as db
+
+    acct = _bank_account(db)
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01", -20.0, "AMBIG", "", "", None)
+    db.set_bank_transaction_derived("t1", "spending", None, True)
+
+    before = client.get("/api/bank/triage").json()
+    assert any(r["simplefin_id"] == "t1" for r in before["ambiguous"])
+
+    resp = client.post("/api/bank/transactions/t1/flow", json={"flow": "transfer"})
+    assert resp.status_code == 200
+
+    after = client.get("/api/bank/triage").json()
+    assert not any(r["simplefin_id"] == "t1" for r in after["ambiguous"])  # left the queue
+
+    resp = client.post("/api/bank/transactions/t1/flow", json={"flow": None})
+    assert resp.status_code == 200
+
+    restored = client.get("/api/bank/triage").json()
+    assert any(r["simplefin_id"] == "t1" for r in restored["ambiguous"])  # clearing returns it
+
+
+def test_patch_bank_transaction_flow_rejects_unknown_flow(client, temp_db_path):
+    import database as db
+
+    acct = _bank_account(db)
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01", -20.0, "X", "", "", None)
+    db.set_bank_transaction_derived("t1", "spending", None, False)
+    resp = client.post("/api/bank/transactions/t1/flow", json={"flow": "nonsense"})
+    assert resp.status_code == 400
+
+
+def test_patch_bank_transaction_flow_unknown_id_404s(client, temp_db_path):
+    resp = client.post("/api/bank/transactions/nope/flow", json={"flow": "transfer"})
+    assert resp.status_code == 404
+
+
+def test_bulk_flow_override_updates_count(client, temp_db_path):
+    import database as db
+
+    acct = _bank_account(db)
+    db.upsert_bank_transaction("b1", acct["id"], "2026-07-01", "2026-07-01", -10.0, "X", "", "", None)
+    db.set_bank_transaction_derived("b1", "spending", None, False)
+    db.upsert_bank_transaction("b2", acct["id"], "2026-07-01", "2026-07-01", -20.0, "Y", "", "", None)
+    db.set_bank_transaction_derived("b2", "spending", None, False)
+
+    resp = client.post("/api/bank/transactions/flow", json={"simplefin_ids": ["b1", "b2"], "flow": "transfer"})
+    assert resp.status_code == 200
+    assert resp.json() == {"updated": 2}
+
+
+def test_bulk_flow_override_caps_at_200_ids(client, temp_db_path):
+    ids = [f"id{i}" for i in range(201)]
+    resp = client.post("/api/bank/transactions/flow", json={"simplefin_ids": ids, "flow": "transfer"})
+    assert resp.status_code == 400
+
+
+def test_bulk_flow_override_unknown_flow_writes_nothing(client, temp_db_path):
+    import database as db
+
+    acct = _bank_account(db)
+    db.upsert_bank_transaction("b1", acct["id"], "2026-07-01", "2026-07-01", -10.0, "X", "", "", None)
+    db.set_bank_transaction_derived("b1", "spending", None, False)
+
+    resp = client.post("/api/bank/transactions/flow", json={"simplefin_ids": ["b1"], "flow": "yacht"})
+    assert resp.status_code == 400
+
+    row = next(r for r in db.get_all_bank_transactions() if r["simplefin_id"] == "b1")
+    assert row["user_flow"] is None  # nothing written
+
+
+def test_get_bank_accounts_no_balance_key_and_no_url_leak(client, temp_db_path):
+    import database as db
+
+    db.upsert_bank_account("chk", "Checking", "Wells Fargo", "checking")
+    resp = client.get("/api/bank/accounts")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, list) and len(body) == 1
+    for row in body:
+        for key, value in row.items():
+            assert "balance" not in key.lower()
+            if isinstance(value, str):
+                assert "http" not in value.lower()
+
+
+# ── Auth: every protected route rejects an unauthenticated request ────────────
+#
+# No such enumeration existed before this task -- the plan's step 5 says to add
+# to "whichever existing parametrized auth test enumerates protected routes",
+# but no test in this suite does that (verified by grep across tests/). This is
+# the enumeration; new protected routes should be appended here going forward.
+
+PROTECTED_ROUTES = [
+    ("get", "/api/bank/summary"),
+    ("get", "/api/bank/triage"),
+    ("post", "/api/bank/transactions/some-id/flow"),
+    ("post", "/api/bank/transactions/flow"),
+    ("get", "/api/bank/accounts"),
+]
+
+
+@pytest.mark.parametrize("method,path", PROTECTED_ROUTES)
+def test_bank_routes_require_auth(temp_db_path, method, path):
+    from app.api import create_app
+    client = TestClient(create_app(), base_url="https://testserver")  # no login
+    if method == "post":
+        resp = client.post(path, json={})
+    else:
+        resp = client.get(path)
+    assert resp.status_code == 401

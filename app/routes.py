@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 import ai_metrics
 import database as db
 import metrics
+from app import money
 from app.auth import COOKIE_NAME, logout as auth_logout, require_auth
 from app.scorecard import _local_today, history, insights, scorecard_for_week, spend, today_snapshot, week_days
 from services import google_auth
@@ -312,3 +313,50 @@ def set_bank_account_role(simplefin_id: str, body: dict):
     if not db.set_bank_account_role(simplefin_id, role):
         raise HTTPException(status_code=404, detail="unknown account")
     return {"ok": True, "simplefin_id": simplefin_id, "role": role}
+
+
+@router.get("/bank/summary")
+def get_bank_summary(weeks: int = 12):
+    return money.summary(weeks)
+
+
+@router.get("/bank/triage")
+def get_bank_triage(limit: int = 50):
+    return money.triage(limit)
+
+
+MAX_BULK_FLOW_IDS = 200
+
+
+class FlowPatch(BaseModel):
+    flow: Optional[str] = None
+
+
+class BulkFlowPatch(BaseModel):
+    simplefin_ids: list[str]
+    flow: Optional[str] = None
+
+
+@router.post("/bank/transactions/{simplefin_id}/flow")
+def set_bank_transaction_flow(simplefin_id: str, body: FlowPatch):
+    if body.flow is not None and body.flow not in db.BANK_FLOWS:
+        raise HTTPException(status_code=400, detail="unknown flow")
+    if not db.set_bank_flow_override(simplefin_id, body.flow):
+        raise HTTPException(status_code=404, detail="unknown transaction")
+    return {"ok": True, "simplefin_id": simplefin_id, "flow": body.flow}
+
+
+@router.post("/bank/transactions/flow")
+def set_bank_transactions_flow_bulk(body: BulkFlowPatch):
+    if len(body.simplefin_ids) > MAX_BULK_FLOW_IDS:
+        raise HTTPException(status_code=400, detail=f"too many ids (max {MAX_BULK_FLOW_IDS})")
+    try:
+        updated = db.set_bank_flow_overrides_bulk(body.simplefin_ids, body.flow)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="unknown flow")
+    return {"updated": updated}
+
+
+@router.get("/bank/accounts")
+def get_bank_accounts():
+    return db.get_bank_accounts()
