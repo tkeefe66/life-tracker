@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../api";
-import { addDays, mondayOf, targetLabel, weekRangeLabel } from "../lib";
+import { addDays, mondayOf, targetLabel, weekRangeLabel, type SpendRow } from "../lib";
 import WeekNav from "../components/WeekNav";
 import TrendChart from "../components/TrendChart";
 import WeekdayHeatmap from "../components/WeekdayHeatmap";
+import SpendSubtotals from "../components/SpendSubtotals";
 
 interface Metric { label: string; count: number; target: number; direction: string; hit: boolean }
 interface Card {
   week_start: string; week_end: string; metrics: Record<string, Metric>;
-  delivery_spend: number; social_spend: number;
+  delivery_spend: number; social_spend: number; spend_by_service: SpendRow[];
 }
 interface Insights {
   weeks: Card[];
@@ -106,6 +107,8 @@ export default function Scorecard() {
           );
         })}
       </div>
+
+      <SpendSubtotals rows={card.spend_by_service} title="Spent this week" />
 
       {insights && hasAnyData(insights) && (
         <>
