@@ -90,13 +90,6 @@ export interface SocialPatch {
   amount?: number | null;
 }
 
-/**
- * Diff the editor's current fields against what was loaded and return only the
- * fields the user actually changed — so PATCH never manufactures an override
- * (a pinned title, a bogus is_social flip) the user never made. An emptied cost
- * field becomes an explicit `null` (clears a stored amount) rather than being
- * omitted (which would leave a stale amount untouched).
- */
 /** Left-hand label for a spend-subtotal row: rides get a "rides" suffix,
  * delivery services print as-is, and any social row collapses to "Social". */
 export function serviceLabel(kind: string, service: string): string {
@@ -113,7 +106,7 @@ export function money(amount: number): string {
 
 interface SubtotalDelivery { service: string; amount: number | null }
 interface SubtotalRide { service: string; amount: number | null; user_is_work: boolean | null }
-interface SubtotalSocialEvent { amount: number | null }
+interface SubtotalSocialEvent { amount: number | null; end_at?: string }
 interface SubtotalDay {
   deliveries: SubtotalDelivery[];
   rides: SubtotalRide[];
@@ -126,9 +119,12 @@ export interface SpendRow { kind: string; service: string; amount: number }
  * single day's /today payload. Null amounts are skipped (nothing to sum), a
  * confirmed work ride (user_is_work === true) is excluded — matching the
  * backend's _personal_rides rule, an AI flag alone never excludes a ride —
- * and social events collapse into one "Social" row regardless of source.
+ * and social events collapse into one "Social" row regardless of source. A
+ * social event whose end_at hasn't happened yet is excluded from the total
+ * (it still shows under "Noticed quietly") so "Spent today" agrees with
+ * Week, which gates social spend on the event having occurred.
  */
-export function subtotalsFromDay(day: SubtotalDay): SpendRow[] {
+export function subtotalsFromDay(day: SubtotalDay, now: number = Date.now()): SpendRow[] {
   const sums = new Map<string, SpendRow>();
   const add = (kind: string, service: string, amount: number | null) => {
     if (amount == null) return;
@@ -143,13 +139,23 @@ export function subtotalsFromDay(day: SubtotalDay): SpendRow[] {
     if (r.user_is_work) continue;
     add("ride", r.service, r.amount);
   }
-  for (const e of day.social_events) add("social", "Social", e.amount);
+  for (const e of day.social_events) {
+    if (e.end_at !== undefined && new Date(e.end_at).getTime() > now) continue;
+    add("social", "Social", e.amount);
+  }
 
   return Array.from(sums.values())
     .map((r) => ({ ...r, amount: Math.round(r.amount * 100) / 100 }))
     .sort((a, b) => b.amount - a.amount);
 }
 
+/**
+ * Diff the editor's current fields against what was loaded and return only the
+ * fields the user actually changed — so PATCH never manufactures an override
+ * (a pinned title, a bogus is_social flip) the user never made. An emptied cost
+ * field becomes an explicit `null` (clears a stored amount) rather than being
+ * omitted (which would leave a stale amount untouched).
+ */
 export function buildSocialPatch(state: SocialEditState): SocialPatch {
   const patch: SocialPatch = {};
 

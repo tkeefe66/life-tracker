@@ -226,8 +226,8 @@ export default function Insights() {
               {groupItemsByDay(spend.items).map(([day, dayItems]) => (
                 <div key={day}>
                   <p className="item-day">{dayLabel(day)}</p>
-                  {dayItems.map((item) => (
-                    <p className="quiet" key={`${item.kind}:${item.service}:${item.at}`}>
+                  {dayItems.map((item, idx) => (
+                    <p className="quiet" key={`${item.kind}:${item.service}:${item.at}:${idx}`}>
                       <span>{serviceLabel(item.kind, item.service)} — {item.label}</span>
                       <span className="when">{money(item.amount)}</span>
                     </p>

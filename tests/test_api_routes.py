@@ -419,29 +419,46 @@ def test_scorecard_rides_count_and_spend_exclude_confirmed_work_include_ai_flagg
 
 
 # ── /api/spend: the money view's data source ─────────────────────────────────
+#
+# All dates below are seeded relative to app.scorecard._local_today() (the
+# pattern tests/test_scorecard.py uses) so these hold on any date, not just
+# during the week they were written — a fixed-date seed plus an unanchored
+# ?weeks= query is clock-dependent and will fail once the real week rolls
+# past whatever was hardcoded.
 
 def test_spend_weeks_series_oldest_first_including_zero_weeks(temp_db_path):
     """A 4-week window with spend seeded in only two of the weeks still returns
     one dense entry per week, oldest-first, the untouched weeks reading zero."""
     client = _client(temp_db_path)
     import database as db
-    db.add_delivery_order("m1", "Uber Eats", "2026-06-29T19:00:00-06:00", "order", 15.0)
-    db.add_delivery_order("m2", "DoorDash", "2026-07-13T19:00:00-06:00", "order", 20.0)
+    import metrics
+    from app.scorecard import _local_today
+    this_monday = metrics.week_bounds(_local_today())[0]
+    oldest = this_monday - datetime.timedelta(weeks=3)  # oldest week in a weeks=4 window
+    third = this_monday - datetime.timedelta(weeks=1)
+    db.add_delivery_order("m1", "Uber Eats", f"{oldest.isoformat()}T19:00:00-06:00", "order", 15.0)
+    db.add_delivery_order("m2", "DoorDash", f"{third.isoformat()}T19:00:00-06:00", "order", 20.0)
     body = client.get("/api/spend?weeks=4").json()
     weeks = body["weeks"]
-    assert [w["week_start"] for w in weeks] == ["2026-06-22", "2026-06-29", "2026-07-06", "2026-07-13"]
-    assert weeks[0] == {"week_start": "2026-06-22", "delivery": 0, "rides": 0, "social": 0}
-    assert weeks[1]["delivery"] == 15.0
-    assert weeks[2] == {"week_start": "2026-07-06", "delivery": 0, "rides": 0, "social": 0}
-    assert weeks[3]["delivery"] == 20.0
+    expected_starts = [(this_monday - datetime.timedelta(weeks=i)).isoformat() for i in (3, 2, 1, 0)]
+    assert [w["week_start"] for w in weeks] == expected_starts
+    assert weeks[0] == {"week_start": expected_starts[0], "delivery": 15.0, "rides": 0, "social": 0}
+    assert weeks[1] == {"week_start": expected_starts[1], "delivery": 0, "rides": 0, "social": 0}
+    assert weeks[2]["delivery"] == 20.0
+    assert weeks[3]["week_start"] == expected_starts[3]  # in-progress current week, still present
 
 
 def test_spend_by_service_matches_aggregate_across_the_window(temp_db_path):
     client = _client(temp_db_path)
     import database as db
-    db.add_delivery_order("m1", "Uber Eats", "2026-06-29T19:00:00-06:00", "order", 15.0)
-    db.add_delivery_order("m2", "Uber Eats", "2026-07-13T19:00:00-06:00", "order", 10.0)
-    db.add_delivery_order("m3", "DoorDash", "2026-07-13T19:00:00-06:00", "order", 8.0)
+    import metrics
+    from app.scorecard import _local_today
+    this_monday = metrics.week_bounds(_local_today())[0]
+    w3 = this_monday - datetime.timedelta(weeks=3)
+    w1 = this_monday - datetime.timedelta(weeks=1)
+    db.add_delivery_order("m1", "Uber Eats", f"{w3.isoformat()}T19:00:00-06:00", "order", 15.0)
+    db.add_delivery_order("m2", "Uber Eats", f"{w1.isoformat()}T19:00:00-06:00", "order", 10.0)
+    db.add_delivery_order("m3", "DoorDash", f"{w1.isoformat()}T19:00:00-06:00", "order", 8.0)
     body = client.get("/api/spend?weeks=4").json()
     by_service = {(r["kind"], r["service"]): r["amount"] for r in body["by_service"]}
     assert by_service[("delivery", "Uber Eats")] == 25.0
@@ -450,17 +467,46 @@ def test_spend_by_service_matches_aggregate_across_the_window(temp_db_path):
     assert body["by_service"][0]["service"] == "Uber Eats"
 
 
+def test_spend_includes_social_spend_in_weeks_by_service_and_items(temp_db_path):
+    """Social is the one category whose aggregation path differs from delivery
+    and rides (the _social_counts filter, the ("social", "Social") aggregation
+    branch, and title -> items.label) — must be exercised directly, not just
+    implied by delivery/ride coverage."""
+    client = _client(temp_db_path)
+    import database as db
+    import metrics
+    from app.scorecard import _local_today
+    this_monday = metrics.week_bounds(_local_today())[0]
+    w1 = this_monday - datetime.timedelta(weeks=1)
+    db.add_manual_social_event(
+        "manual:dinner", "Dinner out", f"{w1.isoformat()}T12:00:00", f"{w1.isoformat()}T13:00:00", amount=25.0
+    )
+    body = client.get("/api/spend?weeks=4").json()
+    week_row = next(w for w in body["weeks"] if w["week_start"] == w1.isoformat())
+    assert week_row["social"] == 25.0
+    assert {"kind": "social", "service": "Social", "amount": 25.0} in body["by_service"]
+    assert any(
+        i["kind"] == "social" and i["service"] == "Social" and i["label"] == "Dinner out" and i["amount"] == 25.0
+        for i in body["items"]
+    )
+
+
 def test_spend_excludes_confirmed_work_ride_from_weeks_by_service_and_items(temp_db_path):
     client = _client(temp_db_path)
     import database as db
-    db.add_ride("r1", "Uber", "2026-07-15T08:00:00-06:00", "2026-07-15T08:00", "Personal trip", 12.0)
-    db.add_ride("r2", "Lyft", "2026-07-16T08:00:00-06:00", "2026-07-16T08:00", "Work trip", 50.0)
-    rides = db.get_rides_range("2026-07-13", "2026-07-19")
+    import metrics
+    from app.scorecard import _local_today
+    this_monday = metrics.week_bounds(_local_today())[0]
+    w1 = this_monday - datetime.timedelta(weeks=1)
+    db.add_ride("r1", "Uber", f"{w1.isoformat()}T08:00:00-06:00", f"{w1.isoformat()}T08:00", "Personal trip", 12.0)
+    db.add_ride("r2", "Lyft", f"{w1.isoformat()}T09:00:00-06:00", f"{w1.isoformat()}T09:00", "Work trip", 50.0)
+    week_end = w1 + datetime.timedelta(days=6)
+    rides = db.get_rides_range(w1.isoformat(), week_end.isoformat())
     by_subject = {r["subject"]: r["id"] for r in rides}
     db.set_ride_work_override(by_subject["Work trip"], True)  # confirmed work — excluded everywhere
 
     body = client.get("/api/spend?weeks=4").json()
-    week_row = next(w for w in body["weeks"] if w["week_start"] == "2026-07-13")
+    week_row = next(w for w in body["weeks"] if w["week_start"] == w1.isoformat())
     assert week_row["rides"] == 12.0
     assert not any(r["service"] == "Lyft" for r in body["by_service"])
     assert not any(i["service"] == "Lyft" for i in body["items"])
@@ -470,7 +516,11 @@ def test_spend_excludes_confirmed_work_ride_from_weeks_by_service_and_items(temp
 def test_spend_items_newest_first_and_capped_at_100(temp_db_path):
     client = _client(temp_db_path)
     import database as db
-    base = datetime.datetime(2026, 7, 13, 12, 0, 0)
+    import metrics
+    from app.scorecard import _local_today
+    this_monday = metrics.week_bounds(_local_today())[0]
+    w1 = this_monday - datetime.timedelta(weeks=1)
+    base = datetime.datetime.combine(w1, datetime.time(12, 0, 0))
     for i in range(105):
         at = (base + datetime.timedelta(minutes=i)).isoformat()
         db.add_delivery_order(f"m{i}", "Uber Eats", at, f"order {i}", 1.0)
@@ -485,3 +535,24 @@ def test_spend_weeks_param_clamps_1_to_52(temp_db_path):
     client = _client(temp_db_path)
     assert len(client.get("/api/spend?weeks=0").json()["weeks"]) == 1
     assert len(client.get("/api/spend?weeks=999").json()["weeks"]) == 52
+
+
+def test_spend_includes_the_in_progress_current_week(temp_db_path):
+    """The window's final entry must be the current, still-in-progress week —
+    not the last completed one. history()'s "completed weeks only" rationale
+    (a partial week corrupts streaks) doesn't transfer to money: an order
+    placed today has to be visible in Money immediately, same as it already
+    is in Today's "Spent today" and Week's "Spent this week"."""
+    client = _client(temp_db_path)
+    import database as db
+    import metrics
+    from app.scorecard import _local_today
+    today = _local_today()
+    this_monday = metrics.week_bounds(today)[0]
+    db.add_delivery_order("m-today", "Uber Eats", f"{today.isoformat()}T10:00:00-06:00", "order", 9.5)
+    body = client.get("/api/spend?weeks=4").json()
+    current_week = body["weeks"][-1]
+    assert current_week["week_start"] == this_monday.isoformat()
+    assert current_week["delivery"] == 9.5
+    assert {"kind": "delivery", "service": "Uber Eats", "amount": 9.5} in body["by_service"]
+    assert any(i["label"] == "order" and i["amount"] == 9.5 for i in body["items"])

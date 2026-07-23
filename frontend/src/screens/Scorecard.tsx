@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../api";
-import { addDays, mondayOf, targetLabel, type SpendRow } from "../lib";
+import { addDays, mondayOf, money, targetLabel, type SpendRow } from "../lib";
 import WeekNav from "../components/WeekNav";
 import SpendSubtotals from "../components/SpendSubtotals";
 
@@ -84,9 +84,9 @@ export default function Scorecard() {
                   : m.direction === "ceiling" ? "Over target" : "Not there yet"}
                 {streak > 0 && weekStart === null && ` · ${streak}-week streak`}
                 {key === "delivery" && card.delivery_spend > 0 &&
-                  ` · $${card.delivery_spend.toFixed(2).replace(/\.00$/, "")} spent`}
+                  ` · ${money(card.delivery_spend)} spent`}
                 {key === "social" && card.social_spend > 0 &&
-                  ` · $${card.social_spend.toFixed(2).replace(/\.00$/, "")} spent`}
+                  ` · ${money(card.social_spend)} spent`}
               </p>
             </section>
           );

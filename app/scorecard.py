@@ -135,11 +135,16 @@ SPEND_ITEMS_CAP = 100
 def spend(weeks: int) -> dict:
     """Windowed money view for the Insights tab: a dense per-week category
     series (oldest-first, zero weeks included), the same weeks aggregated into
-    per-service totals, and a capped, newest-first itemized list. Mirrors
-    history()'s "last N completed weeks" convention — the in-progress current
-    week is not included."""
+    per-service totals, and a capped, newest-first itemized list.
+
+    Unlike history() — which excludes the in-progress current week because a
+    partial week corrupts streaks — that rationale doesn't apply to money, so
+    the window here is the current week plus the preceding weeks-1, with the
+    current week last. An order placed an hour ago must show up in Money the
+    same as it already does in Today's "Spent today" and Week's "Spent this
+    week"."""
     this_monday = metrics.week_bounds(_local_today())[0]
-    week_starts = [this_monday - timedelta(weeks=i) for i in range(weeks, 0, -1)]
+    week_starts = [this_monday - timedelta(weeks=i) for i in range(weeks - 1, -1, -1)]
     window_start = week_starts[0].isoformat()
     window_end = metrics.week_bounds(week_starts[-1])[1].isoformat()
 
@@ -157,10 +162,10 @@ def spend(weeks: int) -> dict:
         week_social = [e for e in social if ws_iso <= e["end_at"][:10] <= we_iso]
         delivery_total = round(sum(o["amount"] or 0 for o in week_orders), 2)
         rides_total = round(sum(r["amount"] or 0 for r in week_rides), 2)
-        social_total = round(sum(e["amount"] or 0 for e in week_social), 2)
+        social_raw = sum(e["amount"] or 0 for e in week_social)
         weeks_out.append({
             "week_start": ws_iso, "delivery": delivery_total,
-            "rides": rides_total, "social": social_total,
+            "rides": rides_total, "social": round(social_raw, 2),
         })
         for o in week_orders:
             key = ("delivery", o["service"])
@@ -168,9 +173,12 @@ def spend(weeks: int) -> dict:
         for r in week_rides:
             key = ("ride", r["service"])
             by_service[key] = by_service.get(key, 0) + (r["amount"] or 0)
-        if social_total:
+        if social_raw:
             key = ("social", "Social")
-            by_service[key] = by_service.get(key, 0) + social_total
+            # Accumulate the raw amount here, not the already-rounded weekly
+            # total above — delivery/rides do the same, and rounding twice
+            # can drift the by_service Total a cent from the hero total.
+            by_service[key] = by_service.get(key, 0) + social_raw
 
     by_service_out = [
         {"kind": kind, "service": service, "amount": round(amount, 2)}

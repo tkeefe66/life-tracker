@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayLabel, targetLabel, weekLabel } from "./lib";
+import { dayLabel, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel } from "./lib";
 
 describe("weekLabel", () => {
   it("formats a Monday week start as a Mon–Sun range", () => {
@@ -138,8 +138,6 @@ describe("buildSocialPatch", () => {
   });
 });
 
-import { money, serviceLabel, subtotalsFromDay } from "./lib";
-
 describe("serviceLabel", () => {
   it("appends 'rides' to a ride service", () => {
     expect(serviceLabel("ride", "Uber")).toBe("Uber rides");
@@ -211,5 +209,27 @@ describe("subtotalsFromDay", () => {
       social_events: [{ amount: null }],
     });
     expect(rows).toEqual([]);
+  });
+
+  it("excludes a social event whose end_at hasn't happened yet", () => {
+    const now = new Date("2026-07-22T12:00:00").getTime();
+    const rows = subtotalsFromDay({
+      deliveries: [],
+      rides: [],
+      social_events: [
+        { amount: 25, end_at: "2026-07-22T08:00:00" }, // already ended — counted
+        { amount: 80, end_at: "2026-07-22T21:00:00" }, // still to come — excluded
+      ],
+    }, now);
+    expect(rows).toEqual([{ kind: "social", service: "Social", amount: 25 }]);
+  });
+
+  it("still counts a social event with no end_at (backward-compatible default)", () => {
+    const rows = subtotalsFromDay({
+      deliveries: [],
+      rides: [],
+      social_events: [{ amount: 25 }],
+    });
+    expect(rows).toEqual([{ kind: "social", service: "Social", amount: 25 }]);
   });
 });
