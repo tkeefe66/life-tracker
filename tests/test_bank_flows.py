@@ -764,3 +764,26 @@ def test_triage_signature_cashapp_no_space_variant():
     t = txn("a", 1, "2026-07-01", -20.0, payee="CASHAPP*JOHN DOE",
             description="")
     assert bank_flows.triage_signature(t) == "cash app"
+
+
+def test_classify_flow_never_returns_refund():
+    """`refund` is a user-only verdict (spec §1) — the classifier must never
+    produce it, across a representative grid of roles, pairing, amount sign,
+    and income-hint match. This is the guard that keeps refund user-only:
+    it must fail if a future "helpful" classifier change starts inventing it."""
+    import itertools
+
+    roles = ("spending", "credit_card", "savings", "investment", "unknown")
+    for role, partner_role, paired, amount, hint_match in itertools.product(
+        roles, roles + (None,), (True, False), (150.0, -150.0), (True, False)
+    ):
+        hints = HINTS if hint_match else []
+        t = txn("a", 1, "2026-07-01", amount,
+                 payee="acme payroll" if hint_match else "some merchant",
+                 description="PAYMENT - THANK YOU")
+        flow = bank_flows.classify_flow(t, role, partner_role, paired, hints)
+        assert flow != "refund", (
+            f"classify_flow returned 'refund' for role={role!r}, "
+            f"partner_role={partner_role!r}, paired={paired}, amount={amount}, "
+            f"hint_match={hint_match}"
+        )

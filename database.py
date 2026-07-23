@@ -602,6 +602,7 @@ def _init_v2_tables():
                 user_flow TEXT,
                 pair_id TEXT,
                 ambiguous {bool_t} NOT NULL DEFAULT FALSE,
+                user_note TEXT,
                 detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -633,6 +634,15 @@ def _init_v2_tables():
                                ("source", "TEXT DEFAULT 'gcal'"), ("amount", "REAL")):
                 if name not in cols:
                     c.execute(f"ALTER TABLE calendar_events ADD COLUMN {name} {defn}")
+
+        # user_note: nullable TEXT on bank_transactions. A user column — the sync
+        # never reads or writes it (Override + Learning rule 3).
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS user_note TEXT")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(bank_transactions)").fetchall()]
+            if "user_note" not in cols:
+                c.execute("ALTER TABLE bank_transactions ADD COLUMN user_note TEXT")
 
 
 # ── Check-ins ─────────────────────────────────────────────────────────────────
@@ -1057,7 +1067,11 @@ def delete_expired_sessions(now_iso):
 # columns, and resolution happens in SQL so every caller agrees.
 
 BANK_ROLES = ("spending", "bills", "savings", "investment", "credit_card", "unknown")
-BANK_FLOWS = ("spending", "transfer", "card_payment", "investment", "income", "inflow_unknown")
+BANK_FLOWS = ("spending", "transfer", "card_payment", "investment", "income", "inflow_unknown",
+              "refund")
+# "refund" is a user-only verdict — bank_flows.classify_flow must never produce it
+# (see spec §1 and the guard test in tests/test_bank_flows.py). It arrives only
+# via user_flow, through the same override writers as every other flow.
 
 
 def upsert_bank_account(simplefin_id, name, org="", kind=""):
@@ -1170,18 +1184,36 @@ def set_bank_transactions_derived_bulk(items):
             )
 
 
-def set_bank_flow_override(simplefin_id, user_flow):
+_NOTE_UNSET = object()  # sentinel: distinguishes "note not passed" from note=None/""
+
+
+def set_bank_flow_override(simplefin_id, user_flow, note=_NOTE_UNSET):
     """The confirmed user verdict. Returns True iff a row was updated.
 
     Wired up by POST /api/bank/transactions/{id}/flow (triage), so
     COALESCE(user_flow, flow) can resolve to the user's value anywhere
-    resolved_flow is read."""
+    resolved_flow is read.
+
+    `note` defaults to the `_NOTE_UNSET` sentinel: omit it entirely and the
+    stored `user_note` is left untouched (so put-back — flow=None — keeps the
+    note, since it explains the transaction, not the answer). Pass a string
+    and it is trimmed, with an empty/whitespace-only result stored as NULL —
+    so `note=""` is how a caller explicitly clears it. Flow and note are
+    written in the same UPDATE, atomically."""
     if user_flow is not None and user_flow not in BANK_FLOWS:
         raise ValueError(f"unknown flow: {user_flow}")
     p = _p()
     with _cursor(write=True) as c:
-        c.execute(f"UPDATE bank_transactions SET user_flow = {p} WHERE simplefin_id = {p}",
-                  (user_flow, simplefin_id))
+        if note is _NOTE_UNSET:
+            c.execute(f"UPDATE bank_transactions SET user_flow = {p} WHERE simplefin_id = {p}",
+                      (user_flow, simplefin_id))
+        else:
+            note = note.strip() or None if note is not None else None
+            c.execute(
+                f"""UPDATE bank_transactions SET user_flow = {p}, user_note = {p}
+                    WHERE simplefin_id = {p}""",
+                (user_flow, note, simplefin_id),
+            )
         return c.rowcount > 0
 
 
@@ -1253,7 +1285,7 @@ def set_bank_flow_overrides_bulk(simplefin_ids, user_flow):
 _BANK_TXN_SELECT = """
     SELECT t.id, t.simplefin_id, t.account_id, t.posted, t.transacted_at, t.amount,
            t.description, t.payee, t.memo, t.mcc, t.flow, t.user_flow, t.pair_id,
-           t.ambiguous, a.role AS account_role, a.name AS account_name,
+           t.ambiguous, t.user_note, a.role AS account_role, a.name AS account_name,
            COALESCE(t.user_flow, t.flow) AS resolved_flow
     FROM bank_transactions t JOIN bank_accounts a ON a.id = t.account_id
 """

@@ -291,3 +291,72 @@ def test_bulk_flow_override_none_clears(temp_db_path):
 
     rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2026-06-01", "2026-08-01")}
     assert rows["a"]["user_flow"] is None
+
+
+# ── refund flow + user_note ────────────────────────────────────────────────────
+
+def test_refund_is_a_valid_override_flow(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("a", acct["id"], "2026-07-01", "2026-07-01", 40.0, "X", "", "", None)
+    db.set_bank_transaction_derived("a", "inflow_unknown", None, False)
+
+    updated = db.set_bank_flow_override("a", "refund")
+    assert updated is True
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2026-06-01", "2026-08-01")}
+    assert rows["a"]["user_flow"] == "refund"
+    assert rows["a"]["resolved_flow"] == "refund"
+
+
+def test_set_bank_flow_override_writes_flow_and_note_together(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("a", acct["id"], "2026-07-01", "2026-07-01", 40.0, "X", "", "", None)
+    db.set_bank_transaction_derived("a", "inflow_unknown", None, False)
+
+    db.set_bank_flow_override("a", "refund", note="  Amex return — shoes  ")
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2026-06-01", "2026-08-01")}
+    assert rows["a"]["user_flow"] == "refund"
+    assert rows["a"]["user_note"] == "Amex return — shoes"
+
+
+def test_set_bank_flow_override_omitted_note_preserves_stored_note(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("a", acct["id"], "2026-07-01", "2026-07-01", 40.0, "X", "", "", None)
+    db.set_bank_transaction_derived("a", "inflow_unknown", None, False)
+    db.set_bank_flow_override("a", "refund", note="Amex return")
+
+    # Put-back: flow cleared, note not mentioned — must survive.
+    db.set_bank_flow_override("a", None)
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2026-06-01", "2026-08-01")}
+    assert rows["a"]["user_flow"] is None
+    assert rows["a"]["user_note"] == "Amex return"
+
+
+def test_set_bank_flow_override_empty_note_clears_it(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("a", acct["id"], "2026-07-01", "2026-07-01", 40.0, "X", "", "", None)
+    db.set_bank_transaction_derived("a", "inflow_unknown", None, False)
+    db.set_bank_flow_override("a", "refund", note="Amex return")
+
+    db.set_bank_flow_override("a", "income", note="")
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2026-06-01", "2026-08-01")}
+    assert rows["a"]["user_flow"] == "income"
+    assert rows["a"]["user_note"] is None
+
+
+def test_user_note_key_present_and_none_by_default(temp_db_path):
+    import database as db
+    acct = _account(db, role="spending")
+    db.upsert_bank_transaction("a", acct["id"], "2026-07-01", "2026-07-01", -10.0, "X", "", "", None)
+    db.set_bank_transaction_derived("a", "spending", None, False)
+
+    rows = db.get_bank_transactions_range("2026-06-01", "2026-08-01")
+    assert "user_note" in rows[0]
+    assert rows[0]["user_note"] is None
