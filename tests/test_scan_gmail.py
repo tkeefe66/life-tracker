@@ -487,6 +487,99 @@ def test_ride_dedupe_skip_when_already_stored(temp_db_path, monkeypatch):
     assert len(ai_calls) == 1  # classification only happens once, on first ingestion
 
 
+def test_ride_three_email_chain_single_run_latest_wins(temp_db_path, monkeypatch):
+    """Charge summary, receipt, and a later tip adjustment for one trip arrive in
+    a single scan, newest-first (as Gmail's messages.list actually returns them).
+    Exactly one ride must be stored, carrying the chronologically latest amount."""
+    import database as db
+    from jobs import scan_gmail
+
+    receipt = {"gmail_message_id": "ride-receipt", "sender": "noreply@uber.com",
+               "subject": "Your Sunday morning trip with Uber",
+               "ordered_at": "2026-07-19T04:10:00-06:00",
+               "snippet": "Jul 19, 2026 4:03 AM Thanks for riding with Uber Total $14.00"}
+    charge_summary = {"gmail_message_id": "ride-charge", "sender": "noreply@uber.com",
+                       "subject": "Your Sunday morning trip with Uber",
+                       "ordered_at": "2026-07-19T04:15:00-06:00",
+                       "snippet": "Jul 19, 2026 4:03 AM charge summary Total $16.50"}
+    tip_adjustment = {"gmail_message_id": "ride-tip", "sender": "noreply@uber.com",
+                       "subject": "Your Sunday morning trip with Uber",
+                       "ordered_at": "2026-07-19T04:20:00-06:00",
+                       "snippet": "Jul 19, 2026 4:03 AM Tip adjustment Total $18.00"}
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    monkeypatch.setattr(scan_gmail.ai_metrics, "classify_work_ride",
+                        lambda *a, **k: {"is_work": False, "confidence": 0.0})
+    # Newest-first, exactly as Gmail's messages.list returns them.
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates",
+                        lambda: [tip_adjustment, charge_summary, receipt])
+
+    scan_gmail.run()
+
+    rides = db.get_rides_range("2026-07-18", "2026-07-20")
+    assert len(rides) == 1
+    assert rides[0]["amount"] == 18.00  # chronologically latest email's amount wins
+
+
+def test_ride_later_scan_with_newer_email_overwrites_amount(temp_db_path, monkeypatch):
+    """A genuinely newer email for an already-stored ride, arriving in a later
+    scan, must overwrite the stored amount."""
+    import database as db
+    from jobs import scan_gmail
+
+    receipt = {"gmail_message_id": "ride-receipt", "sender": "noreply@uber.com",
+               "subject": "Your Sunday morning trip with Uber",
+               "ordered_at": "2026-07-19T04:10:00-06:00",
+               "snippet": "Jul 19, 2026 4:03 AM Thanks for riding with Uber Total $14.00"}
+    tip_adjustment = {"gmail_message_id": "ride-tip", "sender": "noreply@uber.com",
+                       "subject": "Your Sunday morning trip with Uber",
+                       "ordered_at": "2026-07-19T04:20:00-06:00",
+                       "snippet": "Jul 19, 2026 4:03 AM Tip adjustment Total $18.00"}
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    monkeypatch.setattr(scan_gmail.ai_metrics, "classify_work_ride",
+                        lambda *a, **k: {"is_work": False, "confidence": 0.0})
+
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [receipt])
+    scan_gmail.run()
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [tip_adjustment])
+    scan_gmail.run()
+
+    rides = db.get_rides_range("2026-07-18", "2026-07-20")
+    assert len(rides) == 1
+    assert rides[0]["amount"] == 18.00  # newer email's amount overwrote the stored one
+
+
+def test_ride_at_immutable_when_followup_lands_on_next_calendar_day(temp_db_path, monkeypatch):
+    """Regression guard: a follow-up email for the same ride that happens to be
+    timestamped the next calendar day must still win the amount comparison, but
+    must NOT move the stored ride_at — otherwise the ride silently re-buckets
+    into a different day/week in get_rides_range."""
+    import database as db
+    from jobs import scan_gmail
+
+    receipt = {"gmail_message_id": "ride-receipt", "sender": "noreply@uber.com",
+               "subject": "Your Sunday night trip with Uber",
+               "ordered_at": "2026-07-19T23:50:00-06:00",
+               "snippet": "Jul 19, 2026 11:47 PM Thanks for riding with Uber Total $14.00"}
+    # Same trip's tip adjustment lands 15 minutes later, past local midnight.
+    tip_adjustment = {"gmail_message_id": "ride-tip", "sender": "noreply@uber.com",
+                       "subject": "Your Sunday night trip with Uber",
+                       "ordered_at": "2026-07-20T00:05:00-06:00",
+                       "snippet": "Jul 19, 2026 11:47 PM Tip adjustment Total $18.00"}
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    monkeypatch.setattr(scan_gmail.ai_metrics, "classify_work_ride",
+                        lambda *a, **k: {"is_work": False, "confidence": 0.0})
+
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [receipt])
+    scan_gmail.run()
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [tip_adjustment])
+    scan_gmail.run()
+
+    rides = db.get_rides_range("2026-07-19", "2026-07-19")
+    assert len(rides) == 1  # ride still buckets into its original day
+    assert rides[0]["amount"] == 18.00  # tip adjustment's amount still won
+    assert rides[0]["ride_at"].startswith("2026-07-19")  # ride_at never moved to the 20th
+
+
 def test_query_uses_union_of_delivery_and_ride_domains():
     from services import gmail_service
     q = gmail_service._query()

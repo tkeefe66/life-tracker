@@ -129,3 +129,11 @@ deferred to the Spend-surfaces project.
 
 - Work-trip date ranges, ride targets/scoring, the Spend tab and richer spend
   views (separate project), distance/duration parsing, non-Uber/Lyft services.
+
+**Known limitation:** when a ride's snippet has no parseable timestamp, the
+fallback cluster key is `(service, day, subject)` instead of the parsed ride
+time. Two genuinely distinct trips on the same day with an identical subject
+template and no parseable time will merge into one row. This is the
+deliberate tradeoff that makes deduping multiple emails of a single trip
+possible without a reliable per-trip timestamp — see
+`test_ride_fallback_key_dedupes_without_amount_in_key` in `tests/test_scan_gmail.py`.

@@ -894,19 +894,14 @@ def find_ride_by_key(service, ride_key):
         return dict(row) if row else None
 
 
-def set_ride_amount(ride_id, amount, ride_at=None):
-    """Updates amount. When `ride_at` is given, also updates it — the caller uses
-    this to record which candidate's timestamp currently backs the stored amount,
-    so a later comparison (newer email wins) stays correct across repeated scans."""
+def set_ride_amount(ride_id, amount):
+    """Updates amount only. `ride_at` is immutable after insert — get_rides_range
+    buckets rides by substr(ride_at, 1, 10), so mutating it could silently move a
+    ride into a different day/week when a follow-up email for the same trip lands
+    on the next calendar day."""
     p = _p()
     with _cursor(write=True) as c:
-        if ride_at is not None:
-            c.execute(
-                f"UPDATE rides SET amount = {p}, ride_at = {p} WHERE id = {p}",
-                (amount, ride_at, ride_id),
-            )
-        else:
-            c.execute(f"UPDATE rides SET amount = {p} WHERE id = {p}", (amount, ride_id))
+        c.execute(f"UPDATE rides SET amount = {p} WHERE id = {p}", (amount, ride_id))
 
 
 def set_ride_classification(ride_id, is_work, confidence):

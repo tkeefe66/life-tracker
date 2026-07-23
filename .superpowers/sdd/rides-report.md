@@ -385,3 +385,102 @@ $ npm run build
 No behavior changed beyond the issues listed above; the spec's Out-of-Scope list
 stays binding. `database.py` remains the only file with SQL, `ai_metrics.py` the
 only Claude caller, `MODEL` untouched.
+
+## Final review fix — `ride_at` immutability (2026-07-22)
+
+A re-review approved everything from the prior wave except one thing: an
+earlier fix's guard (`cand["ordered_at"] > existing["ride_at"]`, comparing a
+candidate email's timestamp against the winning row's stored ride timestamp)
+was correct, but it also **wrote `ride_at` back** to the winning candidate's
+timestamp via `db.set_ride_amount(id, amount, ride_at)`. That write-back is
+the problem: `database.get_rides_range` buckets rides by
+`substr(ride_at, 1, 10)`, which drives Today's per-day list and the weekly
+`rides_count`/`rides_spend`. Moving `ride_at` means a follow-up email for the
+same trip that happens to land on the next calendar day can retroactively
+move a ride out of one week's totals and into the next — a silent, wrong
+change to a week the user may have already reviewed.
+
+### Change
+
+- `database.set_ride_amount(ride_id, amount)` — dropped the `ride_at`
+  parameter and its conditional SET clause entirely. Updates `amount` only.
+- `jobs/scan_gmail.py` — the ride-cluster branch still calls
+  `db.set_ride_amount(existing["id"], amount)`, now with no timestamp arg.
+  The `cand["ordered_at"] > existing["ride_at"]` guard is untouched.
+
+### Why the guard stays correct without the write-back
+
+Gmail's `messages.list` returns newest-first. Within one scan, the newest
+email in a cluster is processed first and performs the `INSERT` — that
+INSERT is what fixes `ride_at` for the life of the row. Every older sibling
+processed afterward in the same scan then compares its own (older)
+`ordered_at` against that fixed `ride_at` and fails the strict `>` guard, so
+it's correctly skipped — the latest-at-insert-time amount already won and
+stays put.
+
+A genuinely newer email arriving in a *later* scan has `ordered_at` greater
+than the still-unchanged `ride_at`, so the guard still fires and the amount
+updates — this is exactly the case the guard exists for, and it never
+depended on `ride_at` moving.
+
+Repeated scans stay stable because the comparison basis (`ride_at`) never
+moves: once fixed at insert, it's the same fixed point every scan compares
+against, so re-running a scan with a message set that already lost the
+comparison once can't re-trigger an overwrite, and a message that already
+won can't be beaten by an older message re-appearing later. The only
+behavior that changes versus the write-back version is exactly the bug this
+fix removes: `ride_at`, and therefore which day/week a ride is bucketed into
+by `get_rides_range`, is now fixed at insert time and never moves again.
+
+### Tests added (`tests/test_scan_gmail.py`)
+
+1. `test_ride_three_email_chain_single_run_latest_wins` — charge summary,
+   receipt, and a later tip adjustment for one trip, three amounts, fed
+   newest-first in one scan (real Gmail order). Asserts exactly one ride
+   stored, carrying the chronologically latest amount.
+2. `test_ride_later_scan_with_newer_email_overwrites_amount` — one scan with
+   an initial email, a second scan with a genuinely newer email for the same
+   cluster. Asserts the amount updates across scans.
+3. `test_ride_at_immutable_when_followup_lands_on_next_calendar_day` — a
+   follow-up email timestamped the next calendar day wins the amount
+   comparison in a second scan. Asserts the stored `ride_at` still starts
+   with the *original* day, and that `get_rides_range` for the original day
+   still returns the ride (with the updated amount) — this is the exact
+   regression the fix exists to prevent.
+
+Confirmed test 3 actually exercises the bug: ran it against the pre-fix code
+first (write-back still in place) and it failed with `assert 0 == 1` —
+`get_rides_range` for the original day came back empty because the write-back
+had moved `ride_at` into the next day, exactly as the review predicted. Only
+after applying the fix does it pass.
+
+### Spec update
+
+Appended a "Known limitation" note to the Out of Scope section of
+`docs/superpowers/specs/2026-07-22-rides-tracker-design.md`: when a ride's
+snippet has no parseable timestamp, the fallback cluster key is
+`(service, day, subject)`, so two genuinely distinct same-day trips sharing
+an identical subject template and no parseable time will merge into one row
+— the deliberate tradeoff needed to dedupe multiple emails of a single trip
+without a reliable per-trip timestamp.
+
+### Verification
+
+```
+$ source venv/bin/activate && pytest tests/ -v
+======================= 164 passed, 2 warnings in 2.28s ========================
+```
+(161 baseline + 3 new, all in `tests/test_scan_gmail.py`.)
+
+```
+$ cd frontend && npm test -- --run
+ Test Files  1 passed (1)
+      Tests  20 passed (20)
+
+$ npm run build
+✓ 40 modules transformed.
+✓ built in 247ms
+```
+
+No behavior changed beyond the write-back removal. `database.py` remains the
+only file with SQL, `ai_metrics.py` untouched.

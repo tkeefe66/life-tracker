@@ -49,8 +49,11 @@ def run():
                     # wins" silently inverts into "whichever is processed last wins",
                     # and since the losing candidate's message id is never recorded,
                     # it would keep re-pinning the wrong amount on every future scan.
+                    # ride_at itself is never rewritten (see set_ride_amount) — the
+                    # comparison basis stays fixed across repeated scans, and a ride
+                    # never re-buckets into a different day/week after insert.
                     if amount is not None and cand["ordered_at"] > existing["ride_at"]:
-                        db.set_ride_amount(existing["id"], amount, cand["ordered_at"])
+                        db.set_ride_amount(existing["id"], amount)
                     continue
                 if db.add_ride(cand["gmail_message_id"], ride_service, cand["ordered_at"],
                                key, cand["subject"], amount):
