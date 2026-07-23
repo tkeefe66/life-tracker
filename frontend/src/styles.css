@@ -195,7 +195,16 @@ button.item:active { transform: scale(0.985); }
   color: var(--ink-2);
 }
 
-.quiet + .quiet { border-top: 1px solid var(--line); }
+/* Social rows are wrapped in .quiet-row (for the inline editor slot below the
+   button), so plain adjacent-sibling .quiet + .quiet no longer spans the
+   delivery list ↔ social rows boundary or between two social rows — cover
+   every combination of the two. */
+.quiet + .quiet,
+.quiet + .quiet-row,
+.quiet-row + .quiet,
+.quiet-row + .quiet-row {
+  border-top: 1px solid var(--line);
+}
 .quiet .when { margin-left: auto; font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
 .quiet.empty { color: var(--muted); font-size: 0.85rem; }
 

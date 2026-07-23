@@ -691,11 +691,20 @@ def _social_true():
     return "TRUE" if USE_POSTGRES else "1"
 
 
+def _social_rows(rows):
+    """Cast the resolved is_social column to a real bool — SQLite returns 0/1 ints."""
+    out = [dict(r) for r in rows]
+    for r in out:
+        r["is_social"] = bool(r["is_social"])
+    return out
+
+
 def get_social_events_range(start_day, end_day):
     p = _p()
     with _cursor() as c:
         c.execute(
-            f"""SELECT gcal_event_id, COALESCE(user_title, title) AS title, start_at, end_at,
+            f"""SELECT gcal_event_id, COALESCE(user_title, title) AS title,
+                       COALESCE(user_is_social, is_social) AS is_social, start_at, end_at,
                        source, amount
                 FROM calendar_events
                 WHERE COALESCE(user_is_social, is_social) = {_social_true()}
@@ -703,21 +712,22 @@ def get_social_events_range(start_day, end_day):
                 ORDER BY start_at""",
             (start_day, end_day),
         )
-        return [dict(r) for r in c.fetchall()]
+        return _social_rows(c.fetchall())
 
 
 def get_events_for_day(day):
     p = _p()
     with _cursor() as c:
         c.execute(
-            f"""SELECT gcal_event_id, COALESCE(user_title, title) AS title, start_at, end_at,
+            f"""SELECT gcal_event_id, COALESCE(user_title, title) AS title,
+                       COALESCE(user_is_social, is_social) AS is_social, start_at, end_at,
                        source, amount
                 FROM calendar_events
                 WHERE COALESCE(user_is_social, is_social) = {_social_true()} AND substr(start_at, 1, 10) = {p}
                 ORDER BY start_at""",
             (day,),
         )
-        return [dict(r) for r in c.fetchall()]
+        return _social_rows(c.fetchall())
 
 
 def add_manual_social_event(event_id, title, start_at, end_at, amount=None):

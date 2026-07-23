@@ -188,6 +188,19 @@ def test_post_social_creates_manual_event(temp_db_path):
     assert ev["source"] == "manual"
     assert ev["amount"] == 12.5
     assert ev["gcal_event_id"] == body["gcal_event_id"]
+    assert ev["is_social"] is True  # editor initializes its checkbox from this, not a hardcoded guess
+
+
+def test_post_social_increments_scorecard_social_count(temp_db_path):
+    """Plan-required test: creating a manual event must count toward the week
+    immediately, not just once its synthetic 12:00-13:00 span has 'occurred' —
+    robust to whatever time of day the suite runs."""
+    client = _client(temp_db_path)
+    before = client.get("/api/scorecard").json()["metrics"]["social"]["count"]
+    resp = client.post("/api/social", json={"name": "Trivia night"})
+    assert resp.status_code == 200
+    after = client.get("/api/scorecard").json()["metrics"]["social"]["count"]
+    assert after == before + 1
 
 
 def test_post_social_rejects_future_date(temp_db_path):
@@ -246,6 +259,38 @@ def test_patch_social_rejects_negative_amount(temp_db_path):
     created = client.post("/api/social", json={"name": "Party"}).json()
     resp = client.patch(f"/api/social/{created['gcal_event_id']}", json={"amount": -1})
     assert resp.status_code == 422
+
+
+def test_patch_social_clears_amount_with_explicit_null(temp_db_path):
+    client = _client(temp_db_path)
+    created = client.post("/api/social", json={"name": "Party", "amount": 300}).json()
+    event_id = created["gcal_event_id"]
+    resp = client.patch(f"/api/social/{event_id}", json={"amount": None})
+    assert resp.status_code == 200
+    import database as db
+    assert db.get_event(event_id)["amount"] is None
+
+
+def test_patch_social_omitted_amount_leaves_it_untouched(temp_db_path):
+    client = _client(temp_db_path)
+    created = client.post("/api/social", json={"name": "Party", "amount": 300}).json()
+    event_id = created["gcal_event_id"]
+    resp = client.patch(f"/api/social/{event_id}", json={"title": "Party v2"})
+    assert resp.status_code == 200
+    import database as db
+    assert db.get_event(event_id)["amount"] == 300
+
+
+def test_patch_social_clears_title_override_with_explicit_null(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    db.upsert_calendar_event("ev1", "Dinner", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    db.set_event_overrides("ev1", {"user_title": "Sam's birthday dinner"})
+    resp = client.patch("/api/social/ev1", json={"title": None})
+    assert resp.status_code == 200
+    row = db.get_event("ev1")
+    assert row["user_title"] is None
 
 
 def test_delete_social_manual_event(temp_db_path):

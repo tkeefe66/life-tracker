@@ -118,6 +118,21 @@ def test_events_for_day(temp_db_path):
     assert db.get_events_for_day("2026-07-16") == []
 
 
+def test_events_for_day_and_range_expose_resolved_is_social(temp_db_path):
+    """The editor needs the checkbox's true initial state, not a hardcoded guess."""
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev1", "Dinner", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    day_row = db.get_events_for_day("2026-07-15")[0]
+    assert day_row["is_social"] is True
+    range_row = db.get_social_events_range("2026-07-14", "2026-07-20")[0]
+    assert range_row["is_social"] is True
+    # User override flips the resolved verdict too.
+    db.set_event_overrides("ev1", {"user_is_social": True})
+    day_row = db.get_events_for_day("2026-07-15")[0]
+    assert day_row["is_social"] is True
+
+
 def test_targets_seed_and_update(temp_db_path):
     db = _db(temp_db_path)
     db.seed_default_targets()

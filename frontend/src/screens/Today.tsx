@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
-import { addDays, targetLabel } from "../lib";
+import { addDays, buildSocialPatch, targetLabel } from "../lib";
 import DayNav from "../components/DayNav";
 
 interface SocialEvent {
@@ -10,6 +10,7 @@ interface SocialEvent {
   end_at: string;
   source: string;
   amount: number | null;
+  is_social: boolean;
 }
 
 interface TodayData {
@@ -50,6 +51,9 @@ export default function Today() {
   const [editTitle, setEditTitle] = useState("");
   const [editIsSocial, setEditIsSocial] = useState(true);
   const [editAmount, setEditAmount] = useState("");
+  const [editLoaded, setEditLoaded] = useState<{ title: string; isSocial: boolean; amount: number | null }>({
+    title: "", isSocial: true, amount: null,
+  });
 
   const refresh = useCallback(() => {
     apiGet<TodayData>(`/today${selected ? `?date=${selected}` : ""}`)
@@ -106,6 +110,7 @@ export default function Today() {
   };
 
   const openAddSocial = () => {
+    setEditingId(null);
     setSocialName("");
     setSocialAmount("");
     setAddingSocial(true);
@@ -127,10 +132,12 @@ export default function Today() {
   };
 
   const openEditSocial = (e: SocialEvent) => {
+    setAddingSocial(false);
     setEditingId(e.gcal_event_id);
     setEditTitle(e.title);
-    setEditIsSocial(true);
+    setEditIsSocial(e.is_social);
     setEditAmount(e.amount !== null ? String(e.amount) : "");
+    setEditLoaded({ title: e.title, isSocial: e.is_social, amount: e.amount });
   };
 
   const cancelEditSocial = () => setEditingId(null);
@@ -140,8 +147,19 @@ export default function Today() {
     const title = editTitle.trim();
     if (!title) return;
     try {
-      const amount = editAmount.trim() === "" ? undefined : Number(editAmount);
-      await apiSend("PATCH", `/social/${editingId}`, { title, is_social: editIsSocial, amount });
+      // Only fields the user actually changed — an untouched checkbox or title
+      // must never manufacture an override the user never made.
+      const patch = buildSocialPatch({
+        loadedTitle: editLoaded.title,
+        loadedIsSocial: editLoaded.isSocial,
+        loadedAmount: editLoaded.amount,
+        title: editTitle,
+        isSocial: editIsSocial,
+        amountText: editAmount,
+      });
+      if (Object.keys(patch).length > 0) {
+        await apiSend("PATCH", `/social/${editingId}`, patch);
+      }
       setEditingId(null);
       refresh();
     } catch (e) {
@@ -227,11 +245,11 @@ export default function Today() {
         </p>
       ))}
       {data.social_events.map((e) => (
-        <div key={e.gcal_event_id}>
+        <div className="quiet-row" key={e.gcal_event_id}>
           <button className="quiet quiet-btn" onClick={() => openEditSocial(e)}>
             <span>{e.title}</span>
             <span className="when">
-              {e.amount ? `$${e.amount.toFixed(2).replace(/\.00$/, "")}` : e.source === "manual" ? "manual" : "counted as social"}
+              {e.amount !== null ? `$${e.amount.toFixed(2).replace(/\.00$/, "")}` : e.source === "manual" ? "manual" : "counted as social"}
             </span>
           </button>
           {editingId === e.gcal_event_id && (

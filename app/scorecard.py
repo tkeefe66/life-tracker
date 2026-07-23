@@ -28,13 +28,19 @@ def _occurred(end_at_iso: str) -> bool:
     return end <= datetime.datetime.now(_tz())
 
 
+def _social_counts(e: dict) -> bool:
+    """Manual events are user-asserted facts, not calendar predictions — they count
+    immediately, unlike detected gcal events which wait for _occurred(end_at)."""
+    return e.get("source") == "manual" or _occurred(e["end_at"])
+
+
 def counts_for_week(week_start: date) -> dict:
     ws, we = metrics.week_bounds(week_start)
     start, end = ws.isoformat(), we.isoformat()
     checkins = db.get_checkins_range(start, end)
     # Deliberate split: scorecard counts social events by end_at (event has occurred),
     # while Today displays by start_at (see db.get_events_for_day) — do not "unify" these.
-    social = [e for e in db.get_social_events_range(start, end) if _occurred(e["end_at"])]
+    social = [e for e in db.get_social_events_range(start, end) if _social_counts(e)]
     return {
         "gym": sum(1 for c in checkins if c["type"] == "gym"),
         "alcohol": sum(1 for c in checkins if c["type"] == "alcohol"),
@@ -49,7 +55,7 @@ def scorecard_for_week(week_start: date) -> dict:
     card = metrics.build_scorecard(week_start, counts_for_week(week_start), db.get_targets())
     orders = db.get_delivery_orders_range(ws.isoformat(), we.isoformat())
     card["delivery_spend"] = round(sum(o["amount"] or 0 for o in orders), 2)
-    social = [e for e in db.get_social_events_range(ws.isoformat(), we.isoformat()) if _occurred(e["end_at"])]
+    social = [e for e in db.get_social_events_range(ws.isoformat(), we.isoformat()) if _social_counts(e)]
     card["social_spend"] = round(sum(e["amount"] or 0 for e in social), 2)
     return card
 
@@ -70,7 +76,7 @@ def _date_lists(start: date, end: date) -> dict:
     """Per-metric ISO day lists for events inside [start, end]."""
     s, e = start.isoformat(), end.isoformat()
     checkins = db.get_checkins_range(s, e)
-    social = [ev for ev in db.get_social_events_range(s, e) if _occurred(ev["end_at"])]
+    social = [ev for ev in db.get_social_events_range(s, e) if _social_counts(ev)]
     return {
         "gym": [c["date"] for c in checkins if c["type"] == "gym"],
         "alcohol": [c["date"] for c in checkins if c["type"] == "alcohol"],

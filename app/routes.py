@@ -167,12 +167,16 @@ def post_social(body: SocialCreate):
 def patch_social(event_id: str, body: SocialPatch):
     if db.get_event(event_id) is None:
         raise HTTPException(status_code=404, detail="event not found")
+    # Distinguish "field omitted" (leave untouched) from "field explicitly set to
+    # null" (clear the override) — pydantic v2's model_fields_set tracks which keys
+    # were actually present in the request body, regardless of their value.
+    provided = body.model_fields_set
     updates = {}
-    if body.title is not None:
+    if "title" in provided:
         updates["user_title"] = body.title
-    if body.is_social is not None:
+    if "is_social" in provided:
         updates["user_is_social"] = body.is_social
-    if body.amount is not None:
+    if "amount" in provided:
         updates["amount"] = body.amount
     if updates:
         db.set_event_overrides(event_id, updates)

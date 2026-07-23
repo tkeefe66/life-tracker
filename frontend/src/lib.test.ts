@@ -62,3 +62,51 @@ describe("mondayOf", () => {
     expect(mondayOf("2026-01-01")).toBe("2025-12-29"); // Thursday
   });
 });
+
+import { buildSocialPatch } from "./lib";
+
+describe("buildSocialPatch", () => {
+  const loaded = { loadedTitle: "Dinner", loadedIsSocial: true, loadedAmount: null };
+
+  it("sends nothing when the editor is saved without any change", () => {
+    const patch = buildSocialPatch({ ...loaded, title: "Dinner", isSocial: true, amountText: "" });
+    expect(patch).toEqual({});
+  });
+
+  it("omits title and is_social when only the cost was added — no manufactured override", () => {
+    const patch = buildSocialPatch({ ...loaded, title: "Dinner", isSocial: true, amountText: "25" });
+    expect(patch).toEqual({ amount: 25 });
+  });
+
+  it("includes title only when the text actually differs from what was loaded", () => {
+    const patch = buildSocialPatch({ ...loaded, title: "Dinner out", isSocial: true, amountText: "" });
+    expect(patch).toEqual({ title: "Dinner out" });
+  });
+
+  it("includes is_social only when the checkbox was actually toggled", () => {
+    const patch = buildSocialPatch({ ...loaded, title: "Dinner", isSocial: false, amountText: "" });
+    expect(patch).toEqual({ is_social: false });
+  });
+
+  it("sends amount: null (not omitted) when a stored cost is cleared", () => {
+    const withAmount = { loadedTitle: "Dinner", loadedIsSocial: true, loadedAmount: 300 };
+    const patch = buildSocialPatch({ ...withAmount, title: "Dinner", isSocial: true, amountText: "" });
+    expect(patch).toEqual({ amount: null });
+  });
+
+  it("omits amount when the field was empty and stays empty", () => {
+    const patch = buildSocialPatch({ ...loaded, title: "Dinner", isSocial: true, amountText: "" });
+    expect(patch.amount).toBeUndefined();
+  });
+
+  it("omits amount when the typed value matches the loaded amount", () => {
+    const withAmount = { loadedTitle: "Dinner", loadedIsSocial: true, loadedAmount: 25 };
+    const patch = buildSocialPatch({ ...withAmount, title: "Dinner", isSocial: true, amountText: "25" });
+    expect(patch.amount).toBeUndefined();
+  });
+
+  it("combines multiple real changes", () => {
+    const patch = buildSocialPatch({ ...loaded, title: "Dinner out", isSocial: false, amountText: "40" });
+    expect(patch).toEqual({ title: "Dinner out", is_social: false, amount: 40 });
+  });
+});
