@@ -30,7 +30,8 @@ since the app tracks personal behavior only.
 | `id` | serial PK | |
 | `gmail_message_id` | TEXT UNIQUE | dedupe key |
 | `service` | TEXT | `Uber` or `Lyft` |
-| `ride_at` | TEXT | local-tz ISO datetime |
+| `ride_at` | TEXT | local-tz ISO datetime (email time) |
+| `ride_key` | TEXT | dedupe cluster key (see Ingestion), indexed |
 | `subject` | TEXT | email subject |
 | `amount` | REAL | total, nullable |
 | `ai_is_work` | BOOLEAN | AI guess, nullable |
@@ -64,9 +65,16 @@ order / not-order. It becomes a three-way route over one fetch:
   path first (unchanged behavior, including the tip-only recovery); if the
   candidate is not a delivery order, try the ride path.
 - **Ride duplicate guard:** Uber sends both a "charge summary" and a "Thanks
-  for riding" receipt for one trip. Cluster on `(service, day, subject)` like
-  delivery orders — if a ride already exists for that key, update its
-  `amount` (later email wins) instead of inserting.
+  for riding" receipt for one trip. Subject is NOT a safe cluster key here —
+  two separate trips the same morning both read "Your Sunday morning trip
+  with Uber". Instead cluster on the **ride timestamp printed in the
+  snippet**: ride receipts open with `"Jul 19, 2026 4:03 AM"`, which is
+  unique per trip and identical across that trip's duplicate emails. New
+  `receipts.extract_ride_time(snippet)` parses it to an ISO-ish key string
+  (`"2026-07-19T04:03"`), returning None if absent. Cluster key =
+  `(service, ride_time)`; when `ride_time` is None fall back to
+  `(service, day, subject, amount)`. If a ride already exists for the key,
+  update its `amount` (later email wins) instead of inserting.
 - Ride amounts use the existing `receipts.extract_amount`.
 - Each newly stored ride gets one `ai_metrics.classify_work_ride` call.
 - Scan result string gains ride counts, e.g.
