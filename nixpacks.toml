@@ -1,17 +1,44 @@
 providers = ["python"]
 
+# pg_dump comes from the PostgreSQL project's own apt repo (PGDG), not from
+# nixpkgs. Why, measured on 2026-07-23:
+#
+#   - Railway's Postgres is 18.3. pg_dump refuses to dump a server newer than
+#     itself, so the client must be >= 18.
+#   - nixpkgs' unversioned `postgresql` alias resolved to pg_dump 16.4, so
+#     every backup failed with "error: pg_dump version mismatch". Backups were
+#     not degraded, they were 100% broken and would have stayed that way.
+#   - `postgresql_18` does not exist in the nixpkgs revision nixpacks pins —
+#     that build fails outright (tried; deploy cbb67b03 failed).
+#   - PGDG carries every supported major on the day it ships, so this keeps
+#     working when nixpkgs lags.
+#
+# A failed setup phase does NOT take the app down: Railway keeps serving the
+# previous deployment when a build fails. The expensive failure mode here is a
+# silently broken backup, not a failed build.
+#
+# The runtime detection in jobs/backup_db.py (pg_dump stderr -> the distinct
+# "error: pg_dump version mismatch" status) stays as the backstop — it is what
+# surfaced this, and it is what will surface the next server major bump.
+
 [phases.setup]
-# postgresql: provides the pg_dump binary jobs/backup_db.py shells out to.
-# Deliberately the unversioned alias, not a pinned major (e.g. postgresql_17)
-# — an explicit major that doesn't resolve in the pinned nixpkgs revision
-# fails the whole setup phase and breaks the entire deploy, which is strictly
-# worse than a pg_dump/server version mismatch (that only breaks backups).
-# pg_dump refusing to dump from a server newer than itself is instead
-# detected at runtime: jobs/backup_db.py inspects pg_dump's stderr for the
-# "server version ... ; pg_dump version ..." wording and records a distinct
-# "error: pg_dump version mismatch" status (services/safe_status.py) so it's
-# diagnosable from the Settings screen rather than failing the deploy.
-nixPkgs = ["python311", "gcc", "nodejs_20", "postgresql"]
+nixPkgs = ["python311", "gcc", "nodejs_20"]
+aptPkgs = ["curl", "ca-certificates"]
+
+# Separate phase rather than overriding setup's cmds, which would replace the
+# nix installation nixpacks generates there.
+[phases.pgclient]
+dependsOn = ["setup"]
+cmds = [
+  "install -d /etc/apt/keyrings",
+  # Armored key referenced directly by signed-by — apt >= 2.4 accepts .asc, so
+  # no gnupg dependency is needed just to dearmor it.
+  "curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /etc/apt/keyrings/pgdg.asc",
+  "echo 'deb [signed-by=/etc/apt/keyrings/pgdg.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' > /etc/apt/sources.list.d/pgdg.list",
+  "apt-get update",
+  "apt-get install -y --no-install-recommends postgresql-client-18",
+]
 
 [phases.build]
+dependsOn = ["install", "pgclient"]
 cmds = ["cd frontend && npm ci && npm run build"]
