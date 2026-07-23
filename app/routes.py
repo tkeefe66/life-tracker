@@ -154,6 +154,9 @@ def get_settings():
         "calendar_last_status": db.get_setting("calendar_last_status"),
         "backup_last_run": db.get_setting("backup_last_run"),
         "backup_last_status": db.get_setting("backup_last_status"),
+        "bank_last_run": db.get_setting("bank_last_run"),
+        "bank_last_status": db.get_setting("bank_last_status"),
+        "bank_last_result": db.get_setting("bank_last_result"),
     }
 
 
@@ -263,3 +266,41 @@ def patch_ride(ride_id: int, body: RidePatch):
     if not db.set_ride_work_override(ride_id, body.is_work):
         raise HTTPException(status_code=404, detail="ride not found")
     return {"ok": True}
+
+
+@router.get("/bank/debug")
+def bank_debug(start: str, end: str):
+    """Read-only verification surface for this phase — there is no bank UI yet.
+
+    Returns per-flow counts and totals so the arithmetic can be eyeballed against
+    reality. Never returns the access URL (which lives only in config and is
+    never read here) and never returns balances (which are never stored).
+    """
+    rows = db.get_bank_transactions_range(start, end)
+    counts, totals = {}, {}
+    for r in rows:
+        flow = r["resolved_flow"] or "unclassified"
+        counts[flow] = counts.get(flow, 0) + 1
+        totals[flow] = round(totals.get(flow, 0.0) + abs(r["amount"]), 2)
+    return {
+        "accounts": db.get_bank_accounts(),
+        "counts": counts,
+        "totals": totals,
+        "ambiguous": [
+            {"simplefin_id": r["simplefin_id"], "posted": r["posted"],
+             "amount": r["amount"], "description": r["description"]}
+            for r in rows if r["ambiguous"]
+        ],
+        "last_run": db.get_setting("bank_last_run"),
+        "last_status": db.get_setting("bank_last_status"),
+    }
+
+
+@router.post("/bank/accounts/{simplefin_id}/role")
+def set_bank_account_role(simplefin_id: str, body: dict):
+    role = (body or {}).get("role")
+    if role not in db.BANK_ROLES:
+        raise HTTPException(status_code=400, detail="unknown role")
+    if not db.set_bank_account_role(simplefin_id, role):
+        raise HTTPException(status_code=404, detail="unknown account")
+    return {"ok": True, "simplefin_id": simplefin_id, "role": role}

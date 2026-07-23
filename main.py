@@ -10,7 +10,8 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 import database as db
 from app.api import create_app
-from config import BACKUP_HOUR, CALENDAR_SCAN_HOUR, GMAIL_SCAN_INTERVAL_HOURS, TIMEZONE, WEEKLY_PUSH_HOUR
+from config import (BACKUP_HOUR, CALENDAR_SCAN_HOUR, GMAIL_SCAN_INTERVAL_HOURS,
+                    SIMPLEFIN_SYNC_INTERVAL_HOURS, TIMEZONE, WEEKLY_PUSH_HOUR)
 
 logging.basicConfig(
     format="%(asctime)s  %(name)s  %(levelname)s  %(message)s",
@@ -28,6 +29,7 @@ async def lifespan(app):
     from jobs.backup_db import run as backup_db
     from jobs.scan_calendar import run as scan_calendar
     from jobs.scan_gmail import run as scan_gmail
+    from jobs.sync_bank import run as sync_bank
     from jobs.weekly_push import run as weekly_push
 
     scheduler = AsyncIOScheduler(timezone=pytz.timezone(TIMEZONE))
@@ -39,13 +41,24 @@ async def lifespan(app):
         id="scan_gmail",
         next_run_time=datetime.datetime.now(pytz.timezone(TIMEZONE)),
     )
+    # next_run_time=now, same reasoning as scan_gmail: a deploy should refresh
+    # bank_last_status immediately rather than waiting a full interval. Also
+    # matters more here — SimpleFIN keeps only a rolling 90 days, so a sync that
+    # silently stops running loses history permanently.
+    scheduler.add_job(
+        sync_bank,
+        IntervalTrigger(hours=SIMPLEFIN_SYNC_INTERVAL_HOURS),
+        id="sync_bank",
+        next_run_time=datetime.datetime.now(pytz.timezone(TIMEZONE)),
+    )
     scheduler.add_job(scan_calendar, CronTrigger(hour=CALENDAR_SCAN_HOUR, minute=0), id="scan_calendar")
     scheduler.add_job(weekly_push, CronTrigger(day_of_week="mon", hour=WEEKLY_PUSH_HOUR, minute=0), id="weekly_push")
     scheduler.add_job(backup_db, CronTrigger(day_of_week="sun", hour=BACKUP_HOUR, minute=0), id="backup_db")
     scheduler.start()
-    logger.info("On Track started — gmail every %dh, calendar daily @%02d:00, push Mon @%02d:00, "
-                "backup Sun @%02d:00",
-                GMAIL_SCAN_INTERVAL_HOURS, CALENDAR_SCAN_HOUR, WEEKLY_PUSH_HOUR, BACKUP_HOUR)
+    logger.info("On Track started — gmail every %dh, bank every %dh, calendar daily @%02d:00, "
+                "push Mon @%02d:00, backup Sun @%02d:00",
+                GMAIL_SCAN_INTERVAL_HOURS, SIMPLEFIN_SYNC_INTERVAL_HOURS,
+                CALENDAR_SCAN_HOUR, WEEKLY_PUSH_HOUR, BACKUP_HOUR)
     yield
     scheduler.shutdown(wait=False)
 

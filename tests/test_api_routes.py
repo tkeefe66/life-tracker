@@ -1,5 +1,6 @@
 import datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -11,6 +12,11 @@ def _client(temp_db_path):
     client = TestClient(create_app(), base_url="https://testserver")
     client.post("/api/login", json={"password": "test-password"})
     return client
+
+
+@pytest.fixture
+def client(temp_db_path):
+    return _client(temp_db_path)
 
 
 def test_checkin_roundtrip(temp_db_path):
@@ -662,3 +668,48 @@ def test_spend_includes_the_in_progress_current_week(temp_db_path):
     assert current_week["delivery"] == 9.5
     assert {"kind": "delivery", "service": "Uber Eats", "amount": 9.5} in body["by_service"]
     assert any(i["label"] == "order" and i["amount"] == 9.5 for i in body["items"])
+
+
+def test_bank_debug_returns_accounts_and_flow_totals(client, temp_db_path):
+    import database as db
+    db.upsert_bank_account("chk", "Checking", "Wells Fargo", "checking")
+    db.set_bank_account_role("chk", "spending")
+    acct = next(a for a in db.get_bank_accounts() if a["simplefin_id"] == "chk")
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-01", "2026-07-01",
+                               -14.20, "COFFEE", "Coffee", "", "5814")
+    db.set_bank_transaction_derived("t1", "spending", None, False)
+
+    r = client.get("/api/bank/debug?start=2026-06-01&end=2026-08-01")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["totals"]["spending"] == pytest.approx(14.20)
+    assert body["accounts"][0]["role"] == "spending"
+    assert body["counts"]["spending"] == 1
+
+
+def test_bank_debug_never_exposes_the_access_url(client, temp_db_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "SIMPLEFIN_ACCESS_URL",
+                        "https://user:sup3rsecret@bridge.example.com/simplefin")
+    r = client.get("/api/bank/debug?start=2026-06-01&end=2026-08-01")
+    assert "sup3rsecret" not in r.text and "bridge.example.com" not in r.text
+
+
+def test_set_account_role(client, temp_db_path):
+    import database as db
+    db.upsert_bank_account("chk", "Checking", "Wells Fargo", "checking")
+    r = client.post("/api/bank/accounts/chk/role", json={"role": "spending"})
+    assert r.status_code == 200
+    assert next(a for a in db.get_bank_accounts() if a["simplefin_id"] == "chk")["role"] == "spending"
+
+
+def test_set_account_role_rejects_an_unknown_role(client, temp_db_path):
+    import database as db
+    db.upsert_bank_account("chk", "Checking", "Wells Fargo", "checking")
+    r = client.post("/api/bank/accounts/chk/role", json={"role": "yacht"})
+    assert r.status_code == 400
+
+
+def test_set_account_role_404s_for_an_unknown_account(client, temp_db_path):
+    r = client.post("/api/bank/accounts/nope/role", json={"role": "spending"})
+    assert r.status_code == 404
