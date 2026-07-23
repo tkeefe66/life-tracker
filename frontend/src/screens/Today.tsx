@@ -49,12 +49,29 @@ function timeLabel(iso: string): string {
   return isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-export default function Today() {
+interface Props {
+  /** A date carried over from Week's "open this day" tap. Consumed once —
+   * selects that day, then fires onConsumed() so the pin doesn't stick around
+   * for the next time this screen mounts. */
+  initialDate?: string | null;
+  onConsumed?: () => void;
+}
+
+export default function Today({ initialDate, onConsumed }: Props = {}) {
   const [data, setData] = useState<TodayData | null>(null);
   const [week, setWeek] = useState<Card | null>(null);
   const [selected, setSelected] = useState<string | null>(null); // null = today
   const [todayIso, setTodayIso] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  // Wait for todayIso so the "selected === null means today" equivalence still
+  // holds when initialDate happens to be today — otherwise this would pin a
+  // date that should behave like "no selection".
+  useEffect(() => {
+    if (initialDate == null || todayIso == null) return;
+    setSelected(initialDate === todayIso ? null : initialDate);
+    onConsumed?.();
+  }, [initialDate, todayIso]);
 
   const [addingSocial, setAddingSocial] = useState(false);
   const [socialName, setSocialName] = useState("");

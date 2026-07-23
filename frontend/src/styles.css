@@ -708,6 +708,7 @@ details.orders .quiet { margin: 10px 0 0; }
   border-radius: var(--r);
   box-shadow: var(--shadow-item);
   overflow: hidden;
+  margin-bottom: 18px;
 }
 
 .day-row + .day-row { border-top: 1px solid var(--line); }

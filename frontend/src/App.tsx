@@ -82,6 +82,9 @@ export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("today");
+  // A date tapped on Week's day-by-day view, carried to Today and consumed
+  // once it lands there — see Today's initialDate/onConsumed.
+  const [pendingDay, setPendingDay] = useState<string | null>(null);
 
   const probe = () => {
     setProbeError(null);
@@ -112,8 +115,12 @@ export default function App() {
   return (
     <div className="app">
       <main>
-        {tab === "today" && <Today />}
-        {tab === "scorecard" && <Scorecard />}
+        {tab === "today" && (
+          <Today initialDate={pendingDay} onConsumed={() => setPendingDay(null)} />
+        )}
+        {tab === "scorecard" && (
+          <Scorecard onOpenDay={(iso) => { setPendingDay(iso); setTab("today"); }} />
+        )}
         {tab === "insights" && <Insights />}
         {tab === "settings" && <Settings />}
       </main>
