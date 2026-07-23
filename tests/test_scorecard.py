@@ -84,3 +84,40 @@ def test_today_snapshot(temp_db_path, monkeypatch):
     assert snap["alcohol_level"] == 1
     assert snap["deliveries"] == []
     assert snap["social_events"] == []
+
+
+def test_scorecard_rides_count_and_spend_exclude_confirmed_work(temp_db_path):
+    import database as db
+    from app.scorecard import scorecard_for_week
+    db.seed_default_targets()
+    db.add_ride("r1", "Uber", "2026-07-15T08:00:00-06:00", "2026-07-15T08:00", "Personal", 12.0)
+    db.add_ride("r2", "Uber", "2026-07-16T08:00:00-06:00", "2026-07-16T08:00", "AI-flagged", 30.0)
+    db.add_ride("r3", "Lyft", "2026-07-17T08:00:00-06:00", "2026-07-17T08:00", "Confirmed work", 50.0)
+    rides = db.get_rides_range("2026-07-13", "2026-07-19")
+    by_subject = {r["subject"]: r["id"] for r in rides}
+    db.set_ride_classification(by_subject["AI-flagged"], True, 0.8)  # flagged, still counts
+    db.set_ride_work_override(by_subject["Confirmed work"], True)  # confirmed, excluded
+
+    card = scorecard_for_week(date(2026, 7, 13))
+    assert card["rides_count"] == 2
+    assert card["rides_spend"] == 42.0
+    import metrics
+    assert "rides" not in metrics.METRICS
+
+
+def test_rides_not_in_today_snapshot_metrics_ledger(temp_db_path):
+    """Rides are tracking-only — no hit/miss ledger row, ever."""
+    import database as db
+    db.seed_default_targets()
+    assert "rides" not in db.get_targets()
+
+
+def test_today_snapshot_includes_rides_for_the_day(temp_db_path):
+    import database as db
+    from app import scorecard
+    db.seed_default_targets()
+    today = scorecard._local_today().isoformat()
+    db.add_ride("r1", "Uber", f"{today}T08:00:00", f"{today}T08:00", "Your trip", 12.0)
+    snap = scorecard.today_snapshot()
+    assert len(snap["rides"]) == 1
+    assert snap["rides"][0]["service"] == "Uber"

@@ -61,3 +61,54 @@ def classify_candidate(sender: str, subject: str) -> tuple:
     if _ORDER_RE.search(subject):
         return "order", service
     return "ambiguous", service
+
+
+# ── Rides (Uber / Lyft) ────────────────────────────────────────────────────────
+
+RIDE_DOMAINS = {"uber.com": "Uber", "lyft.com": "Lyft"}
+
+_ORDER_WORDS_RE = re.compile(r"\b(order|eats)\b", re.IGNORECASE)
+_RIDE_TIME_RE = re.compile(
+    r"([A-Z][a-z]{2}) (\d{1,2}), (\d{4})[, ]+(\d{1,2}):(\d{2})\s*([AP]M)",
+    re.IGNORECASE,
+)
+_MONTHS = {m: i for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+
+
+def _ride_domain(sender: str) -> str:
+    m = re.search(r"@([\w.-]+)", sender)
+    if not m:
+        return ""
+    domain = m.group(1).lower().rstrip(">")
+    for known in RIDE_DOMAINS:
+        if domain == known or domain.endswith("." + known):
+            return known
+    return ""
+
+
+def classify_ride(sender: str, subject: str) -> tuple:
+    """('ride'|'not_ride'|'ambiguous', service)."""
+    domain = _ride_domain(sender)
+    if not domain:
+        return "not_ride", ""
+    service = RIDE_DOMAINS[domain]
+    if _PROMO_RE.search(subject):
+        return "not_ride", service
+    if _ORDER_WORDS_RE.search(subject):
+        return "not_ride", service
+    if _RIDE_RE.search(subject):
+        return "ride", service
+    return "ambiguous", service
+
+
+def extract_ride_time(snippet):
+    """'Jul 19, 2026 4:03 AM' -> '2026-07-19T04:03'; None if absent."""
+    m = _RIDE_TIME_RE.search(snippet or "")
+    if not m:
+        return None
+    mon, day, year, hour, minute, ampm = m.groups()
+    if mon not in _MONTHS:
+        return None
+    h = int(hour) % 12 + (12 if ampm.upper() == "PM" else 0)
+    return f"{year}-{_MONTHS[mon]:02d}-{int(day):02d}T{h:02d}:{minute}"

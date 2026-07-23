@@ -105,3 +105,52 @@ def test_weekly_reflection_empty_on_non_dict_json(mock_anthropic):
     import ai_metrics
     _set_response(mock_anthropic, "[1, 2, 3]")
     assert ai_metrics.weekly_reflection(_card(), []) == ""
+
+
+def test_classify_work_ride_returns_parsed_dict(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"is_work": true, "confidence": 0.8}')
+    out = ai_metrics.classify_work_ride("Uber", "Your Tuesday trip with Uber", "Jul 14, 2026 7:15 AM")
+    assert out == {"is_work": True, "confidence": 0.8}
+
+
+def test_classify_work_ride_prompt_includes_subject_and_snippet(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"is_work": false, "confidence": 0.5}')
+    ai_metrics.classify_work_ride("Lyft", "Your ride with Lyft", "Airport pickup at 6am")
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "Your ride with Lyft" in prompt
+    assert "Airport pickup at 6am" in prompt
+
+
+def test_classify_work_ride_garbage_json_defaults(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, "not json at all")
+    out = ai_metrics.classify_work_ride("Uber", "Your trip", "")
+    assert out == {"is_work": False, "confidence": 0.0}
+
+
+def test_classify_work_ride_prompt_includes_examples_when_present(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"is_work": true, "confidence": 0.9}')
+    examples = [
+        {"subject": "Your trip to the airport", "user_is_work": True},
+        {"subject": "Your ride home", "user_is_work": False},
+    ]
+    ai_metrics.classify_work_ride("Uber", "Your trip", "", examples=examples)
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "The user has corrected past classifications:" in prompt
+    assert '"Your trip to the airport" IS work' in prompt
+    assert '"Your ride home" IS NOT work' in prompt
+
+
+def test_classify_work_ride_prompt_omits_examples_block_when_absent(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"is_work": false, "confidence": 0.5}')
+    ai_metrics.classify_work_ride("Uber", "Your trip", "", examples=None)
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "corrected past classifications" not in prompt
+
+    ai_metrics.classify_work_ride("Uber", "Your trip", "", examples=[])
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "corrected past classifications" not in prompt

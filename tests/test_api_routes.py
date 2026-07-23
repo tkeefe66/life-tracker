@@ -325,3 +325,94 @@ def test_social_spend_sums_amounts_on_scorecard(temp_db_path):
     db.add_manual_social_event("manual:2", "Coffee", "2026-07-16T12:00:00", "2026-07-16T13:00:00")  # NULL amount
     card = client.get("/api/scorecard?week_start=2026-07-13").json()
     assert card["social_spend"] == 30.0
+
+
+# ── Rides ─────────────────────────────────────────────────────────────────────
+
+def test_get_rides_shape_order_and_days_clamp(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    d1 = (datetime.date.today() - datetime.timedelta(days=10)).isoformat()
+    d2 = (datetime.date.today() - datetime.timedelta(days=3)).isoformat()
+    db.add_ride("r1", "Uber", f"{d1}T08:00:00", f"{d1}T08:00", "Your trip", 12.0)
+    db.add_ride("r2", "Lyft", f"{d2}T18:00:00", f"{d2}T18:00", "Your ride", 20.0)
+    body = client.get("/api/rides").json()
+    assert [r["service"] for r in body["rides"]] == ["Lyft", "Uber"]  # newest-first
+    row = body["rides"][0]
+    assert set(row.keys()) == {"id", "service", "ride_at", "subject", "amount",
+                                "ai_is_work", "user_is_work", "is_work"}  # ai_confidence not exposed
+    assert row["is_work"] is False  # unresolved verdict defaults to not-work
+
+
+def test_get_rides_days_lower_bound_clamps_to_1(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    db.add_ride("r1", "Uber", f"{yesterday}T08:00:00", f"{yesterday}T08:00", "Yesterday ride", 12.0)
+
+    # A literal 0-day window would be [today, today] and exclude yesterday's ride;
+    # days=0 clamping to 1 reaches back to yesterday and includes it.
+    body = client.get("/api/rides?days=0").json()
+    assert [r["subject"] for r in body["rides"]] == ["Yesterday ride"]
+
+
+def test_get_rides_days_upper_bound_clamps_to_365(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    within = (datetime.date.today() - datetime.timedelta(days=200)).isoformat()
+    beyond = (datetime.date.today() - datetime.timedelta(days=400)).isoformat()
+    db.add_ride("r1", "Uber", f"{within}T08:00:00", f"{within}T08:00", "Within 365", 12.0)
+    db.add_ride("r2", "Lyft", f"{beyond}T08:00:00", f"{beyond}T08:00", "Beyond 365", 20.0)
+
+    # days=1000 clamps to 365: the 400-day-old ride is excluded even though 400 < 1000,
+    # proving the clamp actually caps the window rather than passing days through raw.
+    body = client.get("/api/rides?days=1000").json()
+    assert [r["subject"] for r in body["rides"]] == ["Within 365"]
+
+
+def test_get_rides_resolved_is_work_reflects_user_override(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    db.add_ride("r1", "Uber", "2026-07-15T08:00:00-06:00", "2026-07-15T08:00", "Your trip", 12.0)
+    ride = db.get_rides_range("2026-07-14", "2026-07-20")[0]
+    db.set_ride_classification(ride["id"], True, 0.9)  # AI flags work but never excludes alone
+    body = client.get("/api/rides").json()
+    assert body["rides"][0]["ai_is_work"] is True
+    assert body["rides"][0]["is_work"] is False  # unconfirmed AI flag does not resolve to work
+    db.set_ride_work_override(ride["id"], True)
+    body = client.get("/api/rides").json()
+    assert body["rides"][0]["is_work"] is True  # confirmed user verdict resolves to work
+
+
+def test_patch_ride_sets_override(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    db.add_ride("r1", "Uber", "2026-07-15T08:00:00-06:00", "2026-07-15T08:00", "Your trip", 12.0)
+    ride_id = db.get_rides_range("2026-07-14", "2026-07-20")[0]["id"]
+    resp = client.patch(f"/api/rides/{ride_id}", json={"is_work": True})
+    assert resp.status_code == 200
+    row = db.get_rides_range("2026-07-14", "2026-07-20")[0]
+    assert bool(row["user_is_work"]) is True
+
+
+def test_patch_ride_unknown_id_404(temp_db_path):
+    client = _client(temp_db_path)
+    resp = client.patch("/api/rides/999999", json={"is_work": True})
+    assert resp.status_code == 404
+
+
+def test_scorecard_rides_count_and_spend_exclude_confirmed_work_include_ai_flagged(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    db.add_ride("r1", "Uber", "2026-07-15T08:00:00-06:00", "2026-07-15T08:00", "Personal trip", 12.0)
+    db.add_ride("r2", "Uber", "2026-07-16T08:00:00-06:00", "2026-07-16T08:00", "AI-flagged trip", 30.0)
+    db.add_ride("r3", "Lyft", "2026-07-17T08:00:00-06:00", "2026-07-17T08:00", "Confirmed work trip", 50.0)
+    rides = db.get_rides_range("2026-07-13", "2026-07-19")
+    by_subject = {r["subject"]: r["id"] for r in rides}
+    db.set_ride_classification(by_subject["AI-flagged trip"], True, 0.8)  # flagged, not confirmed
+    db.set_ride_work_override(by_subject["Confirmed work trip"], True)  # confirmed — excluded
+
+    card = client.get("/api/scorecard?week_start=2026-07-13").json()
+    assert card["rides_count"] == 2  # r1 + r2 count; r3 (confirmed work) excluded
+    assert card["rides_spend"] == 42.0  # 12.0 + 30.0; r3's 50.0 excluded
+    assert "rides" not in card["metrics"]  # tracking-only — never a scored metric

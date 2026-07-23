@@ -56,3 +56,38 @@ def test_extract_amount():
     assert extract_amount("Total $20") == 20.0
     assert extract_amount("No amount here") is None
     assert extract_amount(None) is None
+
+
+# ── Rides ─────────────────────────────────────────────────────────────────────
+
+def test_ride_domains_and_classify_ride():
+    from receipts import classify_ride
+    assert classify_ride("noreply@uber.com", "Your Sunday morning trip with Uber") == ("ride", "Uber")
+    assert classify_ride("no-reply@lyft.com", "Your ride with Lyft") == ("ride", "Lyft")
+    assert classify_ride("noreply@uber.com", "Your Monday order with Uber Eats")[0] == "not_ride"
+    assert classify_ride("noreply@uber.com", "50% off your next ride")[0] == "not_ride"
+    assert classify_ride("someone@example.com", "Your trip")[0] == "not_ride"
+    assert classify_ride("noreply@uber.com", "Reservation confirmed for Saturday")[0] == "ambiguous"
+
+
+def test_extract_ride_time():
+    from receipts import extract_ride_time
+    assert extract_ride_time("Jul 19, 2026 4:03 AM Thanks for riding") == "2026-07-19T04:03"
+    assert extract_ride_time("Jul 19, 2026 11:34 PM charge summary") == "2026-07-19T23:34"
+    assert extract_ride_time("no timestamp here") is None
+    assert extract_ride_time(None) is None
+
+
+def test_extract_ride_time_lowercase_ampm():
+    """Some Uber/Lyft templates render the time marker lowercase."""
+    from receipts import extract_ride_time
+    assert extract_ride_time("Jul 19, 2026 4:03 am Thanks for riding") == "2026-07-19T04:03"
+    assert extract_ride_time("Jul 19, 2026 11:34 pm charge summary") == "2026-07-19T23:34"
+
+
+def test_extract_ride_time_noon_and_midnight():
+    """12-hour math: 12 AM is hour 0, 12 PM is hour 12 — an off-by-twelve bug
+    would only surface at the 12:xx boundary."""
+    from receipts import extract_ride_time
+    assert extract_ride_time("Jan 1, 2026 12:05 AM") == "2026-01-01T00:05"
+    assert extract_ride_time("Jan 1, 2026 12:05 PM") == "2026-01-01T12:05"
