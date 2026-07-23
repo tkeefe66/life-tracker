@@ -27,6 +27,14 @@ Callers are responsible for full-detail logging themselves:
 NOT_CONFIGURED = "error: not configured"
 GOOGLE_NOT_CONFIGURED = "error: Google not configured"
 
+# A distinctly diagnosable failure category, not a preflight skip: pg_dump
+# refuses to dump from a Postgres server newer than itself. Detected from
+# vocabulary in pg_dump's own stderr (see
+# jobs/backup_db.py._looks_like_pg_dump_version_mismatch) rather than
+# safe_status()'s generic exception-type mapping, so the fix is actionable
+# from Settings ("pg_dump needs upgrading") instead of a generic "see logs".
+PG_DUMP_VERSION_MISMATCH = "error: pg_dump version mismatch"
+
 CLOSED_SET = frozenset({
     "ok",
     "error: auth",
@@ -35,6 +43,7 @@ CLOSED_SET = frozenset({
     "error: see logs",
     NOT_CONFIGURED,
     GOOGLE_NOT_CONFIGURED,
+    PG_DUMP_VERSION_MISMATCH,
 })
 
 # Matched against every class name in the exception's MRO, so this recognizes

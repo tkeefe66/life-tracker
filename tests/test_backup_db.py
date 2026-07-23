@@ -150,6 +150,8 @@ def test_pg_dump_invocation_never_puts_the_password_in_argv(tmp_path, monkeypatc
     embeds the full argv it was given)."""
     from jobs import backup_db
 
+    for var in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE"):
+        monkeypatch.setattr(backup_db, var, "")
     monkeypatch.setattr(backup_db, "DATABASE_URL", "postgresql://dbuser:hunter2@dbhost.example.com:5432/mydb")
 
     captured = {}
@@ -192,6 +194,8 @@ def test_pg_dump_failure_without_check_true_is_raised_from_our_own_exception(tmp
     one we construct ourselves, never one built from a library that embeds argv."""
     from jobs import backup_db
 
+    for var in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE"):
+        monkeypatch.setattr(backup_db, var, "")
     monkeypatch.setattr(backup_db, "DATABASE_URL", "postgresql://dbuser:hunter2@dbhost.example.com:5432/mydb")
 
     class _FakeCompletedProcess:
@@ -204,3 +208,208 @@ def test_pg_dump_failure_without_check_true_is_raised_from_our_own_exception(tmp
     with pytest.raises(Exception) as exc_info:
         backup_db._dump_to_file(dump_path)
     assert "hunter2" not in str(exc_info.value)
+
+
+def test_pg_dump_invoked_with_no_password_prompt_flag(tmp_path, monkeypatch):
+    """-w tells pg_dump to fail fast on a missing/invalid password instead of
+    attempting an interactive prompt, which would just hang a scheduled job."""
+    from jobs import backup_db
+
+    for var in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE"):
+        monkeypatch.setattr(backup_db, var, "")
+    monkeypatch.setattr(backup_db, "DATABASE_URL", "postgresql://dbuser:hunter2@dbhost.example.com:5432/mydb")
+
+    captured = {}
+
+    class _FakeCompletedProcess:
+        returncode = 0
+        stderr = b""
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        return _FakeCompletedProcess()
+
+    monkeypatch.setattr(backup_db.subprocess, "run", fake_run)
+
+    dump_path = str(tmp_path / "out.dump")
+    backup_db._dump_to_file(dump_path)
+
+    assert "-w" in captured["args"]
+
+
+# ── Fix 1 (M): urlparse().password is never percent-decoded ──────────────────
+
+def test_discrete_pg_vars_are_preferred_and_used_verbatim(tmp_path, monkeypatch):
+    """When Railway's discrete PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE are
+    all set, use them directly — no DATABASE_URL parsing, no percent-decoding
+    needed since Railway already provides them decoded."""
+    from jobs import backup_db
+
+    # A DATABASE_URL that, if parsed instead, would produce different (wrong)
+    # values — proves the discrete vars actually take priority.
+    monkeypatch.setattr(backup_db, "DATABASE_URL", "postgresql://urluser:urlpass@urlhost:1111/urldb")
+    monkeypatch.setattr(backup_db, "PGHOST", "pghost.example.com")
+    monkeypatch.setattr(backup_db, "PGPORT", "5432")
+    monkeypatch.setattr(backup_db, "PGUSER", "pguser")
+    monkeypatch.setattr(backup_db, "PGPASSWORD", "p@ss/word%20")
+    monkeypatch.setattr(backup_db, "PGDATABASE", "pgdb")
+    monkeypatch.setattr(backup_db, "PGSSLMODE", "")
+
+    captured = {}
+
+    class _FakeCompletedProcess:
+        returncode = 0
+        stderr = b""
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return _FakeCompletedProcess()
+
+    monkeypatch.setattr(backup_db.subprocess, "run", fake_run)
+
+    dump_path = str(tmp_path / "out.dump")
+    backup_db._dump_to_file(dump_path)
+
+    args = captured["args"]
+    assert "-h" in args and args[args.index("-h") + 1] == "pghost.example.com"
+    assert "-p" in args and args[args.index("-p") + 1] == "5432"
+    assert "-U" in args and args[args.index("-U") + 1] == "pguser"
+    assert "-d" in args and args[args.index("-d") + 1] == "pgdb"
+    assert "urluser" not in " ".join(args)
+    assert "urlhost" not in " ".join(args)
+
+    env = captured["kwargs"]["env"]
+    # The password reaches pg_dump byte-for-byte via PGPASSWORD — never
+    # re-encoded, never truncated, never assembled into a connection string.
+    assert env["PGPASSWORD"] == "p@ss/word%20"
+
+
+def test_fallback_to_database_url_percent_decodes_username_password_and_dbname(tmp_path, monkeypatch):
+    """When the discrete PG* vars aren't all present, fall back to parsing
+    DATABASE_URL — but unlike urlparse's raw .username/.password/.path,
+    the resolved values must be percent-decoded. A password containing '@',
+    '%', and '/' (encoded as %40, %25, %2F) must reach pg_dump exactly as
+    typed, not as the literal percent-encoded text urlparse leaves behind."""
+    from jobs import backup_db
+
+    monkeypatch.setattr(backup_db, "PGHOST", "")
+    monkeypatch.setattr(backup_db, "PGPORT", "")
+    monkeypatch.setattr(backup_db, "PGUSER", "")
+    monkeypatch.setattr(backup_db, "PGPASSWORD", "")
+    monkeypatch.setattr(backup_db, "PGDATABASE", "")
+    monkeypatch.setattr(backup_db, "PGSSLMODE", "")
+    # Real secret: p@ss/word%20  →  percent-encoded in the URL as p%40ss%2Fword%2520
+    monkeypatch.setattr(
+        backup_db, "DATABASE_URL",
+        "postgresql://db%2Buser:p%40ss%2Fword%2520@dbhost.example.com:5432/my%2Ddb",
+    )
+
+    captured = {}
+
+    class _FakeCompletedProcess:
+        returncode = 0
+        stderr = b""
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return _FakeCompletedProcess()
+
+    monkeypatch.setattr(backup_db.subprocess, "run", fake_run)
+
+    dump_path = str(tmp_path / "out.dump")
+    backup_db._dump_to_file(dump_path)
+
+    args = captured["args"]
+    assert "-U" in args and args[args.index("-U") + 1] == "db+user"
+    assert "-d" in args and args[args.index("-d") + 1] == "my-db"
+
+    env = captured["kwargs"]["env"]
+    assert env["PGPASSWORD"] == "p@ss/word%20"
+    # The raw percent-encoded text must never survive into what pg_dump sees.
+    assert "%40" not in env["PGPASSWORD"]
+    assert "%2F" not in env["PGPASSWORD"] and "%2f" not in env["PGPASSWORD"]
+
+
+# ── Fix 5 (L): sslmode from DATABASE_URL's query string must survive ─────────
+
+def test_fallback_preserves_sslmode_from_database_url_query_string(tmp_path, monkeypatch):
+    """The rebuilt -h/-p/-U/-d args drop any ?sslmode=... query param from
+    DATABASE_URL, silently downgrading sslmode=require to libpq's default
+    'prefer'. It must be preserved via the PGSSLMODE env var instead."""
+    from jobs import backup_db
+
+    monkeypatch.setattr(backup_db, "PGHOST", "")
+    monkeypatch.setattr(backup_db, "PGPORT", "")
+    monkeypatch.setattr(backup_db, "PGUSER", "")
+    monkeypatch.setattr(backup_db, "PGPASSWORD", "")
+    monkeypatch.setattr(backup_db, "PGDATABASE", "")
+    monkeypatch.setattr(backup_db, "PGSSLMODE", "")
+    monkeypatch.setattr(
+        backup_db, "DATABASE_URL",
+        "postgresql://dbuser:hunter2@dbhost.example.com:5432/mydb?sslmode=require&connect_timeout=10",
+    )
+
+    captured = {}
+
+    class _FakeCompletedProcess:
+        returncode = 0
+        stderr = b""
+
+    def fake_run(args, **kwargs):
+        captured["kwargs"] = kwargs
+        return _FakeCompletedProcess()
+
+    monkeypatch.setattr(backup_db.subprocess, "run", fake_run)
+
+    dump_path = str(tmp_path / "out.dump")
+    backup_db._dump_to_file(dump_path)
+
+    assert captured["kwargs"]["env"]["PGSSLMODE"] == "require"
+
+
+# ── Fix 3 (M): unversioned "postgresql" nix package + pg_dump version-mismatch
+# detection, since the job (not the deploy pin) is now responsible for
+# surfacing a diagnosable status when the server is newer than pg_dump. ──────
+
+def test_version_mismatch_stderr_is_detected():
+    from jobs import backup_db
+
+    mismatch_stderr = (
+        "pg_dump: error: aborting because of server version mismatch\n"
+        "pg_dump: detail: server version: 17.2; pg_dump version: 15.4\n"
+    )
+    assert backup_db._looks_like_pg_dump_version_mismatch(mismatch_stderr) is True
+
+
+def test_ordinary_failure_stderr_is_not_flagged_as_version_mismatch():
+    from jobs import backup_db
+
+    assert backup_db._looks_like_pg_dump_version_mismatch("pg_dump: error: connection refused") is False
+    assert backup_db._looks_like_pg_dump_version_mismatch("") is False
+
+
+def test_run_records_distinct_status_on_pg_dump_version_mismatch(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import backup_db
+    from services.safe_status import PG_DUMP_VERSION_MISMATCH
+
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "BACKUP_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(backup_db, "BACKUP_S3_ENDPOINT", "https://s3.example.com")
+    monkeypatch.setattr(backup_db, "BACKUP_S3_ACCESS_KEY", "key")
+    monkeypatch.setattr(backup_db, "BACKUP_S3_SECRET_KEY", "secret")
+
+    class _FakeCompletedProcess:
+        returncode = 1
+        stderr = (
+            b"pg_dump: error: aborting because of server version mismatch\n"
+            b"pg_dump: detail: server version: 17.2; pg_dump version: 15.4\n"
+        )
+
+    monkeypatch.setattr(backup_db.subprocess, "run", lambda *a, **k: _FakeCompletedProcess())
+
+    backup_db.run()  # must not raise
+
+    assert db.get_setting("backup_last_status") == PG_DUMP_VERSION_MISMATCH

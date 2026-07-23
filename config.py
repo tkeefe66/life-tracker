@@ -52,3 +52,22 @@ BACKUP_S3_ENDPOINT = os.getenv("BACKUP_S3_ENDPOINT", "")
 BACKUP_S3_ACCESS_KEY = os.getenv("BACKUP_S3_ACCESS_KEY", "")
 BACKUP_S3_SECRET_KEY = os.getenv("BACKUP_S3_SECRET_KEY", "")
 BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "4"))
+
+# Discrete PostgreSQL connection vars — Railway's Postgres plugin sets these
+# directly, already decoded (no percent-encoding to strip). jobs/backup_db.py
+# prefers them over parsing DATABASE_URL: urlparse() never percent-decodes
+# the userinfo, so a password containing "@", "%", or "/" would otherwise
+# reach pg_dump literally percent-encoded and authentication would fail
+# permanently. All optional — unset unless Railway (or the operator) provides
+# them; jobs/backup_db.py falls back to parsing DATABASE_URL when any is
+# missing.
+PGHOST = os.getenv("PGHOST", "")
+PGPORT = os.getenv("PGPORT", "")
+PGUSER = os.getenv("PGUSER", "")
+PGPASSWORD = os.getenv("PGPASSWORD", "")
+PGDATABASE = os.getenv("PGDATABASE", "")
+# Optional even within the discrete-var path — e.g. sslmode. Also used to
+# carry sslmode forward when falling back to parsing DATABASE_URL's query
+# string, whose sslmode= (etc.) is otherwise silently dropped by the rebuilt
+# connection.
+PGSSLMODE = os.getenv("PGSSLMODE", "")

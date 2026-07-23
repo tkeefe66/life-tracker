@@ -25,7 +25,7 @@ import logging
 import os
 import subprocess
 import tempfile
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import pytz
 
@@ -36,9 +36,15 @@ from config import (
     BACKUP_S3_ENDPOINT,
     BACKUP_S3_SECRET_KEY,
     DATABASE_URL,
+    PGDATABASE,
+    PGHOST,
+    PGPASSWORD,
+    PGPORT,
+    PGSSLMODE,
+    PGUSER,
     TIMEZONE,
 )
-from services.safe_status import NOT_CONFIGURED, safe_status
+from services.safe_status import NOT_CONFIGURED, PG_DUMP_VERSION_MISMATCH, safe_status
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +62,16 @@ MIN_DUMP_BYTES = 512
 class BackupDumpError(Exception):
     """Raised when pg_dump exits non-zero. Message is ours alone — never
     str(CalledProcessError), which embeds the full argv it was given."""
+
+
+class BackupVersionMismatchError(BackupDumpError):
+    """Raised specifically when pg_dump's stderr indicates it refused to dump
+    because the server's Postgres major version is newer than pg_dump's own
+    (nixpacks.toml pins the unversioned "postgresql" package, which tracks
+    whatever major nixpkgs currently ships — it can drift behind Railway's
+    Postgres plugin version). Kept distinct from the generic BackupDumpError
+    so run() can record a diagnosable status instead of the generic
+    "error: see logs"."""
 
 
 class BackupTooSmallError(Exception):
@@ -94,36 +110,112 @@ def _s3_client():
     )
 
 
-def _pg_dump_args() -> list:
-    """Connection flags for pg_dump, parsed from DATABASE_URL. Never includes
-    the password — that goes through _pg_dump_env() instead."""
+def _connection_params() -> dict:
+    """Resolves the PostgreSQL connection details pg_dump needs, preferring
+    Railway's discrete PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE (used only
+    when ALL five are set) over parsing DATABASE_URL.
+
+    Why: Railway provides those discrete vars already decoded, so there's
+    nothing to unescape. DATABASE_URL's userinfo, by contrast, is never
+    percent-decoded by urlparse() — a password containing "@", "%", or "/"
+    (encoded as %40/%25/%2F in the URL) would otherwise reach pg_dump as the
+    literal percent-encoded text and authentication would fail permanently.
+    The fallback path applies unquote() to the username, password, and
+    dbname to fix that.
+
+    Returns a dict of {"host", "port", "user", "password", "dbname",
+    "sslmode"} — each value stays a separate dict entry, exactly as pg_dump
+    consumes it (as distinct flags / env vars). Never concatenates any of
+    these into a single string; a credential-bearing string must never be
+    constructed, even transiently."""
+    if PGHOST and PGPORT and PGUSER and PGPASSWORD and PGDATABASE:
+        return {
+            "host": PGHOST,
+            "port": PGPORT,
+            "user": PGUSER,
+            "password": PGPASSWORD,
+            "dbname": PGDATABASE,
+            "sslmode": PGSSLMODE or None,
+        }
+
     parsed = urlparse(DATABASE_URL)
-    args = ["pg_dump", "--format=custom"]
-    if parsed.hostname:
-        args += ["-h", parsed.hostname]
-    if parsed.port:
-        args += ["-p", str(parsed.port)]
-    if parsed.username:
-        args += ["-U", parsed.username]
+    sslmode = None
+    if parsed.query:
+        sslmode = parse_qs(parsed.query).get("sslmode", [None])[0]
     dbname = (parsed.path or "").lstrip("/")
-    if dbname:
-        args += ["-d", dbname]
+    return {
+        "host": parsed.hostname,
+        "port": str(parsed.port) if parsed.port else None,
+        "user": unquote(parsed.username) if parsed.username else None,
+        "password": unquote(parsed.password) if parsed.password else None,
+        "dbname": unquote(dbname) if dbname else None,
+        "sslmode": sslmode,
+    }
+
+
+def _pg_dump_args() -> list:
+    """Connection flags for pg_dump, from _connection_params(). Never
+    includes the password — that goes through _pg_dump_env() instead. -w
+    disables pg_dump's interactive password prompt: a missing/invalid
+    password must fail fast with a clear error, not hang a scheduled job
+    waiting on stdin."""
+    params = _connection_params()
+    args = ["pg_dump", "--format=custom", "-w"]
+    if params["host"]:
+        args += ["-h", params["host"]]
+    if params["port"]:
+        args += ["-p", str(params["port"])]
+    if params["user"]:
+        args += ["-U", params["user"]]
+    if params["dbname"]:
+        args += ["-d", params["dbname"]]
     return args
 
 
 def _pg_dump_env() -> dict:
     """Subprocess environment for pg_dump: the real process env plus
-    PGPASSWORD, parsed from DATABASE_URL — the only place the password goes."""
+    PGPASSWORD (and PGSSLMODE, when present) from _connection_params() — the
+    only place the password goes. PGSSLMODE preserves DATABASE_URL's
+    ?sslmode=... query param, which the -h/-p/-U/-d flags above otherwise
+    silently drop (downgrading e.g. sslmode=require to libpq's default
+    'prefer')."""
     env = os.environ.copy()
-    password = urlparse(DATABASE_URL).password
-    if password:
-        env["PGPASSWORD"] = password
+    params = _connection_params()
+    if params["password"]:
+        env["PGPASSWORD"] = params["password"]
+    if params["sslmode"]:
+        env["PGSSLMODE"] = params["sslmode"]
     return env
 
 
+def _looks_like_pg_dump_version_mismatch(stderr_text: str) -> bool:
+    """pg_dump refuses to dump from a server newer than itself and reports it
+    via stderr mentioning both "server version" and "pg_dump version" — e.g.
+    "pg_dump: error: aborting because of server version mismatch" plus a
+    detail line "server version: 17.2; pg_dump version: 15.4". Only inspects
+    vocabulary in pg_dump's own diagnostic text — never DATABASE_URL or a
+    credential."""
+    lower = stderr_text.lower()
+    return "server version" in lower and "pg_dump version" in lower
+
+
+def _pg_dump_client_version() -> str:
+    """Best-effort diagnostic only — logged alongside a detected version
+    mismatch so the client version is visible in the server logs without
+    ever being stored in app_settings. Must never raise: a missing/broken
+    pg_dump binary here must not crash the mismatch-detection path."""
+    try:
+        result = subprocess.run(["pg_dump", "--version"], capture_output=True, text=True)
+        return (result.stdout or result.stderr or "").strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def _dump_to_file(path: str) -> None:
-    """Runs pg_dump against DATABASE_URL, writing a custom-format dump to
-    `path`. Raises BackupDumpError on a non-zero exit — never
+    """Runs pg_dump against the resolved connection params, writing a
+    custom-format dump to `path`. Raises BackupVersionMismatchError when
+    stderr indicates a server-newer-than-client version mismatch, or the
+    generic BackupDumpError otherwise on a non-zero exit — never
     subprocess.CalledProcessError, whose str() embeds the full argv."""
     with open(path, "wb") as f:
         result = subprocess.run(
@@ -132,6 +224,9 @@ def _dump_to_file(path: str) -> None:
     if result.returncode != 0:
         stderr_text = result.stderr.decode("utf-8", "replace") if result.stderr else ""
         logger.error("pg_dump exited %d: %s", result.returncode, stderr_text[:2000])
+        if _looks_like_pg_dump_version_mismatch(stderr_text):
+            logger.error("pg_dump client version: %s", _pg_dump_client_version())
+            raise BackupVersionMismatchError("pg_dump refused to dump: server version mismatch")
         raise BackupDumpError(f"pg_dump exited with status {result.returncode}")
 
 
@@ -189,6 +284,13 @@ def run():
         db.set_setting("backup_last_run", _now_iso())
         db.set_setting("backup_last_status", "ok")
         logger.info("Backup uploaded: %s", key)
+    except BackupVersionMismatchError as e:
+        # Checked before the generic Exception handler below so this gets a
+        # distinct, diagnosable status instead of falling through to
+        # safe_status()'s generic "error: see logs".
+        logger.exception("Backup failed: pg_dump version mismatch")
+        db.set_setting("backup_last_run", _now_iso())
+        db.set_setting("backup_last_status", PG_DUMP_VERSION_MISMATCH)
     except Exception as e:
         logger.exception("Backup failed")
         db.set_setting("backup_last_run", _now_iso())

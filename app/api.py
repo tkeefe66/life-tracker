@@ -41,9 +41,13 @@ SECURITY_HEADERS = {
 # `login_last_fail_at` — e.g. via `scripts/cleardb.py`-style direct SQL:
 #   DELETE FROM app_settings WHERE key IN
 #     ('login_fail_count', 'login_locked_until', 'login_last_fail_at');
-# A successful login from any device holding a still-valid session cookie
-# also bypasses the lockout entirely (see `has_valid_session` below), and an
-# abandoned attack (no failures for 30+ minutes) heals itself automatically.
+# A *successful* login from any device holding a still-valid session cookie
+# also bypasses the lockout entirely (see `has_valid_session` below and M2a
+# in `login()`) — but only on success. A wrong password from that same
+# session-holding device is still recorded and, once the threshold is
+# crossed, is refused with 429 exactly like a session-less attacker's guess
+# — a stolen session cookie must not grant unlimited free password guesses.
+# An abandoned attack (no failures for 30+ minutes) heals itself automatically.
 LOGIN_FAIL_COUNT_KEY = "login_fail_count"
 LOGIN_LOCKED_UNTIL_KEY = "login_locked_until"
 LOGIN_LAST_FAIL_AT_KEY = "login_last_fail_at"
@@ -71,10 +75,9 @@ def _parse(value: str) -> datetime.datetime:
     return dt
 
 
-def _check_login_lockout() -> None:
+def _is_locked_out() -> bool:
     locked_until = db.get_setting(LOGIN_LOCKED_UNTIL_KEY)
-    if locked_until and _utcnow() < _parse(locked_until):
-        raise HTTPException(status_code=429, detail="Too many failed attempts — try again later")
+    return bool(locked_until and _utcnow() < _parse(locked_until))
 
 
 def _record_login_failure() -> None:
@@ -130,18 +133,35 @@ def create_app(lifespan=None) -> FastAPI:
         # lock (rather than just an atomic counter) is both necessary and
         # sufficient here.
         with _LOGIN_LOCK:
-            # A request that already carries a still-valid session cookie is
-            # never blocked by a lockout an unauthenticated attacker triggered
-            # — the owner's already-authenticated devices always work (M2a).
-            if not has_valid_session(request):
-                _check_login_lockout()
-            if not verify_password(body.password):
-                _record_login_failure()
-                raise HTTPException(status_code=401, detail="Wrong password")
-            _record_login_success()
-            token = create_session()
-        set_session_cookie(response, token)
-        return {"ok": True}
+            already_locked = _is_locked_out()
+            # The lockout short-circuits an attempt (blocking it before
+            # verify_password ever runs) only for a session-less client that
+            # is already locked out — this is deliberate, not just an
+            # optimization: if verify_password ran first here, a locked-out
+            # attacker who happens to guess correctly would learn "that
+            # password was right" immediately, faster than waiting out the
+            # window like every wrong guess has to. A request that already
+            # carries a still-valid session cookie skips this pre-check — the
+            # owner's already-authenticated device can always attempt to
+            # (re-)log in (M2a) — but that's the ONLY exemption a session
+            # buys: a wrong password from that same device still falls
+            # through to the record-and-check below like anyone else's.
+            if already_locked and not has_valid_session(request):
+                raise HTTPException(status_code=429, detail="Too many failed attempts — try again later")
+            if verify_password(body.password):
+                # Success always wins, regardless of lockout state (M2a) —
+                # this is the only path exempt from the lockout entirely.
+                _record_login_success()
+                token = create_session()
+                set_session_cookie(response, token)
+                return {"ok": True}
+            _record_login_failure()
+            if already_locked:
+                # Already locked before this attempt (e.g. a session-holding
+                # client whose own prior failures tipped the counter over the
+                # threshold) — no exemption for a wrong password.
+                raise HTTPException(status_code=429, detail="Too many failed attempts — try again later")
+            raise HTTPException(status_code=401, detail="Wrong password")
 
     from app.routes import router  # imported late so routes can import database freely
     app.include_router(router, prefix="/api")

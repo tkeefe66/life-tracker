@@ -325,6 +325,36 @@ def test_valid_session_cookie_bypasses_the_lockout(temp_db_path):
     assert resp.status_code == 200
 
 
+def test_wrong_password_from_a_valid_session_still_counts_toward_lockout(temp_db_path):
+    """M2 fix: a stolen session cookie must not grant unlimited free password
+    guesses. Only a *correct* password bypasses the lockout for an
+    already-authenticated device (M2a, see test_valid_session_cookie_bypasses_
+    the_lockout above) — a wrong one from that same device is still recorded
+    and, once the threshold is crossed, is refused with 429 exactly like a
+    session-less attacker's guess."""
+    client = _client(temp_db_path)
+    assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
+
+    for _ in range(5):
+        resp = client.post("/api/login", json={"password": "wrong"})
+        # Matches the session-less lockout's own off-by-one (see
+        # test_lockout_triggers_after_five_failures_even_with_correct_password):
+        # the attempt that tips the counter over the threshold still 401s —
+        # only the NEXT one, made while already locked out, gets 429.
+        assert resp.status_code == 401
+
+    # Proves the failures were actually recorded, not silently exempted just
+    # because the request carried a valid session cookie — this is the
+    # vulnerability being fixed.
+    resp = client.post("/api/login", json={"password": "wrong"})
+    assert resp.status_code == 429
+
+    # The owner's correct password from this same device still succeeds
+    # immediately despite the active lockout — M2a preserved.
+    resp = client.post("/api/login", json={"password": "test-password"})
+    assert resp.status_code == 200
+
+
 def test_abandoned_attack_heals_after_30_minutes_of_inactivity(temp_db_path, monkeypatch):
     """The failure counter only ever reset on a successful login — impossible
     while locked — so one wrong guess a minute could keep the owner locked out

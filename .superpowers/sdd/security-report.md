@@ -121,7 +121,7 @@ One test-design note: I couldn't simply monkeypatch `database.USE_POSTGRES` to s
 ## Concerns / outstanding items
 
 **Operator-only (explicitly out of my scope per the task):**
-1. **Remove the public Postgres TCP proxy** (`crossover.proxy.rlwy.net:16946`) in Railway — the app only ever connects via the private network, so this is safe to remove and is the single largest attack-surface reduction in the whole spec. Not attempted; requires Railway dashboard/CLI access I was told not to use.
+1. **Remove the public Postgres TCP proxy** in Railway — the app only ever connects via the private network, so this is safe to remove and is the single largest attack-surface reduction in the whole spec. Not attempted; requires Railway dashboard/CLI access I was told not to use.
 2. **Rotate `APP_PASSWORD`** in Railway once this branch deploys, since the old password could compute the old static session token offline (moot after this deploy, but good hygiene regardless).
 
 **My own flags, for your judgment:**
@@ -377,3 +377,133 @@ described the exception-path constants.
   active tables is wanted as a separate pass.
 5. I added the `postgresql` nix package to `nixpacks.toml` (section 5) and `onUnauthorized()` global-401 handling to the frontend (section 3) — both beyond the plan's literal file lists, because without them the respective feature (backups, and session-expiry recovery from any screen) would not actually function correctly in production. Flagging both explicitly since the task said not to expand scope without surfacing it.
 6. `jobs/backup_db.py`'s real S3 upload path (`boto3` client, `list_objects_v2`/`upload_file`/`delete_object`) is exercised nowhere by tests, per the plan's explicit instruction not to test the actual upload — it will only be proven correct against a real bucket once the operator configures `BACKUP_S3_*` and a scheduled run actually fires. Same for `pg_dump` itself, which isn't invoked in tests.
+
+---
+
+## Final Adversarial Re-Review Fixes
+
+Applied the six findings from the adversarial re-review of the sections above.
+One commit, `fix(security): discrete PG env vars, throttle authenticated
+login failures, safe pg_dump pin`.
+
+### 1 (M) — `urlparse().password` is never percent-decoded
+
+`config.py` gained five optional discrete PG vars: `PGHOST`, `PGPORT`,
+`PGUSER`, `PGPASSWORD`, `PGDATABASE` (plus `PGSSLMODE`, shared with fix 5
+below) — Railway's Postgres plugin sets these directly, already decoded.
+`jobs/backup_db.py`'s new `_connection_params()` prefers them, used only
+when all five are present; otherwise it falls back to parsing
+`DATABASE_URL`, now applying `urllib.parse.unquote()` to the username,
+password, and dbname. Each connection detail stays a separate dict entry —
+never concatenated into a single string — consistent with the existing
+redaction-boundary rule that a credential-bearing string must never be
+constructed, even transiently.
+
+**Test evidence:** `test_discrete_pg_vars_are_preferred_and_used_verbatim`
+(a `DATABASE_URL` that would parse to different, wrong values proves the
+discrete vars actually win) and
+`test_fallback_to_database_url_percent_decodes_username_password_and_dbname`
+(username, password, and dbname each containing `+`/`@`/`/`/`%20`,
+percent-encoded in the URL, come out decoded byte-for-byte).
+
+### 2 (M) — Stolen session cookie enabled unlimited login brute-force
+
+`app/api.py`'s `_check_login_lockout()` (raise-on-locked) became
+`_is_locked_out()` (pure predicate). `login()` now takes a snapshot of the
+lock state at the top of the critical section:
+
+- If already locked **and** the request has no valid session cookie, it's
+  refused with 429 before `verify_password` ever runs — this is the only
+  place the lockout still short-circuits an attempt outright, and it has to
+  stay that way: calling `verify_password` first here would let a locked-out
+  attacker learn "that guess was right" the instant they guessed it, faster
+  than waiting out the window like every wrong guess has to.
+- Otherwise `verify_password` always runs. On success, the counters are
+  cleared and the session issued unconditionally (M2a — the owner's
+  already-authenticated device can always log in) — this is the *only*
+  exemption a valid session buys.
+- On failure, the attempt is always recorded via `_record_login_failure()`,
+  regardless of session state, and then refused with 429 if the pre-attempt
+  snapshot showed a lock already in effect, else 401. A session-holding
+  attacker's wrong guesses now count toward the same shared counter as
+  anyone else's and, once the threshold is crossed, get 429 like anyone
+  else's — closing the "stolen cookie = unlimited brute force" hole.
+
+All ten pre-existing lockout tests (including the off-by-one where the
+attempt that trips the threshold itself still 401s, and the "correct
+password during an active session-less lockout still 429s" case) pass
+unmodified — the fix is additive, not a behavior change for a session-less
+client. New test:
+`test_wrong_password_from_a_valid_session_still_counts_toward_lockout`
+proves a session-holding client's repeated wrong guesses now hit 429, while
+its correct password still succeeds immediately despite the active lock
+(M2a preserved).
+
+### 3 (M) — `postgresql_17` pin risked breaking the whole deploy
+
+`nixpacks.toml` reverted to the unversioned `postgresql` alias, which always
+resolves. In exchange, `jobs/backup_db.py` now detects a server-newer-than-
+pg_dump version mismatch from pg_dump's own stderr wording
+(`_looks_like_pg_dump_version_mismatch`: both "server version" and "pg_dump
+version" present) and records a distinct `PG_DUMP_VERSION_MISMATCH`
+(`"error: pg_dump version mismatch"`) status — a new named constant added to
+`services/safe_status.py`'s `CLOSED_SET`, alongside `NOT_CONFIGURED` and
+`GOOGLE_NOT_CONFIGURED`. On detection, `_pg_dump_client_version()` also logs
+the installed `pg_dump --version` output server-side (never stored in
+`app_settings`) so the mismatch is diagnosable from Railway logs, not just
+"pg_dump failed."
+
+**Test evidence:** `test_version_mismatch_stderr_is_detected` /
+`test_ordinary_failure_stderr_is_not_flagged_as_version_mismatch` (pure
+detection logic against a fake stderr string) and
+`test_run_records_distinct_status_on_pg_dump_version_mismatch` (`run()`
+records the distinct status end-to-end).
+
+### 4 (L) — `pg_dump` invoked without `-w`
+
+Added to `_pg_dump_args()`. A missing/invalid password now fails fast with a
+clear pg_dump error instead of the process hanging on an interactive prompt
+nothing is present to answer. Covered by
+`test_pg_dump_invoked_with_no_password_prompt_flag`.
+
+### 5 (L) — Connection query parameters (`sslmode`) dropped
+
+`_connection_params()` extracts `sslmode` from `DATABASE_URL`'s query string
+in the fallback path (`urllib.parse.parse_qs`) and `_pg_dump_env()` passes
+it through as `PGSSLMODE` — preserving e.g. `sslmode=require` instead of
+silently downgrading to libpq's default `prefer`. Also available directly
+via the discrete `PGSSLMODE` env var when using the discrete-var path.
+Covered by `test_fallback_preserves_sslmode_from_database_url_query_string`.
+
+### 6 (Low) — Committed report named the public Postgres proxy host:port
+
+Removed `crossover.proxy.rlwy.net:16946` from this file's "Concerns" section
+(item 1) — now describes it generically as "the public Postgres TCP proxy."
+Grepped the rest of this file and found no other occurrence. Note:
+`docs/superpowers/specs/2026-07-23-security-hardening-design.md` still names
+the same host:port (line 23, in a table of prior-review findings) — out of
+this fix's stated scope (`.superpowers/sdd/security-report.md` only), so left
+untouched; flagging in case that spec doc should get the same treatment.
+
+### Final verification
+
+- Backend: `pytest tests/ -v` → **236 passed** (baseline 228 + 8 new: 2 for
+  fix 1, 1 for fix 2, 3 for fix 3, 1 for fix 4, 1 for fix 5).
+- Frontend: `npm test -- --run` → **50 passed** (unchanged — no frontend
+  changes this wave); `npm run build` → clean `tsc --noEmit && vite build`.
+
+### Concerns / outstanding items
+
+- `docs/superpowers/specs/2026-07-23-security-hardening-design.md` still
+  names the public proxy host:port (see item 6 above) — the redaction fix
+  was scoped to the report file only.
+- The discrete-PG-vars path and the `DATABASE_URL`-fallback path are both
+  exercised only against fake `subprocess.run` calls, per the existing
+  "never test the real pg_dump/S3 client" convention in this test file —
+  final proof against a real Railway Postgres instance (with and without
+  `PGHOST`/etc. set) still wants a real deploy.
+- `PG_DUMP_VERSION_MISMATCH` detection is pattern-matched against pg_dump's
+  English-language stderr wording, which could theoretically change across
+  major pg_dump versions or locales; if it ever stops matching, the failure
+  just falls back to the generic `"error: see logs"` rather than crashing
+  anything, so this is a soft dependency, not a correctness risk.
