@@ -1,26 +1,17 @@
 providers = ["python"]
 
 [phases.setup]
-# postgresql_18: provides the pg_dump binary jobs/backup_db.py shells out to.
-#
-# This was the unversioned `postgresql` alias, chosen deliberately because an
-# explicit major that doesn't resolve fails the setup phase, which was judged
-# worse than a version mismatch that "only breaks backups". Measured on
-# 2026-07-23, that trade was wrong in both directions:
-#   - the alias resolved to pg_dump 16.4 while Railway's Postgres is 18.3, so
-#     pg_dump refused every dump — backups were not degraded, they were
-#     100% broken, and would have stayed broken indefinitely;
-#   - a setup-phase failure does NOT break the running app. Railway keeps
-#     serving the previous deployment when a build fails, so the downside of
-#     pinning is a failed build, not an outage.
-# So the mismatch is the expensive failure and the pin is the cheap one.
-#
-# pg_dump must be >= the server major. If Railway upgrades Postgres past 18,
-# this must be bumped or backups silently stop. The runtime detection in
-# jobs/backup_db.py (stderr inspection -> "error: pg_dump version mismatch" in
-# services/safe_status.py) stays as the backstop that makes that visible on the
-# Settings screen — it is what surfaced this.
-nixPkgs = ["python311", "gcc", "nodejs_20", "postgresql_18"]
+# postgresql: provides the pg_dump binary jobs/backup_db.py shells out to.
+# Deliberately the unversioned alias, not a pinned major (e.g. postgresql_17)
+# — an explicit major that doesn't resolve in the pinned nixpkgs revision
+# fails the whole setup phase and breaks the entire deploy, which is strictly
+# worse than a pg_dump/server version mismatch (that only breaks backups).
+# pg_dump refusing to dump from a server newer than itself is instead
+# detected at runtime: jobs/backup_db.py inspects pg_dump's stderr for the
+# "server version ... ; pg_dump version ..." wording and records a distinct
+# "error: pg_dump version mismatch" status (services/safe_status.py) so it's
+# diagnosable from the Settings screen rather than failing the deploy.
+nixPkgs = ["python311", "gcc", "nodejs_20", "postgresql"]
 
 [phases.build]
 cmds = ["cd frontend && npm ci && npm run build"]
