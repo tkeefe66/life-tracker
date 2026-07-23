@@ -344,6 +344,44 @@ def is_ambiguous(txn, flow):
                    for _reason, matches in AMBIGUITY_SUPPRESSIONS)
 
 
+# Ordered (token, hints) pairs for triage_signature. Order matters: `apple cash`
+# and `cash app` must be checked before any bare `cash` token, should one ever
+# be added, so a "CASH APP" row doesn't fall through to a looser "cash" match.
+TRIAGE_SIGNATURE_TOKENS = (
+    ("venmo", ("venmo",)),
+    ("zelle", ("zelle",)),
+    ("apple cash", ("apple cash",)),
+    ("cash app", ("cash app", "cashapp")),
+    ("paypal", ("paypal",)),
+    ("atm", ("atm",)),
+)
+
+
+def triage_signature(txn) -> str:
+    """A counterparty grouping token for the triage queue's bulk-action UI —
+    one of "venmo", "zelle", "cash app", "apple cash", "paypal", "atm", or ""
+    for no opinion.
+
+    This is a GROUPING aid only: it never reaches a classification decision and
+    can never change a flow. It reuses `_hint_matches_field` so it inherits the
+    same word-boundary discipline as `is_ambiguous` — a raw substring test is
+    what made "wire" fire on "VERIZON WIRELESS".
+
+    Rows the ambiguity suppressions have already carved out (see
+    AMBIGUITY_SUPPRESSIONS) can never appear in the triage queue, so they must
+    never group either — checked first, before any token.
+    """
+    payee = txn.get("payee")
+    description = txn.get("description")
+    if any(matches(payee, description) for _reason, matches in AMBIGUITY_SUPPRESSIONS):
+        return ""
+    for token, hints in TRIAGE_SIGNATURE_TOKENS:
+        for hint in hints:
+            if _hint_matches_field(hint, payee) or _hint_matches_field(hint, description):
+                return token
+    return ""
+
+
 def classify_all(txns, roles_by_account_id, pair_map, income_hints):
     """Classify a whole window at once.
 

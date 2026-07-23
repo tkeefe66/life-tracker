@@ -676,3 +676,84 @@ def test_suppressions_never_change_the_flow():
     out = bank_flows.classify_all(txns, {1: "spending"}, {}, HINTS)
     assert out["a"] == ("spending", None, False)
     assert out["b"] == ("spending", None, False)
+
+
+# ── triage_signature: a counterparty grouping token, not a classification ─────
+# The token is used only to bulk-select rows in the triage queue's UI; it never
+# feeds classify_flow or is_ambiguous, and it must return "" for anything the
+# suppressions already excluded from the queue so it can never group a row the
+# user will never see.
+
+def test_triage_signature_venmo():
+    t = txn("a", 1, "2026-07-01", -20.0,
+            description="VENMO PAYMENT 1234567 THOMAS KEEFE")
+    assert bank_flows.triage_signature(t) == "venmo"
+
+
+def test_triage_signature_zelle():
+    t = txn("a", 1, "2026-07-01", -20.0, description="ZELLE TO ...")
+    assert bank_flows.triage_signature(t) == "zelle"
+
+
+def test_triage_signature_cash_app():
+    t = txn("a", 1, "2026-07-01", -20.0, description="CASH APP*...")
+    assert bank_flows.triage_signature(t) == "cash app"
+
+
+def test_triage_signature_apple_cash():
+    t = txn("a", 1, "2026-07-01", -20.0, description="APPLE CASH ...")
+    assert bank_flows.triage_signature(t) == "apple cash"
+
+
+def test_triage_signature_atm():
+    t = txn("a", 1, "2026-07-01", -20.0, description="NON-WF ATM WITHDRAWAL ...")
+    assert bank_flows.triage_signature(t) == "atm"
+
+
+def test_triage_signature_paypal():
+    t = txn("a", 1, "2026-07-01", -20.0, description="PAYPAL *URDANETAEVELIN")
+    assert bank_flows.triage_signature(t) == "paypal"
+
+
+def test_triage_signature_suppressed_paypal_purchase_never_groups():
+    """Suppressed from ambiguity entirely, so it can never be in the triage
+    queue — and must not group as if it were."""
+    t = txn("a", 1, "2026-07-01", -95.17, payee="Chewy",
+            description=PAYPAL_PURCHASE_DESC)
+    assert bank_flows.triage_signature(t) == ""
+
+
+def test_triage_signature_suppressed_atm_fee_never_groups():
+    t = txn("a", 1, "2026-07-01", -3.0, payee="ATM Fee", description=ATM_FEE_DESC)
+    assert bank_flows.triage_signature(t) == ""
+
+
+def test_triage_signature_no_opinion_for_ordinary_merchant():
+    t = txn("a", 1, "2026-07-01", -42.0, payee="Trader Joes",
+            description="TRADER JOES #123")
+    assert bank_flows.triage_signature(t) == ""
+
+
+def test_triage_signature_matches_payee_only():
+    t = txn("a", 1, "2026-07-01", -20.0, payee="Venmo", description="")
+    assert bank_flows.triage_signature(t) == "venmo"
+
+
+def test_triage_signature_matches_description_only():
+    t = txn("a", 1, "2026-07-01", -20.0, payee="", description="ZELLE TO KEEFE T")
+    assert bank_flows.triage_signature(t) == "zelle"
+
+
+def test_triage_signature_empty_fields_yield_no_opinion():
+    t = txn("a", 1, "2026-07-01", -20.0, payee="", description="")
+    assert bank_flows.triage_signature(t) == ""
+
+
+def test_triage_signature_is_case_insensitive_and_word_bounded():
+    """'WIRELESS' alone must not yield a 'wire'-shaped token — there is no
+    'wire' entry in triage_signature's token set, but this locks the same
+    word-boundary discipline `_hint_matches_field` gives every other hint in
+    the module."""
+    t = txn("a", 1, "2026-07-01", -265.26, payee="Verizon Wireless",
+            description="VERIZON WIRELESS PAYMENTS")
+    assert bank_flows.triage_signature(t) == ""
