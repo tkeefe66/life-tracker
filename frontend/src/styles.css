@@ -199,6 +199,76 @@ button.item:active { transform: scale(0.985); }
 .quiet .when { margin-left: auto; font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
 .quiet.empty { color: var(--muted); font-size: 0.85rem; }
 
+button.quiet-btn {
+  width: 100%;
+  border: none;
+  background: none;
+  text-align: left;
+  border-radius: 8px;
+}
+button.quiet-btn:active { background: var(--accent-soft); }
+
+/* ── Social event add/edit inline forms ── */
+.social-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 12px 14px;
+  margin: 6px 0 10px;
+}
+
+.social-form input[type="text"] {
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.social-form .check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.social-form .row-actions { display: flex; gap: 8px; margin-top: 2px; }
+.social-form .row-actions button {
+  flex: 1;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.social-form .row-actions button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+.social-form .row-actions button.danger {
+  color: var(--danger);
+  border-color: color-mix(in oklch, var(--danger) 40%, var(--line));
+}
+
+.add-social-btn {
+  width: 100%;
+  padding: 10px 14px;
+  margin-top: 4px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r);
+  background: none;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
 /* ─── Meters (week progress) ─── */
 
 .meter {
