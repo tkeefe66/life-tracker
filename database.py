@@ -1173,9 +1173,9 @@ def set_bank_transactions_derived_bulk(items):
 def set_bank_flow_override(simplefin_id, user_flow):
     """The confirmed user verdict. Returns True iff a row was updated.
 
-    No route wires this up yet — there is no bank UI in this phase — so a
-    future reader should not assume COALESCE(user_flow, flow) can currently
-    resolve to anything but `flow`."""
+    Wired up by POST /api/bank/transactions/{id}/flow (triage), so
+    COALESCE(user_flow, flow) can resolve to the user's value anywhere
+    resolved_flow is read."""
     if user_flow is not None and user_flow not in BANK_FLOWS:
         raise ValueError(f"unknown flow: {user_flow}")
     p = _p()
