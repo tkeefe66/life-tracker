@@ -10,6 +10,7 @@ import receipts
 from config import TIMEZONE
 from services import google_auth
 from services.gmail_service import fetch_delivery_candidates
+from services.safe_status import safe_status
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,10 @@ def run():
             len(candidates), ai_checked, added, rides_added,
         )
     except Exception as e:
+        # Full detail server-side only (Railway logs are not user-facing). The DB
+        # value must come from the closed set — never str(e) — because a future
+        # SimpleFIN URL carries its bank credentials inside the URL itself, and
+        # HTTP libraries routinely put that URL into the exception message.
         logger.exception("Gmail scan failed")
         db.set_setting("gmail_last_run", _now_iso())
-        db.set_setting("gmail_last_status", f"error: {e}")
+        db.set_setting("gmail_last_status", safe_status(e))

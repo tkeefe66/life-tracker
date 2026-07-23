@@ -43,7 +43,10 @@ def _call_json(prompt: str, max_tokens: int = 300, default=None):
             raise ValueError(f"expected JSON object, got {type(parsed).__name__}")
         return parsed
     except Exception as e:
-        logger.error("ai_metrics JSON call failed: %s | raw=%r", e, raw)
+        # `raw` is model output generated from personal content (and, once bank
+        # data flows through this same helper, transaction descriptions) — cap
+        # what lands in logs rather than dumping the full response.
+        logger.error("ai_metrics JSON call failed: %s | raw=%r", e, raw[:40])
         return default if default is not None else {}
 
 
