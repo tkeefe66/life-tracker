@@ -179,6 +179,84 @@ def test_weekly_reflection_empty_on_non_dict_json(mock_anthropic):
     assert ai_metrics.weekly_reflection(_card(), []) == ""
 
 
+def _bank_row(simplefin_id="tx1", amount=-42.00, payee="Amazon", description="AMZN MKTP", **extra):
+    row = {
+        "simplefin_id": simplefin_id, "amount": amount, "payee": payee,
+        "description": description,
+    }
+    row.update(extra)
+    return row
+
+
+def test_suggest_bank_flows_valid_mapping_passes(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"tx1": "spending"}')
+    rows = [_bank_row("tx1", amount=-42.00)]
+    out = ai_metrics.suggest_bank_flows(rows, [])
+    assert out == {"tx1": "spending"}
+
+
+def test_suggest_bank_flows_inflow_row_suggested_spending_dropped(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"tx1": "spending"}')
+    rows = [_bank_row("tx1", amount=100.00)]  # inflow
+    out = ai_metrics.suggest_bank_flows(rows, [])
+    assert out == {}
+
+
+def test_suggest_bank_flows_unknown_id_dropped(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"tx1": "spending", "tx-unknown": "income"}')
+    rows = [_bank_row("tx1", amount=-10.00)]
+    out = ai_metrics.suggest_bank_flows(rows, [])
+    assert out == {"tx1": "spending"}
+
+
+def test_suggest_bank_flows_null_value_dropped(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"tx1": null}')
+    rows = [_bank_row("tx1", amount=-10.00)]
+    out = ai_metrics.suggest_bank_flows(rows, [])
+    assert out == {}
+
+
+def test_suggest_bank_flows_non_dict_model_return_is_empty(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, "[1, 2, 3]")
+    rows = [_bank_row("tx1", amount=-10.00)]
+    out = ai_metrics.suggest_bank_flows(rows, [])
+    assert out == {}
+
+
+def test_suggest_bank_flows_empty_rows_no_call(mock_anthropic):
+    import ai_metrics
+    out = ai_metrics.suggest_bank_flows([], [])
+    assert out == {}
+    mock_anthropic.messages.create.assert_not_called()
+
+
+def test_suggest_bank_flows_prompt_excludes_note_and_extra_fields(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"tx1": "spending"}')
+    rows = [_bank_row(
+        "tx1", amount=-10.00,
+        user_note="SENTINEL-NOTE-TEXT",
+        account_name="SENTINEL-ACCOUNT-NAME",
+        memo="SENTINEL-JUNK-KEY",
+    )]
+    examples = [{
+        "payee": "Costco", "description": "COSTCO WHSE", "side": "outflow",
+        "user_flow": "spending", "user_note": "SENTINEL-NOTE-TEXT",
+    }]
+    ai_metrics.suggest_bank_flows(rows, examples)
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "SENTINEL-NOTE-TEXT" not in prompt
+    assert "SENTINEL-ACCOUNT-NAME" not in prompt
+    assert "SENTINEL-JUNK-KEY" not in prompt
+    assert "-10" not in prompt
+    assert "10.0" not in prompt
+
+
 def test_classify_work_ride_returns_parsed_dict(mock_anthropic):
     import ai_metrics
     _set_response(mock_anthropic, '{"is_work": true, "confidence": 0.8}')

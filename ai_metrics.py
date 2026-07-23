@@ -162,6 +162,75 @@ Reply with only JSON: {{"is_work": true|false, "confidence": 0.0-1.0}}"""
     return {"is_work": bool(result.get("is_work", False)), "confidence": confidence}
 
 
+_BANK_SIDE_FLOWS = {
+    "inflow": {"income", "transfer", "refund"},
+    "outflow": {"spending", "transfer", "card_payment", "investment"},
+}
+
+
+def _bank_side(row: dict) -> str:
+    return "inflow" if row.get("amount", 0) > 0 else "outflow"
+
+
+def suggest_bank_flows(rows: list, examples: list = None) -> dict:
+    """Suggest a flow for each unanswered bank row, one Claude call for the
+    whole batch. Returns only VALIDATED suggestions — unknown ids, values
+    outside the row's side-specific allowed set, and null (abstain) answers
+    are all absent from the result, never written.
+
+    Field selection is explicit and exhaustive here: only simplefin_id,
+    payee, description, and a derived side ever reach the prompt. `rows` and
+    `examples` are full DB-row dicts that also carry user_note, amount,
+    account fields, etc. — those must never leak into the model call (spec
+    §1), so this function must not serialize either dict wholesale."""
+    if not rows:
+        return {}
+    examples = examples or []
+
+    row_sides = {r["simplefin_id"]: _bank_side(r) for r in rows}
+
+    row_lines = "\n".join(
+        f'{r["simplefin_id"]} | payee: {r["payee"]} | description: {r["description"]} | side: {row_sides[r["simplefin_id"]]}'
+        for r in rows
+    )
+
+    example_block = ""
+    if examples:
+        example_lines = "\n".join(
+            f'- payee: {e["payee"]} | description: {e["description"]} | side: {e["side"]} -> {e["user_flow"]}'
+            for e in examples
+        )
+        example_block = f"\nThe user's past answers:\n{example_lines}\n"
+
+    prompt = f"""You classify bank transactions into a flow category.
+
+Inflow rows (deposits) get one of: income, transfer, refund.
+Outflow rows (charges) get one of: spending, transfer, card_payment, investment.
+
+Use the row's own side to pick from the matching list above. A wrong
+suggestion is worse than none — if you are not confident, answer null for
+that row.
+{example_block}
+Classify each of these rows:
+{row_lines}
+
+Reply with only JSON mapping each id to its flow (or null to abstain), e.g.
+{{"id1": "spending", "id2": null}}"""
+
+    result = _call_json(prompt, max_tokens=1000, default={})
+    if not isinstance(result, dict):
+        return {}
+
+    out = {}
+    for row_id, flow in result.items():
+        side = row_sides.get(row_id)
+        if side is None or flow is None:
+            continue
+        if flow in _BANK_SIDE_FLOWS[side]:
+            out[row_id] = flow
+    return out
+
+
 def weekly_reflection(card: dict, noticings: list) -> str:
     """2-3 sentence reflection on a completed week. Returns "" on any failure."""
     lines = []
