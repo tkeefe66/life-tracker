@@ -10,6 +10,7 @@ transactions are money *moving*, not money *spent*. Summing outflows naively
 would double-count every credit-card purchase and invent spending from
 checking-to-checking transfers.
 """
+import re
 from datetime import date
 
 # Transfer-ish wording that we can't yet prove is a transfer. An unpaired
@@ -86,12 +87,29 @@ def match_pairs(txns, window_days=3):
     return matched
 
 
-def classify_flow(txn, role, partner_role, income_hints):
+def _hint_matches_field(hint, field):
+    """Word-boundary substring match: `hint` (already stripped + lowercased) must
+    match `field` (case-insensitive) with no word character immediately before or
+    after it. Prevents a short hint like "pay" or "ach" from sweeping up unrelated
+    deposits ("payroll", "beach") — see Finding 6 in the Task 4 review."""
+    if not hint:
+        return False
+    pattern = r"(?<!\w)" + re.escape(hint) + r"(?!\w)"
+    return re.search(pattern, (field or "").lower()) is not None
+
+
+def classify_flow(txn, role, partner_role, paired, income_hints):
     """Classify one transaction. Rules apply in order; the first match wins, and
     only the final fallback is a guess.
 
     `role` is the role of this transaction's own account; `partner_role` is the
-    role of the account on the other half of a matched pair, or None if unpaired.
+    role of the account on the other half of a matched pair, or None if that
+    partner's role is unknown (including a partner that exists but has aged out
+    of the current classification window). `paired` is the explicit signal for
+    "this transaction is one half of a matched pair" — it must NOT be inferred
+    from `partner_role is not None`, because a partner can be legitimately
+    matched (`pair_id` set) while its row is absent from this window, which
+    would otherwise present identically to a genuinely unpaired transaction.
     """
     # 1. Investment — either side. Contributions and the backdoor-Roth conversion
     #    leg are saving, never spending. Investment-to-investment contributes to
@@ -102,21 +120,33 @@ def classify_flow(txn, role, partner_role, income_hints):
     # 2. Card payment — a matched pair with a credit card on one side. The
     #    purchases are already recorded on the card; counting the payment too
     #    would double-count. Reported separately so paydown reads as progress.
-    if partner_role is not None and "credit_card" in (role, partner_role):
+    #    Knowing THIS side is a credit card is enough even if the partner's role
+    #    is unknown (partner missing from the window).
+    if paired and "credit_card" in (role, partner_role):
         return "card_payment"
 
-    # 3. Transfer — any other matched pair between two known accounts.
-    if partner_role is not None:
+    # 3. Transfer — any other matched pair between two known accounts. Also the
+    #    landing spot when a matched pair's partner has aged out of the window:
+    #    a paired row must never fall through to rules 4/5/6 just because its
+    #    partner isn't visible right now — that would invent phantom spending or
+    #    (worse) mislabel a payroll-shaped transfer as income.
+    if paired:
         return "transfer"
 
     amount = float(txn["amount"])
 
     # 4. Income — an unpaired deposit into a spending/bills account whose payee or
-    #    description matches a configured payroll signature. Conservative by design.
+    #    description matches a configured payroll signature. Conservative by
+    #    design, and reachable ONLY when genuinely unpaired (see rule 3 above).
     if amount > 0 and role in ("spending", "bills"):
-        haystack = f"{txn.get('payee') or ''} {txn.get('description') or ''}".lower()
-        if any(h.lower() in haystack for h in income_hints if h):
-            return "income"
+        payee = txn.get("payee")
+        description = txn.get("description")
+        for h in income_hints:
+            hint = (h or "").strip().lower()
+            if not hint:
+                continue
+            if _hint_matches_field(hint, payee) or _hint_matches_field(hint, description):
+                return "income"
 
     # 5. Any other unpaired deposit. Counted as neither income nor spending.
     #    This is the SoFi hazard guard: money drawn down from an unconnected
@@ -173,8 +203,12 @@ def classify_all(txns, roles_by_account_id, pair_map, income_hints):
         if pid:
             others = [o for o in partners.get(pid, []) if o["simplefin_id"] != sfid]
             if others:
+                # Sort so the chosen partner (and thus the resulting flow) doesn't
+                # depend on input order — matches match_pairs()'s own tie-breaking
+                # discipline. Only reachable with 3+ rows sharing a stale pair_id.
+                others.sort(key=lambda o: str(o["simplefin_id"]))
                 partner_role = roles_by_account_id.get(others[0]["account_id"], "unknown")
 
-        flow = classify_flow(t, role, partner_role, income_hints)
+        flow = classify_flow(t, role, partner_role, paired=bool(pid), income_hints=income_hints)
         out[sfid] = (flow, pid, is_ambiguous(t, flow))
     return out
