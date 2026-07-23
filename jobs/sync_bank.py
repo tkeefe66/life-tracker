@@ -14,6 +14,7 @@ import logging
 
 import pytz
 
+import ai_metrics
 import bank_flows
 import database as db
 from config import INCOME_PAYEE_HINTS, PAIR_WINDOW_DAYS, TIMEZONE
@@ -26,6 +27,32 @@ logger = logging.getLogger(__name__)
 
 def _now_iso() -> str:
     return datetime.datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+
+
+def _suggest_triage_flows():
+    """Post-reclassify suggestion pass (spec §4): up to 3 batches of 40 queue
+    rows still missing a `suggested_flow`, one `ai_metrics.suggest_bank_flows`
+    call per batch.
+
+    Written suggestions drop the row out of the next `get_bank_unsuggested_triage`
+    query on their own, so the loop's natural exit is an empty batch. The extra
+    `written == 0` break guards the case a batch comes back with nothing
+    writable (every row abstained, or every suggestion failed validation) —
+    without it, that same batch would be re-queried and re-sent up to 3 times.
+
+    Called only from inside run()'s own try block, after the reclassify/derived
+    write, so it never runs on the not-configured no-op path or after a sync
+    failure that already returned/raised.
+    """
+    for _ in range(3):
+        batch = db.get_bank_unsuggested_triage(40)
+        if not batch:
+            break
+        examples = db.get_bank_flow_examples()
+        mapping = ai_metrics.suggest_bank_flows(batch, examples)
+        written = db.set_bank_suggestions_bulk(mapping)
+        if written == 0:
+            break
 
 
 def run(payload=None):
@@ -116,6 +143,16 @@ def run(payload=None):
         )
         logger.info("Bank sync: %d accounts, %d transactions, %d skipped, flows=%s",
                     len(accounts), added, skipped, counts)
+
+        # Own try/except, deliberately outside the block above: suggestions
+        # are an enhancement, not part of the sync's contract, so a failure
+        # here must never overwrite the status the sync itself already earned
+        # (see the except Exception branch below, which does exactly that for
+        # a genuine sync failure).
+        try:
+            _suggest_triage_flows()
+        except Exception:
+            logger.exception("Bank suggestion pass failed")
     except SimpleFinError as e:
         # Already logged server-side inside the service. `e.status` carries no
         # message text, but `SimpleFinError.__init__` accepts any string — the

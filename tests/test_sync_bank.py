@@ -30,6 +30,28 @@ def _payload():
     }
 
 
+def _inflow_unknown_payload(n, prefix="d", account_id="mystery"):
+    """`n` unpaired positive-amount deposits into a role="unknown" account.
+
+    No matching negative counterpart exists anywhere, so match_pairs never
+    pairs them, and rule 6 in bank_flows.classify_flow ("any other unpaired
+    deposit") lands every one of them in inflow_unknown — exactly the queue
+    bucket get_bank_unsuggested_triage selects on, with no role/income-hint
+    setup required.
+    """
+    return {
+        "accounts": [
+            {"id": account_id, "name": "Mystery Account", "org": {"name": "Some Bank"},
+             "transactions": [
+                 {"id": f"{prefix}{i}", "posted": _POSTED - i, "amount": f"{10 + i}.00",
+                  "description": f"MYSTERY DEPOSIT {i}"}
+                 for i in range(n)
+             ]},
+        ],
+        "errors": [],
+    }
+
+
 def _configure(monkeypatch, roles=True):
     import database as db
     from jobs import sync_bank
@@ -255,3 +277,122 @@ def test_simplefin_error_with_a_non_closed_set_status_is_normalized_before_stora
     status = db.get_setting("bank_last_status")
     assert status == "error: see logs"
     assert status in CLOSED_SET
+
+
+# ---------------------------------------------------------------------------
+# Post-reclassify suggestion pass (spec §4)
+# ---------------------------------------------------------------------------
+
+def test_suggestion_pass_writes_suggestions_for_unsuggested_queue_rows(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import sync_bank
+    monkeypatch.setattr(sync_bank.simplefin_service, "is_configured", lambda: True)
+
+    def canned(rows, examples):
+        return {r["simplefin_id"]: "income" for r in rows}
+
+    monkeypatch.setattr(sync_bank.ai_metrics, "suggest_bank_flows", canned)
+    sync_bank.run(payload=_inflow_unknown_payload(2))
+
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2000-01-01", "2030-01-01")}
+    assert rows["d0"]["suggested_flow"] == "income"
+    assert rows["d1"]["suggested_flow"] == "income"
+    assert db.get_setting("bank_last_status") == "ok"
+
+
+def test_suggestion_pass_never_resends_an_already_suggested_row(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import sync_bank
+    monkeypatch.setattr(sync_bank.simplefin_service, "is_configured", lambda: True)
+
+    calls = []
+
+    def canned(rows, examples):
+        calls.append([r["simplefin_id"] for r in rows])
+        return {r["simplefin_id"]: "income" for r in rows}
+
+    monkeypatch.setattr(sync_bank.ai_metrics, "suggest_bank_flows", canned)
+    sync_bank.run(payload=_inflow_unknown_payload(2))  # d0, d1 both get suggested_flow="income"
+
+    calls.clear()
+    sync_bank.run(payload=_inflow_unknown_payload(2))  # re-sync same rows
+
+    # Both rows already carry a suggestion, so no batch should ever contain them.
+    seen = {sfid for call in calls for sfid in call}
+    assert seen == set()
+
+
+def test_suggestion_pass_batches_at_most_three_calls_of_at_most_forty(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import sync_bank
+    monkeypatch.setattr(sync_bank.simplefin_service, "is_configured", lambda: True)
+
+    calls = []
+
+    def canned(rows, examples):
+        calls.append([r["simplefin_id"] for r in rows])
+        return {r["simplefin_id"]: "income" for r in rows}  # every row gets suggested -> loop progresses
+
+    monkeypatch.setattr(sync_bank.ai_metrics, "suggest_bank_flows", canned)
+    sync_bank.run(payload=_inflow_unknown_payload(100))
+
+    assert len(calls) == 3
+    assert [len(c) for c in calls] == [40, 40, 20]
+
+    suggested = {r["simplefin_id"] for r in db.get_bank_transactions_range("2000-01-01", "2030-01-01")
+                 if r["suggested_flow"] is not None}
+    assert len(suggested) == 100
+
+
+def test_suggestion_pass_stops_after_an_all_abstain_batch(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import sync_bank
+    monkeypatch.setattr(sync_bank.simplefin_service, "is_configured", lambda: True)
+
+    calls = []
+
+    def abstains_always(rows, examples):
+        calls.append(rows)
+        return {}  # every row abstained -> written == 0 -> loop must break, not spin 3x on same rows
+
+    monkeypatch.setattr(sync_bank.ai_metrics, "suggest_bank_flows", abstains_always)
+    sync_bank.run(payload=_inflow_unknown_payload(5))
+
+    assert len(calls) == 1
+    assert db.get_setting("bank_last_status") == "ok"
+
+
+def test_suggestion_pass_failure_does_not_touch_sync_status_or_write_anything(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import sync_bank
+
+    monkeypatch.setattr(sync_bank.simplefin_service, "is_configured", lambda: True)
+
+    def boom(rows, examples):
+        raise RuntimeError("AI is down")
+
+    monkeypatch.setattr(sync_bank.ai_metrics, "suggest_bank_flows", boom)
+    sync_bank.run(payload=_inflow_unknown_payload(2))  # must not raise
+
+    assert db.get_setting("bank_last_status") == "ok"  # exactly what a suggestion-free sync records
+    rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2000-01-01", "2030-01-01")}
+    assert rows["d0"]["suggested_flow"] is None
+    assert rows["d1"]["suggested_flow"] is None
+
+
+def test_zero_unsuggested_rows_makes_zero_ai_calls(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import sync_bank
+
+    calls = []
+
+    def canned(rows, examples):
+        calls.append(rows)
+        return {}
+
+    monkeypatch.setattr(sync_bank.ai_metrics, "suggest_bank_flows", canned)
+    # _configure's default payload (card payment + spending) never lands in the
+    # ambiguous/inflow_unknown triage buckets, so the queue starts empty.
+    _configure(monkeypatch)
+
+    assert calls == []
