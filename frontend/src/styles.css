@@ -629,9 +629,6 @@ button.quiet-btn:active { background: var(--accent-soft); }
 .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--ink-2); }
 .legend-swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 
-.item-day { font-size: 0.75rem; color: var(--muted); margin: 14px 4px 4px; }
-.item-day:first-child { margin-top: 8px; }
-
 /* ── Numbers table ── */
 details.numbers {
   background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
