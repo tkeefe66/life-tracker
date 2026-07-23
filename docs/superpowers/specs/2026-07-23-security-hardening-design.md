@@ -20,7 +20,7 @@ It is a prerequisite phase, not a general security rewrite.
 
 | # | Finding | How verified |
 |---|---|---|
-| 1 | Postgres has a public TCP proxy (`crossover.proxy.rlwy.net:16946`) the app never uses — it connects via `postgres.railway.internal` | `railway variables` on both services |
+| 1 | Postgres had a public TCP proxy the app never used — it connects via `postgres.railway.internal` | `railway variables` on both services |
 | 2 | No brute-force protection on `/api/login` | 8 wrong passwords in <1s, all 401 at ~70ms, no throttling |
 | 3 | Session token is static (`HMAC(APP_PASSWORD, "on-track-session-v1")`), never expires, cannot be revoked; no logout endpoint exists | `app/auth.py:12-13`, `app/api.py:30`, grep for logout |
 | 4 | Exception text is stored and rendered: `except Exception as e: db.set_setting(..., f"error: {e}")` → `/api/settings` → Settings screen | `jobs/*.py`, `app/routes.py`, `Settings.tsx`; a Gmail URL already leaked this way |
