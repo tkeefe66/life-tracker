@@ -21,11 +21,26 @@ asked.
 - **965 transactions / 90 days** across 12 accounts. SimpleFIN caps history at
   a **rolling 90 days**, so anything older is unrecoverable and history only
   accumulates from first sync. This argues for ingesting early.
+- **A raw snapshot was captured on 2026-07-22** (`scripts/simplefin_snapshot.py`)
+  covering 2026-04-25 → 2026-07-21, before the sync job existed, precisely so
+  the decay clock stopped. It is stored unredacted, mode 0600, outside the repo
+  at `~/.on-track/simplefin-snapshots/`. The sync job must be replayable against
+  a saved payload rather than only against the live API, so this snapshot can be
+  backfilled once the schema lands. Re-run the script periodically until the job
+  ships.
 - Every transaction carries `id`, `posted`, `transacted_at`, `amount`,
   `description`, `payee`, `memo`, and **`mcc`** (merchant category code).
-  MCC makes categorization mostly a lookup rather than an inference.
-  *Unverified:* whether `mcc` is populated or merely present — non-card
-  checking activity likely has none. The ingest must tolerate empty values.
+- **MCC is far thinner than assumed, and thin in the worst place.** Verified
+  against the 2026-07-22 snapshot: populated on 254/965 (26%), and *every one*
+  of those comes from Wells Fargo — 65% of 7395, 13% of 4116, 0% elsewhere.
+  **All four credit cards report zero MCC, including the Amex Platinum**, which
+  is the primary spender at 255 transactions. The original assumption was
+  backwards: it is card activity that lacks MCC here, not checking.
+  Consequence: categorization cannot be an MCC lookup with a fallback; it is
+  description/payee inference for the majority of real spending, with MCC as a
+  bonus where present. That work is out of scope for this phase (§6), but the
+  phase that takes it on should not be planned around MCC coverage.
+  The ingest must tolerate empty values, which is the common case.
 - 244 transactions match transfer-like wording. 173 inflows, 792 outflows.
 - SoFi (high-interest savings) is **not** among the connected accounts.
 
