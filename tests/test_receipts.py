@@ -56,3 +56,23 @@ def test_extract_amount():
     assert extract_amount("Total $20") == 20.0
     assert extract_amount("No amount here") is None
     assert extract_amount(None) is None
+
+
+# ── Rides ─────────────────────────────────────────────────────────────────────
+
+def test_ride_domains_and_classify_ride():
+    from receipts import classify_ride
+    assert classify_ride("noreply@uber.com", "Your Sunday morning trip with Uber") == ("ride", "Uber")
+    assert classify_ride("no-reply@lyft.com", "Your ride with Lyft") == ("ride", "Lyft")
+    assert classify_ride("noreply@uber.com", "Your Monday order with Uber Eats")[0] == "not_ride"
+    assert classify_ride("noreply@uber.com", "50% off your next ride")[0] == "not_ride"
+    assert classify_ride("someone@example.com", "Your trip")[0] == "not_ride"
+    assert classify_ride("noreply@uber.com", "Reservation confirmed for Saturday")[0] == "ambiguous"
+
+
+def test_extract_ride_time():
+    from receipts import extract_ride_time
+    assert extract_ride_time("Jul 19, 2026 4:03 AM Thanks for riding") == "2026-07-19T04:03"
+    assert extract_ride_time("Jul 19, 2026 11:34 PM charge summary") == "2026-07-19T23:34"
+    assert extract_ride_time("no timestamp here") is None
+    assert extract_ride_time(None) is None
