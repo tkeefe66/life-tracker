@@ -389,6 +389,17 @@ def test_get_ride_examples_only_overridden_newest_first_capped(temp_db_path):
     assert bool(examples[1]["user_is_work"]) is False
 
 
+def test_get_ride_examples_normalizes_bool_type(temp_db_path):
+    """SQLite stores booleans as 0/1 ints — get_ride_examples must normalize like
+    _ride_bool_rows does elsewhere in this layer, not leak raw ints to callers."""
+    db = _db(temp_db_path)
+    db.add_ride("r1", "Uber", "2026-07-15T08:03:00-06:00", "2026-07-15T08:03", "Trip")
+    ride = db.find_ride_by_key("Uber", "2026-07-15T08:03")
+    db.set_ride_work_override(ride["id"], True)
+    examples = db.get_ride_examples()
+    assert examples[0]["user_is_work"] is True  # real bool, not SQLite's 0/1 int
+
+
 def test_get_ride_examples_respects_limit(temp_db_path):
     db = _db(temp_db_path)
     for i in range(5):

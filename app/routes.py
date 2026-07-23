@@ -218,7 +218,15 @@ def get_rides(days: int = 60):
     start = end - datetime.timedelta(days=d)
     rides = db.get_rides_range(start.isoformat(), end.isoformat())
     rides.sort(key=lambda r: r["ride_at"], reverse=True)
-    return {"rides": [{**r, "is_work": bool(r["user_is_work"])} for r in rides]}
+    return {"rides": [
+        {
+            "id": r["id"], "service": r["service"], "ride_at": r["ride_at"],
+            "subject": r["subject"], "amount": r["amount"],
+            "ai_is_work": r["ai_is_work"], "user_is_work": r["user_is_work"],
+            "is_work": bool(r["user_is_work"]),
+        }
+        for r in rides
+    ]}
 
 
 @router.patch("/rides/{ride_id}")

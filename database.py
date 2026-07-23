@@ -887,17 +887,26 @@ def find_ride_by_key(service, ride_key):
     p = _p()
     with _cursor() as c:
         c.execute(
-            f"SELECT id, amount FROM rides WHERE service = {p} AND ride_key = {p}",
+            f"SELECT id, amount, ride_at FROM rides WHERE service = {p} AND ride_key = {p}",
             (service, ride_key),
         )
         row = c.fetchone()
         return dict(row) if row else None
 
 
-def set_ride_amount(ride_id, amount):
+def set_ride_amount(ride_id, amount, ride_at=None):
+    """Updates amount. When `ride_at` is given, also updates it — the caller uses
+    this to record which candidate's timestamp currently backs the stored amount,
+    so a later comparison (newer email wins) stays correct across repeated scans."""
     p = _p()
     with _cursor(write=True) as c:
-        c.execute(f"UPDATE rides SET amount = {p} WHERE id = {p}", (amount, ride_id))
+        if ride_at is not None:
+            c.execute(
+                f"UPDATE rides SET amount = {p}, ride_at = {p} WHERE id = {p}",
+                (amount, ride_at, ride_id),
+            )
+        else:
+            c.execute(f"UPDATE rides SET amount = {p} WHERE id = {p}", (amount, ride_id))
 
 
 def set_ride_classification(ride_id, is_work, confidence):
@@ -951,4 +960,8 @@ def get_ride_examples(limit=10):
                 ORDER BY id DESC LIMIT {p}""",
             (limit,),
         )
-        return [dict(r) for r in c.fetchall()]
+        rows = [dict(r) for r in c.fetchall()]
+        # Cast to a real bool — SQLite returns 0/1 ints, same as _ride_bool_rows above.
+        for r in rows:
+            r["user_is_work"] = bool(r["user_is_work"])
+        return rows

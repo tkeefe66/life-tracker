@@ -36,11 +36,21 @@ def run():
 
             ride_verdict, ride_service = receipts.classify_ride(cand["sender"], cand["subject"])
             if ride_verdict == "ride":
-                key = receipts.extract_ride_time(snippet) or f"{day}|{cand['subject']}|{amount}"
+                # No amount in the fallback key: two duplicate emails for one trip
+                # (receipt vs adjusted charge summary) usually carry different totals,
+                # and including amount here would defeat dedupe exactly when it matters.
+                key = receipts.extract_ride_time(snippet) or f"{day}|{cand['subject']}"
                 existing = db.find_ride_by_key(ride_service, key)
                 if existing:
-                    if amount is not None:
-                        db.set_ride_amount(existing["id"], amount)
+                    # Gmail's messages.list returns newest-first, so within one scan
+                    # the OLDER email is processed last. Only overwrite when this
+                    # candidate is genuinely newer than what produced the stored
+                    # amount (ties keep the stored value) — otherwise "later email
+                    # wins" silently inverts into "whichever is processed last wins",
+                    # and since the losing candidate's message id is never recorded,
+                    # it would keep re-pinning the wrong amount on every future scan.
+                    if amount is not None and cand["ordered_at"] > existing["ride_at"]:
+                        db.set_ride_amount(existing["id"], amount, cand["ordered_at"])
                     continue
                 if db.add_ride(cand["gmail_message_id"], ride_service, cand["ordered_at"],
                                key, cand["subject"], amount):

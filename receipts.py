@@ -69,7 +69,8 @@ RIDE_DOMAINS = {"uber.com": "Uber", "lyft.com": "Lyft"}
 
 _ORDER_WORDS_RE = re.compile(r"\b(order|eats)\b", re.IGNORECASE)
 _RIDE_TIME_RE = re.compile(
-    r"([A-Z][a-z]{2}) (\d{1,2}), (\d{4})[, ]+(\d{1,2}):(\d{2})\s*([AP]M)"
+    r"([A-Z][a-z]{2}) (\d{1,2}), (\d{4})[, ]+(\d{1,2}):(\d{2})\s*([AP]M)",
+    re.IGNORECASE,
 )
 _MONTHS = {m: i for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}

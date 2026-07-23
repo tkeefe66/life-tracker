@@ -76,3 +76,18 @@ def test_extract_ride_time():
     assert extract_ride_time("Jul 19, 2026 11:34 PM charge summary") == "2026-07-19T23:34"
     assert extract_ride_time("no timestamp here") is None
     assert extract_ride_time(None) is None
+
+
+def test_extract_ride_time_lowercase_ampm():
+    """Some Uber/Lyft templates render the time marker lowercase."""
+    from receipts import extract_ride_time
+    assert extract_ride_time("Jul 19, 2026 4:03 am Thanks for riding") == "2026-07-19T04:03"
+    assert extract_ride_time("Jul 19, 2026 11:34 pm charge summary") == "2026-07-19T23:34"
+
+
+def test_extract_ride_time_noon_and_midnight():
+    """12-hour math: 12 AM is hour 0, 12 PM is hour 12 — an off-by-twelve bug
+    would only surface at the 12:xx boundary."""
+    from receipts import extract_ride_time
+    assert extract_ride_time("Jan 1, 2026 12:05 AM") == "2026-01-01T00:05"
+    assert extract_ride_time("Jan 1, 2026 12:05 PM") == "2026-01-01T12:05"

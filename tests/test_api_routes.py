@@ -339,10 +339,35 @@ def test_get_rides_shape_order_and_days_clamp(temp_db_path):
     body = client.get("/api/rides").json()
     assert [r["service"] for r in body["rides"]] == ["Lyft", "Uber"]  # newest-first
     row = body["rides"][0]
-    assert {"id", "service", "ride_at", "subject", "amount", "ai_is_work", "user_is_work", "is_work"} <= set(row.keys())
+    assert set(row.keys()) == {"id", "service", "ride_at", "subject", "amount",
+                                "ai_is_work", "user_is_work", "is_work"}  # ai_confidence not exposed
     assert row["is_work"] is False  # unresolved verdict defaults to not-work
-    # days clamp: 0 -> 1; a 1-day window excludes both seeded rides
-    assert client.get("/api/rides?days=0").json()["rides"] == []
+
+
+def test_get_rides_days_lower_bound_clamps_to_1(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    db.add_ride("r1", "Uber", f"{yesterday}T08:00:00", f"{yesterday}T08:00", "Yesterday ride", 12.0)
+
+    # A literal 0-day window would be [today, today] and exclude yesterday's ride;
+    # days=0 clamping to 1 reaches back to yesterday and includes it.
+    body = client.get("/api/rides?days=0").json()
+    assert [r["subject"] for r in body["rides"]] == ["Yesterday ride"]
+
+
+def test_get_rides_days_upper_bound_clamps_to_365(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    within = (datetime.date.today() - datetime.timedelta(days=200)).isoformat()
+    beyond = (datetime.date.today() - datetime.timedelta(days=400)).isoformat()
+    db.add_ride("r1", "Uber", f"{within}T08:00:00", f"{within}T08:00", "Within 365", 12.0)
+    db.add_ride("r2", "Lyft", f"{beyond}T08:00:00", f"{beyond}T08:00", "Beyond 365", 20.0)
+
+    # days=1000 clamps to 365: the 400-day-old ride is excluded even though 400 < 1000,
+    # proving the clamp actually caps the window rather than passing days through raw.
+    body = client.get("/api/rides?days=1000").json()
+    assert [r["subject"] for r in body["rides"]] == ["Within 365"]
 
 
 def test_get_rides_resolved_is_work_reflects_user_override(temp_db_path):

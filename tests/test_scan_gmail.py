@@ -362,6 +362,89 @@ def test_two_distinct_rides_same_morning_identical_subject_two_rows(temp_db_path
     assert {r["amount"] for r in rides} == {9.00, 11.00}
 
 
+def test_ride_amount_later_email_wins_within_single_run(temp_db_path, monkeypatch):
+    """Gmail's messages.list returns newest-first, so the genuinely later (by
+    timestamp) email must win the amount even when it's processed FIRST in the run."""
+    import database as db
+    from jobs import scan_gmail
+
+    receipt = {"gmail_message_id": "ride-receipt", "sender": "noreply@uber.com",
+               "subject": "Your Sunday morning trip with Uber",
+               "ordered_at": "2026-07-19T04:10:00-06:00",
+               "snippet": "Jul 19, 2026 4:03 AM Thanks for riding with Uber Total $14.00"}
+    charge_summary = {"gmail_message_id": "ride-charge", "sender": "noreply@uber.com",
+                       "subject": "Your Sunday morning trip with Uber",
+                       "ordered_at": "2026-07-19T04:15:00-06:00",
+                       "snippet": "Jul 19, 2026 4:03 AM charge summary Total $16.50"}
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    monkeypatch.setattr(scan_gmail.ai_metrics, "classify_work_ride",
+                        lambda *a, **k: {"is_work": False, "confidence": 0.0})
+    # Newest-first: charge_summary (04:15) is listed before receipt (04:10), as
+    # Gmail's messages.list actually returns them.
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [charge_summary, receipt])
+
+    scan_gmail.run()
+
+    rides = db.get_rides_range("2026-07-18", "2026-07-20")
+    assert len(rides) == 1
+    assert rides[0]["amount"] == 16.50  # genuinely later email wins, not processing order
+
+
+def test_ride_amount_stable_across_repeated_scans(temp_db_path, monkeypatch):
+    """The losing (older) candidate's message id is never recorded as its own ride
+    row, so it re-enters the ride branch on every scan within the lookback window.
+    It must not re-pin its (wrong) amount on a repeat scan."""
+    import database as db
+    from jobs import scan_gmail
+
+    receipt = {"gmail_message_id": "ride-receipt", "sender": "noreply@uber.com",
+               "subject": "Your Sunday morning trip with Uber",
+               "ordered_at": "2026-07-19T04:10:00-06:00",
+               "snippet": "Jul 19, 2026 4:03 AM Thanks for riding with Uber Total $14.00"}
+    charge_summary = {"gmail_message_id": "ride-charge", "sender": "noreply@uber.com",
+                       "subject": "Your Sunday morning trip with Uber",
+                       "ordered_at": "2026-07-19T04:15:00-06:00",
+                       "snippet": "Jul 19, 2026 4:03 AM charge summary Total $16.50"}
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    monkeypatch.setattr(scan_gmail.ai_metrics, "classify_work_ride",
+                        lambda *a, **k: {"is_work": False, "confidence": 0.0})
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [charge_summary, receipt])
+
+    scan_gmail.run()
+    first = db.get_rides_range("2026-07-18", "2026-07-20")[0]["amount"]
+    scan_gmail.run()  # both messages are still in the lookback window on a repeat scan
+    second = db.get_rides_range("2026-07-18", "2026-07-20")[0]["amount"]
+
+    assert first == second == 16.50
+
+
+def test_ride_fallback_key_dedupes_without_amount_in_key(temp_db_path, monkeypatch):
+    """When the ride timestamp can't be parsed from the snippet, the fallback key
+    must not include amount — two duplicate emails for the same trip carrying
+    different totals (receipt vs adjusted charge summary) must dedupe to ONE ride."""
+    import database as db
+    from jobs import scan_gmail
+
+    receipt = {"gmail_message_id": "ride-receipt", "sender": "noreply@uber.com",
+               "subject": "Your Sunday morning trip with Uber",
+               "ordered_at": "2026-07-19T04:10:00-06:00",
+               "snippet": "Thanks for riding with Uber Total $14.00"}  # no parseable ride time
+    charge_summary = {"gmail_message_id": "ride-charge", "sender": "noreply@uber.com",
+                       "subject": "Your Sunday morning trip with Uber",
+                       "ordered_at": "2026-07-19T04:15:00-06:00",
+                       "snippet": "charge summary Total $16.50"}  # no parseable ride time
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    monkeypatch.setattr(scan_gmail.ai_metrics, "classify_work_ride",
+                        lambda *a, **k: {"is_work": False, "confidence": 0.0})
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [charge_summary, receipt])
+
+    scan_gmail.run()
+
+    rides = db.get_rides_range("2026-07-18", "2026-07-20")
+    assert len(rides) == 1  # dedupes on day|subject, not day|subject|amount
+    assert rides[0]["amount"] == 16.50  # genuinely later email still wins
+
+
 def test_scan_writes_last_result_includes_ride_count(temp_db_path, monkeypatch):
     import database as db
     from jobs import scan_gmail
