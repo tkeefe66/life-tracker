@@ -129,6 +129,73 @@ def insights(weeks: int) -> dict:
     }
 
 
+SPEND_ITEMS_CAP = 100
+
+
+def spend(weeks: int) -> dict:
+    """Windowed money view for the Insights tab: a dense per-week category
+    series (oldest-first, zero weeks included), the same weeks aggregated into
+    per-service totals, and a capped, newest-first itemized list. Mirrors
+    history()'s "last N completed weeks" convention — the in-progress current
+    week is not included."""
+    this_monday = metrics.week_bounds(_local_today())[0]
+    week_starts = [this_monday - timedelta(weeks=i) for i in range(weeks, 0, -1)]
+    window_start = week_starts[0].isoformat()
+    window_end = metrics.week_bounds(week_starts[-1])[1].isoformat()
+
+    orders = db.get_delivery_orders_range(window_start, window_end)
+    rides = _personal_rides(db.get_rides_range(window_start, window_end))
+    social = [e for e in db.get_social_events_range(window_start, window_end) if _social_counts(e)]
+
+    weeks_out = []
+    by_service: dict = {}
+    for ws in week_starts:
+        we = metrics.week_bounds(ws)[1]
+        ws_iso, we_iso = ws.isoformat(), we.isoformat()
+        week_orders = [o for o in orders if ws_iso <= o["ordered_at"][:10] <= we_iso]
+        week_rides = [r for r in rides if ws_iso <= r["ride_at"][:10] <= we_iso]
+        week_social = [e for e in social if ws_iso <= e["end_at"][:10] <= we_iso]
+        delivery_total = round(sum(o["amount"] or 0 for o in week_orders), 2)
+        rides_total = round(sum(r["amount"] or 0 for r in week_rides), 2)
+        social_total = round(sum(e["amount"] or 0 for e in week_social), 2)
+        weeks_out.append({
+            "week_start": ws_iso, "delivery": delivery_total,
+            "rides": rides_total, "social": social_total,
+        })
+        for o in week_orders:
+            key = ("delivery", o["service"])
+            by_service[key] = by_service.get(key, 0) + (o["amount"] or 0)
+        for r in week_rides:
+            key = ("ride", r["service"])
+            by_service[key] = by_service.get(key, 0) + (r["amount"] or 0)
+        if social_total:
+            key = ("social", "Social")
+            by_service[key] = by_service.get(key, 0) + social_total
+
+    by_service_out = [
+        {"kind": kind, "service": service, "amount": round(amount, 2)}
+        for (kind, service), amount in by_service.items() if amount
+    ]
+    by_service_out.sort(key=lambda r: r["amount"], reverse=True)
+
+    items = []
+    for o in orders:
+        if o["amount"]:
+            items.append({"kind": "delivery", "service": o["service"],
+                          "label": o["subject"], "at": o["ordered_at"], "amount": round(o["amount"], 2)})
+    for r in rides:
+        if r["amount"]:
+            items.append({"kind": "ride", "service": r["service"],
+                          "label": r["subject"], "at": r["ride_at"], "amount": round(r["amount"], 2)})
+    for e in social:
+        if e["amount"]:
+            items.append({"kind": "social", "service": "Social",
+                          "label": e["title"], "at": e["end_at"], "amount": round(e["amount"], 2)})
+    items.sort(key=lambda i: i["at"], reverse=True)
+
+    return {"weeks": weeks_out, "by_service": by_service_out, "items": items[:SPEND_ITEMS_CAP]}
+
+
 def today_snapshot(day: Optional[date] = None) -> dict:
     d = (day or _local_today()).isoformat()
     checkins = db.get_checkins_range(d, d)

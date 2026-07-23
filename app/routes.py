@@ -10,7 +10,7 @@ import ai_metrics
 import database as db
 import metrics
 from app.auth import require_auth
-from app.scorecard import _local_today, history, insights, scorecard_for_week, today_snapshot
+from app.scorecard import _local_today, history, insights, scorecard_for_week, spend, today_snapshot
 from services import google_auth
 
 router = APIRouter(dependencies=[Depends(require_auth)])
@@ -74,6 +74,11 @@ def get_history(weeks: int = 8):
 @router.get("/insights")
 def get_insights(weeks: int = 12):
     return insights(min(max(weeks, 1), 52))
+
+
+@router.get("/spend")
+def get_spend(weeks: int = 12):
+    return spend(min(max(weeks, 1), 52))
 
 
 @router.get("/reflection")
