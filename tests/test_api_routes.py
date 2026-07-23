@@ -60,11 +60,18 @@ def test_targets_update(temp_db_path):
     assert client.put("/api/targets", json={"gym": True}).status_code == 400
 
 
+def test_targets_update_rejects_oversized_value(temp_db_path):
+    client = _client(temp_db_path)
+    # Bounded pydantic model: an out-of-range value 400s instead of 500ing.
+    assert client.put("/api/targets", json={"gym": 100001}).status_code == 400
+
+
 def test_settings_roundtrip(temp_db_path):
     client = _client(temp_db_path)
     s = client.get("/api/settings").json()
     assert s["telegram_push"] == "off"
     assert "google_configured" in s
+    assert "backup_last_run" in s and "backup_last_status" in s
     assert client.put("/api/settings", json={"telegram_push": "on"}).status_code == 200
     assert client.get("/api/settings").json()["telegram_push"] == "on"
 
@@ -113,10 +120,10 @@ def test_reflection_generates_once_then_caches(temp_db_path, mock_anthropic):
         type("T", (), {"text": '{"reflection": "Steady week."}'})()
     ]
     client = _client(temp_db_path)
-    first = client.get("/api/reflection")
+    first = client.post("/api/reflection")
     assert first.status_code == 200
     assert first.json()["text"] == "Steady week."
-    second = client.get("/api/reflection")
+    second = client.post("/api/reflection")
     assert second.json() == first.json()
     assert mock_anthropic.messages.create.call_count == 1
 
@@ -124,7 +131,18 @@ def test_reflection_generates_once_then_caches(temp_db_path, mock_anthropic):
 def test_reflection_204_on_generation_failure(temp_db_path, mock_anthropic):
     mock_anthropic.messages.create.return_value.content = [type("T", (), {"text": "garbage"})()]
     client = _client(temp_db_path)
-    assert client.get("/api/reflection").status_code == 204
+    assert client.post("/api/reflection").status_code == 204
+
+
+def test_reflection_get_is_rejected(temp_db_path, mock_anthropic):
+    # GET must no longer trigger a write / paid AI call from a top-level cross-site nav.
+    # When frontend/dist exists, the SPA catch-all mount claims any unmatched path and
+    # this surfaces as a plain 404; on a clean clone with no built frontend, FastAPI's
+    # own routing returns 405 instead. Either way, GET performs no write and makes no
+    # Claude call — that's the actual property under test, not the exact status code.
+    client = _client(temp_db_path)
+    assert client.get("/api/reflection").status_code in (404, 405)
+    assert mock_anthropic.messages.create.call_count == 0
 
 
 def test_reflection_excludes_private_metrics(temp_db_path, mock_anthropic):
@@ -138,7 +156,7 @@ def test_reflection_excludes_private_metrics(temp_db_path, mock_anthropic):
     from app.scorecard import _local_today
     last_wed = metrics_mod.week_bounds(_local_today())[0] - datetime.timedelta(weeks=1) + datetime.timedelta(days=2)
     client.post("/api/checkins", json={"type": "substances", "date": last_wed.isoformat()})
-    resp = client.get("/api/reflection")
+    resp = client.post("/api/reflection")
     assert resp.status_code == 200
     prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
     assert "Substances" not in prompt

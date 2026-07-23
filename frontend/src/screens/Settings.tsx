@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiSend } from "../api";
+import { apiGet, apiSend, logout } from "../api";
 import { targetLabel } from "../lib";
 
 interface Target { direction: string; value: number }
@@ -12,6 +12,8 @@ interface SettingsData {
   gmail_last_result: string | null;
   calendar_last_run: string | null;
   calendar_last_status: string | null;
+  backup_last_run: string | null;
+  backup_last_status: string | null;
 }
 
 interface Delivery { service: string; subject: string; ordered_at: string; amount: number | null }
@@ -38,7 +40,7 @@ function statusLine(status: string | null, run: string | null): string {
   return status === "ok" ? `OK${at ? ` · ${at}` : ""}` : status;
 }
 
-export default function Settings() {
+export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [targets, setTargets] = useState<Record<string, Target> | null>(null);
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [deliveries, setDeliveries] = useState<Delivery[] | null>(null);
@@ -70,6 +72,11 @@ export default function Settings() {
     } catch (e) {
       setSaveError((e as Error).message);
     }
+  };
+
+  const signOut = async () => {
+    await logout();
+    onLoggedOut();
   };
 
   const togglePush = async () => {
@@ -162,6 +169,16 @@ export default function Settings() {
             <span className="hint">{statusLine(settings.calendar_last_status, settings.calendar_last_run)}</span>
           </span>
         </div>
+        <div className="row">
+          <span className="grow">
+            Backups
+            <span className="hint">
+              {settings.backup_last_status
+                ? statusLine(settings.backup_last_status, settings.backup_last_run)
+                : "Not configured — BACKUP_S3_* is unset"}
+            </span>
+          </span>
+        </div>
       </div>
 
       {deliveries && (
@@ -185,6 +202,14 @@ export default function Settings() {
           </details>
         </>
       )}
+
+      <p className="section-label">Account</p>
+      <div className="group">
+        <div className="row">
+          <span className="grow">Sign out</span>
+          <button type="button" onClick={signOut}>Sign out</button>
+        </div>
+      </div>
     </div>
   );
 }

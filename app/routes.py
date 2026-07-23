@@ -3,17 +3,24 @@ import datetime
 from typing import Literal, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 import ai_metrics
 import database as db
 import metrics
-from app.auth import require_auth
+from app.auth import COOKIE_NAME, logout as auth_logout, require_auth
 from app.scorecard import _local_today, history, insights, scorecard_for_week, spend, today_snapshot, week_days
 from services import google_auth
 
 router = APIRouter(dependencies=[Depends(require_auth)])
+
+
+@router.post("/logout")
+def post_logout(request: Request, response: Response):
+    auth_logout(request.cookies.get(COOKIE_NAME, ""))
+    response.delete_cookie(COOKIE_NAME)
+    return {"ok": True}
 
 
 class CheckinBody(BaseModel):
@@ -93,7 +100,7 @@ def get_spend(weeks: int = 12):
     return spend(min(max(weeks, 1), 52))
 
 
-@router.get("/reflection")
+@router.post("/reflection")
 def get_reflection():
     week_start = metrics.week_bounds(_local_today())[0] - datetime.timedelta(weeks=1)
     ws = week_start.isoformat()
@@ -118,12 +125,15 @@ def get_targets():
     return db.get_targets()
 
 
+MAX_TARGET_VALUE = 100_000
+
+
 @router.put("/targets")
 def put_targets(body: dict):
     for metric, value in body.items():
         if metric not in metrics.METRICS:
             raise HTTPException(status_code=400, detail=f"unknown metric: {metric}")
-        if type(value) is not int or value < 0:
+        if type(value) is not int or value < 0 or value > MAX_TARGET_VALUE:
             raise HTTPException(status_code=400, detail=f"invalid value for {metric}")
     for metric, value in body.items():
         db.set_target(metric, value)
@@ -142,6 +152,8 @@ def get_settings():
         "gmail_last_result": db.get_setting("gmail_last_result"),
         "calendar_last_run": db.get_setting("calendar_last_run"),
         "calendar_last_status": db.get_setting("calendar_last_status"),
+        "backup_last_run": db.get_setting("backup_last_run"),
+        "backup_last_status": db.get_setting("backup_last_status"),
     }
 
 

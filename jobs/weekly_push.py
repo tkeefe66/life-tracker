@@ -9,6 +9,7 @@ import database as db
 import metrics
 from app.scorecard import _local_today, scorecard_for_week
 from config import TIMEZONE
+from services.safe_status import safe_status
 from services.telegram_notify import notify
 
 logger = logging.getLogger(__name__)
@@ -40,5 +41,7 @@ def run():
         db.set_setting("push_last_run", _now_iso())
         db.set_setting("push_last_status", "ok")
     except Exception as e:
+        # See jobs/scan_gmail.py's matching except block for why this is
+        # safe_status(e), never f"error: {e}".
         logger.exception("Weekly push failed")
-        db.set_setting("push_last_status", f"error: {e}")
+        db.set_setting("push_last_status", safe_status(e))

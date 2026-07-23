@@ -418,3 +418,37 @@ def test_rides_migration_is_idempotent(temp_db_path):
     db.initialize_db()
     rows = db.get_rides_range("2026-07-14", "2026-07-20")
     assert len(rows) == 1 and rows[0]["amount"] == 14.50
+
+
+# ── Sessions ──────────────────────────────────────────────────────────────────
+
+def test_session_create_get_delete_roundtrip(temp_db_path):
+    db = _db(temp_db_path)
+    assert db.get_session("tok1") is None
+    db.create_session("tok1", "2026-07-01T00:00:00", "2026-07-15T00:00:00")
+    row = db.get_session("tok1")
+    assert row["created_at"] == "2026-07-01T00:00:00"
+    assert row["expires_at"] == "2026-07-15T00:00:00"
+    db.delete_session("tok1")
+    assert db.get_session("tok1") is None
+
+
+def test_delete_session_is_idempotent_for_unknown_token(temp_db_path):
+    db = _db(temp_db_path)
+    db.delete_session("never-existed")  # must not raise
+
+
+def test_update_session_expiry(temp_db_path):
+    db = _db(temp_db_path)
+    db.create_session("tok1", "2026-07-01T00:00:00", "2026-07-15T00:00:00")
+    db.update_session_expiry("tok1", "2026-07-29T00:00:00")
+    assert db.get_session("tok1")["expires_at"] == "2026-07-29T00:00:00"
+
+
+def test_delete_expired_sessions_only_removes_past_ones(temp_db_path):
+    db = _db(temp_db_path)
+    db.create_session("expired", "2026-06-01T00:00:00", "2026-06-15T00:00:00")
+    db.create_session("still-valid", "2026-07-01T00:00:00", "2026-07-30T00:00:00")
+    db.delete_expired_sessions("2026-07-10T00:00:00")
+    assert db.get_session("expired") is None
+    assert db.get_session("still-valid") is not None
