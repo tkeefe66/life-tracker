@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../api";
-import { addDays, mondayOf, money, targetLabel, type SpendRow } from "../lib";
+import { addDays, mondayOf, type SpendRow } from "../lib";
 import WeekNav from "../components/WeekNav";
 import SpendSubtotals from "../components/SpendSubtotals";
 
@@ -9,16 +9,18 @@ interface Card {
   week_start: string; week_end: string; metrics: Record<string, Metric>;
   delivery_spend: number; social_spend: number; spend_by_service: SpendRow[];
 }
-interface History { streaks: Record<string, number> }
 
 const ORDER = ["gym", "social", "delivery", "alcohol", "substances"];
+// Matches Today's week-strip abbreviations — same metrics, same short labels.
+const SHORT_LABELS: Record<string, string> = {
+  gym: "Gym", social: "Social", delivery: "Delivery", alcohol: "Alcohol", substances: "Subst.",
+};
 
 export default function Scorecard() {
   const [card, setCard] = useState<Card | null>(null);
   const [currentWeekStart, setCurrentWeekStart] = useState<string | null>(null);
   const [currentWeekEnd, setCurrentWeekEnd] = useState<string | null>(null);
   const [weekStart, setWeekStart] = useState<string | null>(null); // null = current
-  const [history, setHistory] = useState<History | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -32,13 +34,6 @@ export default function Scorecard() {
       })
       .catch((e) => setError(e.message));
   }, [weekStart]);
-
-  // Streaks alone, not the full trend/heatmap/noticings history — those moved to
-  // Insights. A dedicated /history fetch keeps the ledger's streak display without
-  // pulling in everything /insights computes.
-  useEffect(() => {
-    apiGet<History>("/history?weeks=12").then(setHistory).catch(() => setHistory(null));
-  }, []);
 
   if (error) return <p className="error">{error}</p>;
   if (!card) return <p className="center">Loading…</p>;
@@ -60,35 +55,17 @@ export default function Scorecard() {
         }}
       />
 
-      <div className="ledger">
+      {/* Compact five-tile ledger: count + short label only. A metric's hit/miss
+          detail (target, streak, trend) now lives in Insights — this strip just
+          answers "how many" at a glance. */}
+      <div className="ledger-strip">
         {ORDER.map((key) => {
           const m = card.metrics[key];
-          const ratio = m.target > 0 ? Math.min(m.count / m.target, 1) : m.count > 0 ? 1 : 0;
-          const over = m.direction === "ceiling" && m.count > m.target;
-          const streak = history?.streaks[key] ?? 0;
           return (
-            <section className="metric" key={key}>
-              <header>
-                <span className={`mark ${m.hit ? "hit" : "miss"}`} aria-hidden="true" />
-                <span className="m-name">{m.label}</span>
-                <span className="m-count num">
-                  {m.count}<span className="of"> of {targetLabel(m.direction, m.target)}</span>
-                </span>
-              </header>
-              <div className={`meter${over ? " over" : ""}`}>
-                <i style={{ width: `${(over ? 1 : ratio) * 100}%` }} />
-              </div>
-              <p className="m-sub">
-                {m.hit
-                  ? m.direction === "ceiling" ? "Within target" : "Target met"
-                  : m.direction === "ceiling" ? "Over target" : "Not there yet"}
-                {streak > 0 && weekStart === null && ` · ${streak}-week streak`}
-                {key === "delivery" && card.delivery_spend > 0 &&
-                  ` · ${money(card.delivery_spend)} spent`}
-                {key === "social" && card.social_spend > 0 &&
-                  ` · ${money(card.social_spend)} spent`}
-              </p>
-            </section>
+            <div className="ledger-tile" key={key}>
+              <span className={`ledger-count num${m.hit ? "" : " over"}`}>{m.count}</span>
+              <span className="ledger-label">{SHORT_LABELS[key]}</span>
+            </div>
           );
         })}
       </div>

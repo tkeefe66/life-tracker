@@ -324,43 +324,40 @@ button.quiet-btn:active { background: var(--accent-soft); }
   justify-content: space-between;
 }
 
-/* ─── Ledger (scorecard rows) ─── */
+/* ─── Ledger strip (Week tab, compact) ─── */
 
-.ledger {
+.ledger-strip {
+  display: flex;
+  gap: 4px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r);
   box-shadow: var(--shadow-item);
-  overflow: hidden;
+  padding: 16px 8px;
+  margin-bottom: 18px;
 }
 
-.metric { padding: 14px 16px; }
-.metric + .metric { border-top: 1px solid var(--line); }
-
-.metric header {
+.ledger-tile {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 8px;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
 }
 
-.metric .mark {
-  width: 10px; height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  align-self: center;
+.ledger-count {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
 }
-.metric .mark.hit { background: var(--accent); }
-.metric .mark.miss { border: 1.5px solid var(--over); }
+.ledger-count.over { color: var(--over); }
 
-.metric .m-name { font-size: 0.95rem; font-weight: 500; flex: 1; }
-.metric .m-count { font-size: 0.95rem; }
-.metric .m-count .of { color: var(--muted); font-size: 0.85rem; }
-
-.metric .m-sub {
-  font-size: 0.78rem;
+.ledger-label {
+  font-size: 0.7rem;
   color: var(--muted);
-  margin-top: 8px;
+  white-space: nowrap;
 }
 
 .footnote {
