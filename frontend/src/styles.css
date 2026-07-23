@@ -19,6 +19,9 @@
   --chart-hit: oklch(50% 0.185 277);
   --chart-over: oklch(56% 0.135 60);
   --chart-zero: var(--line);
+  --chart-delivery: oklch(50% 0.185 277);
+  --chart-rides: oklch(56% 0.135 60);
+  --chart-social: oklch(55% 0.11 175);
   --shadow-item: 0 1px 2px oklch(25% 0.02 277 / 0.05), 0 6px 20px -12px oklch(25% 0.02 277 / 0.1);
   --r: 12px;
   --dur: 160ms;
@@ -44,6 +47,9 @@
     --shadow-item: 0 1px 2px oklch(0% 0 0 / 0.35), 0 6px 20px -12px oklch(0% 0 0 / 0.5);
     --chart-hit: oklch(63% 0.17 277);
     --chart-over: oklch(62% 0.14 60);
+    --chart-delivery: oklch(63% 0.17 277);
+    --chart-rides: oklch(62% 0.14 60);
+    --chart-social: oklch(64% 0.10 175);
   }
 }
 
@@ -584,6 +590,16 @@ button.quiet-btn:active { background: var(--accent-soft); }
 }
 .trend-hit { fill: transparent; cursor: pointer; }
 .trend-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ── Spend chart (Insights · Money) — never a fixed pixel height, mirrors .trend ── */
+.spend-chart { width: 100%; height: auto; display: block; }
+.spend-seg-delivery { fill: var(--chart-delivery); }
+.spend-seg-rides { fill: var(--chart-rides); }
+.spend-seg-social { fill: var(--chart-social); }
+.spend-baseline { stroke: var(--line); stroke-width: 1; }
+.spend-axis { font-size: 9px; fill: var(--muted); }
+.spend-hit { fill: transparent; cursor: pointer; }
+.spend-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ── Numbers table ── */
 details.numbers {
