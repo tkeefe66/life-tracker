@@ -128,12 +128,39 @@ export default function Money() {
     delete timersRef.current[id];
   };
 
+  // Build the "recently sorted" representation of a row that was just
+  // answered — resolved_flow/user_flow follow the same COALESCE(user_flow,
+  // flow) resolution the server does, just computed here since we already
+  // hold the row and don't want to wait on a refetch to show it.
+  const toRecentRow = (row: TriageRow, flow: string): TriageRow => ({
+    ...row,
+    user_flow: flow,
+    resolved_flow: flow,
+  });
+
+  const addToRecent = (rows: TriageRow[]) => {
+    setRecentRows((prev) => {
+      const ids = new Set(rows.map((r) => r.simplefin_id));
+      const withoutDup = (prev ?? []).filter((r) => !ids.has(r.simplefin_id));
+      return [...rows, ...withoutDup];
+    });
+  };
+
   const handleAnswer = (bucket: "ambiguous" | "inflow", row: TriageRow, flow: string) => {
+    // A second tap on the same row while it's still lingering from the first
+    // answer — the earlier POST is in flight (or already resolved) and this
+    // one would race it for which flow wins. Mirror handleBulk's guard: if
+    // the row already has a pending removal timer, it's already been
+    // answered, so make the second tap inert.
+    if (timersRef.current[row.simplefin_id]) return;
     const setRows = bucket === "ambiguous" ? setAmbiguousRows : setInflowRows;
     // Fires now, in the background — the request never waits on anything above.
     scheduleRemoval(row.simplefin_id, setRows);
     apiSend("POST", `/bank/transactions/${row.simplefin_id}/flow`, { flow })
-      .then(() => reloadSummary())
+      .then(() => {
+        reloadSummary();
+        addToRecent([toRecentRow(row, flow)]);
+      })
       .catch(() => {
         cancelRemoval(row.simplefin_id);
         setRows((prev) => (prev && !prev.some((r) => r.simplefin_id === row.simplefin_id)
@@ -153,7 +180,10 @@ export default function Money() {
     removed.forEach((r) => cancelRemoval(r.simplefin_id));
     setRows((prev) => prev?.filter((r) => !ids.includes(r.simplefin_id)) ?? prev);
     apiSend("POST", "/bank/transactions/flow", { simplefin_ids: ids, flow })
-      .then(() => reloadSummary())
+      .then(() => {
+        reloadSummary();
+        addToRecent(removed.map((r) => toRecentRow(r, flow)));
+      })
       .catch(() => {
         setRows((prev) => (prev ? [...removed, ...prev] : prev));
       });
@@ -162,7 +192,26 @@ export default function Money() {
   const handlePutBack = (row: TriageRow) => {
     setRecentRows((prev) => prev?.filter((r) => r.simplefin_id !== row.simplefin_id) ?? prev);
     apiSend("POST", `/bank/transactions/${row.simplefin_id}/flow`, { flow: null })
-      .then(() => reloadSummary())
+      .then(() => {
+        reloadSummary();
+        // Server-side the row is back to user_flow = NULL, so a refetch is
+        // what routes it back to its correct queue — the client can't know
+        // which bucket it belongs to (rows don't carry the `ambiguous` flag).
+        // Merge rather than replace outright: any row still mid-linger from
+        // an unrelated answer shouldn't duplicate or resurrect just because
+        // the refetch's snapshot predates its removal timer firing. This
+        // refetch has its own quiet catch — the put-back POST above already
+        // succeeded, so a failure here must never trigger the "put it back
+        // failed" recovery below.
+        apiGet<BankTriageData>("/bank/triage?limit=50")
+          .then((d) => {
+            const lingering = new Set(Object.keys(timersRef.current));
+            setAmbiguousRows(d.ambiguous.filter((r) => !lingering.has(r.simplefin_id)));
+            setInflowRows(d.inflow_unknown.filter((r) => !lingering.has(r.simplefin_id)));
+            setRecentRows(d.recent);
+          })
+          .catch(() => {});
+      })
       .catch(() => setRecentRows((prev) => (prev ? [row, ...prev] : prev)));
   };
 
