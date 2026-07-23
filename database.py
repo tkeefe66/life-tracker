@@ -1185,6 +1185,71 @@ def set_bank_flow_override(simplefin_id, user_flow):
         return c.rowcount > 0
 
 
+def get_bank_triage(limit):
+    """The triage worklist: rows the classifier flagged as ambiguous, plus
+    unexplained deposits, each capped at `limit` and newest-`posted` first
+    (tie-broken by `simplefin_id` so the order is deterministic).
+
+    The ambiguous bucket filters on `user_flow IS NULL`, not just
+    `ambiguous`. `ambiguous` is a derived column recomputed from scratch on
+    every sync — the classifier reads `flow`, never `resolved_flow` — so a
+    row the user already ruled on gets `ambiguous = true` again on the very
+    next sync. Without this predicate a confirmed row would reappear in the
+    queue forever (spec §6.4). Do not "simplify" it away.
+    """
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"""{_BANK_TXN_SELECT}
+                WHERE t.ambiguous AND t.user_flow IS NULL
+                ORDER BY t.posted DESC, t.simplefin_id ASC LIMIT {p}""",
+            (limit,),
+        )
+        ambiguous = _bank_txn_rows(c.fetchall())
+
+        c.execute(
+            f"""{_BANK_TXN_SELECT}
+                WHERE COALESCE(t.user_flow, t.flow) = {p}
+                ORDER BY t.posted DESC, t.simplefin_id ASC LIMIT {p}""",
+            ("inflow_unknown", limit),
+        )
+        inflow_unknown = _bank_txn_rows(c.fetchall())
+
+    return {"ambiguous": ambiguous, "inflow_unknown": inflow_unknown}
+
+
+def get_bank_recently_sorted(limit):
+    """Rows the user has already ruled on, most recently posted first, capped."""
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"""{_BANK_TXN_SELECT}
+                WHERE t.user_flow IS NOT NULL
+                ORDER BY t.posted DESC, t.simplefin_id ASC LIMIT {p}""",
+            (limit,),
+        )
+        return _bank_txn_rows(c.fetchall())
+
+
+def set_bank_flow_overrides_bulk(simplefin_ids, user_flow):
+    """Bulk version of set_bank_flow_override for the triage screen's
+    multi-select actions. Validates `user_flow` against BANK_FLOWS (None
+    clears) BEFORE any write — an unknown flow raises ValueError and nothing
+    is touched. All updates happen inside ONE _cursor(write=True) block, same
+    atomicity rationale as set_bank_transactions_derived_bulk. Unknown ids
+    are skipped, not an error. Returns the count of rows actually updated."""
+    if user_flow is not None and user_flow not in BANK_FLOWS:
+        raise ValueError(f"unknown flow: {user_flow}")
+    p = _p()
+    updated = 0
+    with _cursor(write=True) as c:
+        for simplefin_id in simplefin_ids:
+            c.execute(f"UPDATE bank_transactions SET user_flow = {p} WHERE simplefin_id = {p}",
+                      (user_flow, simplefin_id))
+            updated += c.rowcount
+    return updated
+
+
 _BANK_TXN_SELECT = """
     SELECT t.id, t.simplefin_id, t.account_id, t.posted, t.transacted_at, t.amount,
            t.description, t.payee, t.memo, t.mcc, t.flow, t.user_flow, t.pair_id,
