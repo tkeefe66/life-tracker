@@ -84,3 +84,97 @@ def match_pairs(txns, window_days=3):
         taken.add(partner["simplefin_id"])
 
     return matched
+
+
+def classify_flow(txn, role, partner_role, income_hints):
+    """Classify one transaction. Rules apply in order; the first match wins, and
+    only the final fallback is a guess.
+
+    `role` is the role of this transaction's own account; `partner_role` is the
+    role of the account on the other half of a matched pair, or None if unpaired.
+    """
+    # 1. Investment — either side. Contributions and the backdoor-Roth conversion
+    #    leg are saving, never spending. Investment-to-investment contributes to
+    #    nothing on either side.
+    if role == "investment" or partner_role == "investment":
+        return "investment"
+
+    # 2. Card payment — a matched pair with a credit card on one side. The
+    #    purchases are already recorded on the card; counting the payment too
+    #    would double-count. Reported separately so paydown reads as progress.
+    if partner_role is not None and "credit_card" in (role, partner_role):
+        return "card_payment"
+
+    # 3. Transfer — any other matched pair between two known accounts.
+    if partner_role is not None:
+        return "transfer"
+
+    amount = float(txn["amount"])
+
+    # 4. Income — an unpaired deposit into a spending/bills account whose payee or
+    #    description matches a configured payroll signature. Conservative by design.
+    if amount > 0 and role in ("spending", "bills"):
+        haystack = f"{txn.get('payee') or ''} {txn.get('description') or ''}".lower()
+        if any(h.lower() in haystack for h in income_hints if h):
+            return "income"
+
+    # 5. Any other unpaired deposit. Counted as neither income nor spending.
+    #    This is the SoFi hazard guard: money drawn down from an unconnected
+    #    savings account arrives here, and must never be reported as earnings.
+    if amount > 0:
+        return "inflow_unknown"
+
+    # 6. Everything else.
+    return "spending"
+
+
+def is_ambiguous(txn, flow):
+    """True when a transaction we called `spending` uses transfer-ish wording.
+
+    It stays `spending` — an AI or keyword flag alone never excludes anything
+    silently — but it is surfaced for later triage. The Venmo/Zelle/ATM policy is
+    deliberately deferred; flagging costs nothing now.
+    """
+    if flow != "spending":
+        return False
+    haystack = f"{txn.get('payee') or ''} {txn.get('description') or ''}".lower()
+    return any(hint in haystack for hint in AMBIGUOUS_HINTS)
+
+
+def classify_all(txns, roles_by_account_id, pair_map, income_hints):
+    """Classify a whole window at once.
+
+    `pair_map` is match_pairs()' output (newly matched only); a transaction's
+    existing `pair_id` is honoured too, so pairs matched in an earlier sync keep
+    their classification.
+
+    Returns {simplefin_id: (flow, pair_id, ambiguous)} — exactly the argument
+    triple db.set_bank_transaction_derived takes.
+    """
+    pair_of = {}
+    for t in txns:
+        sfid = t["simplefin_id"]
+        pair_of[sfid] = pair_map.get(sfid) or t.get("pair_id") or None
+
+    # Who is on the other side of each pair, by account.
+    partners = {}
+    for t in txns:
+        pid = pair_of[t["simplefin_id"]]
+        if pid:
+            partners.setdefault(pid, []).append(t)
+
+    out = {}
+    for t in txns:
+        sfid = t["simplefin_id"]
+        pid = pair_of[sfid]
+        role = roles_by_account_id.get(t["account_id"], "unknown")
+
+        partner_role = None
+        if pid:
+            others = [o for o in partners.get(pid, []) if o["simplefin_id"] != sfid]
+            if others:
+                partner_role = roles_by_account_id.get(others[0]["account_id"], "unknown")
+
+        flow = classify_flow(t, role, partner_role, income_hints)
+        out[sfid] = (flow, pid, is_ambiguous(t, flow))
+    return out
