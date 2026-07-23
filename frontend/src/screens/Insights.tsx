@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet } from "../api";
+import { apiGet, apiSend } from "../api";
 import { dayLabel, money, serviceLabel, targetLabel, weekRangeLabel, type SpendRow } from "../lib";
 import TrendChart from "../components/TrendChart";
 import WeekdayHeatmap from "../components/WeekdayHeatmap";
@@ -65,7 +65,7 @@ export default function Insights() {
   }, []);
 
   useEffect(() => {
-    apiGet<Reflection | null>("/reflection").then(setReflection).catch(() => setReflection(null));
+    apiSend<Reflection | null>("POST", "/reflection").then(setReflection).catch(() => setReflection(null));
   }, []);
 
   // ── Money view data ──

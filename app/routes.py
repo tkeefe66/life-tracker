@@ -93,7 +93,7 @@ def get_spend(weeks: int = 12):
     return spend(min(max(weeks, 1), 52))
 
 
-@router.get("/reflection")
+@router.post("/reflection")
 def get_reflection():
     week_start = metrics.week_bounds(_local_today())[0] - datetime.timedelta(weeks=1)
     ws = week_start.isoformat()
@@ -118,12 +118,15 @@ def get_targets():
     return db.get_targets()
 
 
+MAX_TARGET_VALUE = 100_000
+
+
 @router.put("/targets")
 def put_targets(body: dict):
     for metric, value in body.items():
         if metric not in metrics.METRICS:
             raise HTTPException(status_code=400, detail=f"unknown metric: {metric}")
-        if type(value) is not int or value < 0:
+        if type(value) is not int or value < 0 or value > MAX_TARGET_VALUE:
             raise HTTPException(status_code=400, detail=f"invalid value for {metric}")
     for metric, value in body.items():
         db.set_target(metric, value)
