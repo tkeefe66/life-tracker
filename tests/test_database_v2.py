@@ -291,3 +291,119 @@ def test_get_classification_examples_respects_limit(temp_db_path):
         db.set_event_overrides(eid, {"user_is_social": True})
     examples = db.get_classification_examples(limit=2)
     assert len(examples) == 2
+
+
+# ── Rides ─────────────────────────────────────────────────────────────────────
+
+def test_ride_add_and_fetch_by_range(temp_db_path):
+    db = _db(temp_db_path)
+    assert db.add_ride("r1", "Uber", "2026-07-15T08:03:00-06:00", "2026-07-15T08:03", "Your trip", 14.50) is True
+    rows = db.get_rides_range("2026-07-14", "2026-07-20")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["service"] == "Uber"
+    assert row["ride_at"] == "2026-07-15T08:03:00-06:00"
+    assert row["subject"] == "Your trip"
+    assert row["amount"] == 14.50
+    assert row["ai_is_work"] is None
+    assert row["user_is_work"] is None
+    assert "id" in row
+
+
+def test_ride_range_excludes_outside_week(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_ride("r1", "Uber", "2026-07-13T08:00:00-06:00", "2026-07-13T08:00", "s")  # Sunday before
+    db.add_ride("r2", "Uber", "2026-07-14T08:00:00-06:00", "2026-07-14T08:00", "s")  # Monday
+    assert len(db.get_rides_range("2026-07-14", "2026-07-20")) == 1
+
+
+def test_has_ride_dedupes_by_message_id(temp_db_path):
+    db = _db(temp_db_path)
+    assert db.has_ride("r1") is False
+    assert db.add_ride("r1", "Uber", "2026-07-15T08:03:00-06:00", "2026-07-15T08:03", "Your trip") is True
+    assert db.has_ride("r1") is True
+    # Same message id again refuses to insert (truthy iff actually inserted).
+    assert db.add_ride("r1", "Uber", "2026-07-15T08:03:00-06:00", "2026-07-15T08:03", "Your trip") is False
+    assert len(db.get_rides_range("2026-07-14", "2026-07-20")) == 1
+
+
+def test_find_ride_by_key_hit_and_miss(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_ride("r1", "Uber", "2026-07-15T08:03:00-06:00", "2026-07-15T08:03", "Your trip", 14.50)
+    found = db.find_ride_by_key("Uber", "2026-07-15T08:03")
+    assert found is not None
+    assert found["amount"] == 14.50
+    assert "id" in found
+    assert db.find_ride_by_key("Uber", "2026-07-15T09:00") is None  # different key, miss
+    assert db.find_ride_by_key("Lyft", "2026-07-15T08:03") is None  # different service, miss
+
+
+def test_set_ride_amount_updates(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_ride("r1", "Uber", "2026-07-15T08:03:00-06:00", "2026-07-15T08:03", "Your trip")
+    ride = db.find_ride_by_key("Uber", "2026-07-15T08:03")
+    db.set_ride_amount(ride["id"], 22.5)
+    updated = db.find_ride_by_key("Uber", "2026-07-15T08:03")
+    assert updated["amount"] == 22.5
+
+
+def test_set_ride_classification_sets_ai_fields(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_ride("r1", "Uber", "2026-07-15T08:03:00-06:00", "2026-07-15T08:03", "Your trip")
+    ride = db.find_ride_by_key("Uber", "2026-07-15T08:03")
+    db.set_ride_classification(ride["id"], True, 0.85)
+    row = db.get_rides_range("2026-07-14", "2026-07-20")[0]
+    assert bool(row["ai_is_work"]) is True
+    assert row["ai_confidence"] == 0.85
+    assert row["user_is_work"] is None  # AI verdict never sets the user override
+
+
+def test_set_ride_work_override_sets_user_verdict_and_reports_hit(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_ride("r1", "Uber", "2026-07-15T08:03:00-06:00", "2026-07-15T08:03", "Your trip")
+    ride = db.find_ride_by_key("Uber", "2026-07-15T08:03")
+    assert db.set_ride_work_override(ride["id"], True) is True
+    row = db.get_rides_range("2026-07-14", "2026-07-20")[0]
+    assert bool(row["user_is_work"]) is True
+    # 404-style "not found" — updating an unknown id reports no row touched.
+    assert db.set_ride_work_override(999999, True) is False
+
+
+def test_get_ride_examples_only_overridden_newest_first_capped(temp_db_path):
+    db = _db(temp_db_path)
+    for i in range(3):
+        rid = f"r{i}"
+        db.add_ride(rid, "Uber", f"2026-07-15T0{i}:00:00-06:00", f"2026-07-15T0{i}:00", f"Trip {i}")
+    rides = db.get_rides_range("2026-07-14", "2026-07-20")
+    by_subject = {r["subject"]: r["id"] for r in rides}
+    # Only override some — Trip 2 must never appear as an example.
+    db.set_ride_work_override(by_subject["Trip 0"], False)
+    db.set_ride_work_override(by_subject["Trip 1"], True)
+
+    examples = db.get_ride_examples(limit=10)
+    subjects = [e["subject"] for e in examples]
+    assert "Trip 2" not in subjects
+    assert examples[0]["subject"] == "Trip 1"  # newest override first
+    assert examples[1]["subject"] == "Trip 0"
+    assert bool(examples[0]["user_is_work"]) is True
+    assert bool(examples[1]["user_is_work"]) is False
+
+
+def test_get_ride_examples_respects_limit(temp_db_path):
+    db = _db(temp_db_path)
+    for i in range(5):
+        rid = f"r{i}"
+        db.add_ride(rid, "Uber", f"2026-07-15T0{i}:00:00-06:00", f"2026-07-15T0{i}:00", f"Trip {i}")
+        ride = db.find_ride_by_key("Uber", f"2026-07-15T0{i}:00")
+        db.set_ride_work_override(ride["id"], True)
+    examples = db.get_ride_examples(limit=2)
+    assert len(examples) == 2
+
+
+def test_rides_migration_is_idempotent(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_ride("r1", "Uber", "2026-07-15T08:03:00-06:00", "2026-07-15T08:03", "Your trip", 14.50)
+    db.initialize_db()
+    db.initialize_db()
+    rows = db.get_rides_range("2026-07-14", "2026-07-20")
+    assert len(rows) == 1 and rows[0]["amount"] == 14.50

@@ -556,6 +556,22 @@ def _init_v2_tables():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        c.execute(f"""
+            CREATE TABLE IF NOT EXISTS rides (
+                id {serial} PRIMARY KEY,
+                gmail_message_id TEXT NOT NULL UNIQUE,
+                service TEXT NOT NULL,
+                ride_at TEXT NOT NULL,
+                ride_key TEXT,
+                subject TEXT DEFAULT '',
+                amount REAL,
+                ai_is_work {bool_t},
+                ai_confidence REAL,
+                user_is_work {bool_t},
+                detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS ix_rides_ride_key ON rides(ride_key)")
         if USE_POSTGRES:
             c.execute("ALTER TABLE delivery_orders ADD COLUMN IF NOT EXISTS amount REAL")
         else:
@@ -845,3 +861,83 @@ def save_reflection(week_start, text):
                 ON CONFLICT(week_start) DO UPDATE SET text = excluded.text""",
             (week_start, text),
         )
+
+
+# ── Rides (Uber / Lyft) — tracking-only, not a METRICS member ────────────────
+
+def has_ride(gmail_message_id):
+    p = _p()
+    with _cursor() as c:
+        c.execute(f"SELECT 1 FROM rides WHERE gmail_message_id = {p}", (gmail_message_id,))
+        return c.fetchone() is not None
+
+
+def add_ride(gmail_message_id, service, ride_at, ride_key, subject, amount=None):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"""INSERT INTO rides (gmail_message_id, service, ride_at, ride_key, subject, amount)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}) ON CONFLICT(gmail_message_id) DO NOTHING""",
+            (gmail_message_id, service, ride_at, ride_key, subject, amount),
+        )
+        return c.rowcount > 0
+
+
+def find_ride_by_key(service, ride_key):
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"SELECT id, amount FROM rides WHERE service = {p} AND ride_key = {p}",
+            (service, ride_key),
+        )
+        row = c.fetchone()
+        return dict(row) if row else None
+
+
+def set_ride_amount(ride_id, amount):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE rides SET amount = {p} WHERE id = {p}", (amount, ride_id))
+
+
+def set_ride_classification(ride_id, is_work, confidence):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"UPDATE rides SET ai_is_work = {p}, ai_confidence = {p} WHERE id = {p}",
+            (is_work, confidence, ride_id),
+        )
+
+
+def set_ride_work_override(ride_id, is_work):
+    """Sets the confirmed user verdict. Returns True iff a row was actually updated,
+    so callers (the API route) can turn "unknown id" into a real 404."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE rides SET user_is_work = {p} WHERE id = {p}", (is_work, ride_id))
+        return c.rowcount > 0
+
+
+def get_rides_range(start_day, end_day):
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"""SELECT id, service, ride_at, subject, amount, ai_is_work, ai_confidence, user_is_work
+                FROM rides
+                WHERE substr(ride_at, 1, 10) >= {p} AND substr(ride_at, 1, 10) <= {p}
+                ORDER BY ride_at""",
+            (start_day, end_day),
+        )
+        return [dict(r) for r in c.fetchall()]
+
+
+def get_ride_examples(limit=10):
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"""SELECT subject, user_is_work FROM rides
+                WHERE user_is_work IS NOT NULL
+                ORDER BY id DESC LIMIT {p}""",
+            (limit,),
+        )
+        return [dict(r) for r in c.fetchall()]
