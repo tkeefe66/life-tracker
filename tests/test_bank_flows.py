@@ -749,11 +749,18 @@ def test_triage_signature_empty_fields_yield_no_opinion():
     assert bank_flows.triage_signature(t) == ""
 
 
-def test_triage_signature_is_case_insensitive_and_word_bounded():
-    """'WIRELESS' alone must not yield a 'wire'-shaped token — there is no
-    'wire' entry in triage_signature's token set, but this locks the same
-    word-boundary discipline `_hint_matches_field` gives every other hint in
-    the module."""
-    t = txn("a", 1, "2026-07-01", -265.26, payee="Verizon Wireless",
-            description="VERIZON WIRELESS PAYMENTS")
+def test_triage_signature_word_boundary_atm_not_substring():
+    """'atm' is a substring of 'BATMAN' but not a word-boundary match.
+    A naive substring matcher would wrongly return 'atm'; word-boundary
+    matching must return '' instead."""
+    t = txn("a", 1, "2026-07-01", -42.0, payee="BATMAN COMICS 123",
+            description="")
     assert bank_flows.triage_signature(t) == ""
+
+
+def test_triage_signature_cashapp_no_space_variant():
+    """The 'cashapp' hint (no space) must still match; word-boundary discipline
+    applies to all token variants."""
+    t = txn("a", 1, "2026-07-01", -20.0, payee="CASHAPP*JOHN DOE",
+            description="")
+    assert bank_flows.triage_signature(t) == "cash app"
