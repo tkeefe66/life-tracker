@@ -476,6 +476,103 @@ def test_short_income_hint_requires_word_boundary_match():
     assert bank_flows.classify_flow(non_matching, "spending", None, False, hints) == "inflow_unknown"
 
 
+# ── Unpaired card payments (SoFi hazard, paying side not connected) ──────────
+# 7 real rows worth $12,224.15 sat in `inflow_unknown`: Chase United "Payment
+# Thank You - Web" and Amex "ONLINE PAYMENT - THANK YOU", paid from an account
+# SimpleFIN can't see, so no opposite outflow exists anywhere in the dataset.
+# A positive amount on a credit_card account with payment wording cannot be
+# income and cannot be spending — it is debt paydown.
+
+CARD_PAYMENT_WORDINGS = [
+    "Payment Thank You - Web",
+    "PAYMENT RECEIVED - THANK YOU",
+    "ONLINE PAYMENT - THANK YOU",
+    "MOBILE PAYMENT - THANK YOU",
+]
+
+
+def test_unpaired_payment_wording_on_a_credit_card_is_card_payment():
+    for wording in CARD_PAYMENT_WORDINGS:
+        t = txn("a", 1, "2026-07-01", 1500.0, description=wording)
+        assert bank_flows.classify_flow(t, "credit_card", None, False, HINTS) == "card_payment", wording
+
+
+def test_unpaired_card_payment_wording_matches_payee_field_too():
+    t = txn("a", 1, "2026-07-01", 510.93, payee="Payment Thank You - Web", description=None)
+    assert bank_flows.classify_flow(t, "credit_card", None, False, HINTS) == "card_payment"
+
+
+def test_merchant_refund_on_a_credit_card_stays_inflow_unknown():
+    """The same dataset holds 20 refund/statement-credit rows ($1,440.33) on
+    credit cards. None use payment wording; all must stay inflow_unknown."""
+    refunds = [
+        "REI.COM RETURN",
+        "AMAZON.COM*RT4YU REFUND",
+        "RESY STATEMENT CREDIT",
+        "LULULEMON STATEMENT CREDIT",
+        "DIGITAL ENTERTAINMENT CREDIT",
+        "UBER EATS ADJUSTMENT",
+        "CREDIT ADJUSTMENT",
+    ]
+    for wording in refunds:
+        t = txn("a", 1, "2026-07-01", 42.0, description=wording)
+        assert bank_flows.classify_flow(t, "credit_card", None, False, HINTS) == "inflow_unknown", wording
+
+
+def test_payment_wording_on_a_non_credit_card_account_is_unaffected():
+    """Rule is scoped to credit_card-role accounts — a checking deposit reading
+    'ONLINE PAYMENT' must still land in inflow_unknown."""
+    t = txn("a", 1, "2026-07-01", 900.0, description="ONLINE PAYMENT - THANK YOU")
+    assert bank_flows.classify_flow(t, "spending", None, False, HINTS) == "inflow_unknown"
+    assert bank_flows.classify_flow(t, "savings", None, False, HINTS) == "inflow_unknown"
+    assert bank_flows.classify_flow(t, "unknown", None, False, HINTS) == "inflow_unknown"
+
+
+def test_unpaired_card_outflow_with_payment_wording_stays_spending():
+    """Sign matters: only a positive amount is a paydown."""
+    t = txn("a", 1, "2026-07-01", -80.0, description="ONLINE PAYMENT - THANK YOU")
+    assert bank_flows.classify_flow(t, "credit_card", None, False, HINTS) == "spending"
+
+
+def test_paired_card_payment_is_unchanged_by_the_unpaired_rule():
+    """Regression: rule 2 still owns every paired case, wording or not."""
+    t = txn("a", 1, "2026-07-01", 2000.0, description="ONLINE PAYMENT - THANK YOU")
+    assert bank_flows.classify_flow(t, "credit_card", "spending", True, HINTS) == "card_payment"
+    assert bank_flows.classify_flow(t, "spending", "credit_card", True, HINTS) == "card_payment"
+    plain = txn("b", 1, "2026-07-01", 2000.0, description="SOMETHING OPAQUE")
+    assert bank_flows.classify_flow(plain, "credit_card", "spending", True, HINTS) == "card_payment"
+
+
+def test_investment_still_beats_the_unpaired_card_payment_rule():
+    """Precedence pin: rule 1 keeps winning even with payment wording."""
+    t = txn("a", 1, "2026-07-01", 2000.0, description="ONLINE PAYMENT - THANK YOU")
+    assert bank_flows.classify_flow(t, "investment", None, False, HINTS) == "investment"
+    assert bank_flows.classify_flow(t, "credit_card", "investment", True, HINTS) == "investment"
+
+
+def test_unpaired_card_payment_is_not_flagged_ambiguous():
+    t = txn("a", 1, "2026-07-01", 1500.0, description="ONLINE PAYMENT - THANK YOU")
+    flow = bank_flows.classify_flow(t, "credit_card", None, False, HINTS)
+    assert bank_flows.is_ambiguous(t, flow) is False
+
+
+def test_classify_all_moves_an_unpaired_card_payment_out_of_inflow_unknown():
+    txns = [
+        txn("a", 2, "2026-07-01", 3345.0, description="Payment Thank You - Web"),
+        txn("b", 2, "2026-07-05", 61.23, description="REI.COM RETURN"),
+    ]
+    out = bank_flows.classify_all(txns, {2: "credit_card"}, {}, HINTS)
+    assert out["a"] == ("card_payment", None, False)
+    assert out["b"] == ("inflow_unknown", None, False)
+
+
+def test_payment_wording_requires_a_word_boundary():
+    """Uses the existing `_hint_matches_field` discipline — no bare-substring
+    sweep-ups like 'preonline paymentx'."""
+    t = txn("a", 1, "2026-07-01", 100.0, description="PREONLINE PAYMENTX")
+    assert bank_flows.classify_flow(t, "credit_card", None, False, HINTS) == "inflow_unknown"
+
+
 def test_is_ambiguous_remains_unbounded_substring_match():
     """`is_ambiguous` is explicitly NOT required to respect word boundaries —
     over-flagging there is harmless (it never changes the flow), so this pins

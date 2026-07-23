@@ -226,8 +226,12 @@ def test_settled_amount_that_no_longer_matches_loses_its_pair_id_and_stops_being
     rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2020-01-01", "2030-01-01")}
     assert rows["p1"]["pair_id"] is None
     assert rows["p2"]["pair_id"] is None
+    # The paying (checking) side loses card_payment entirely — that's the
+    # unpairing guard. p2 stays card_payment, but now via the unpaired
+    # credit_card + payment-wording rule, NOT via a stale pair: the pair_id
+    # assertion above is what pins that distinction.
     assert rows["p1"]["resolved_flow"] != "card_payment"
-    assert rows["p2"]["resolved_flow"] != "card_payment"
+    assert rows["p2"]["resolved_flow"] == "card_payment"
 
 
 def test_simplefin_error_with_a_non_closed_set_status_is_normalized_before_storage(

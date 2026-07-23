@@ -22,6 +22,16 @@ AMBIGUOUS_HINTS = (
     "atm", "withdrawal", "transfer", "xfer", "wire",
 )
 
+# Wording issuers use on the credit-card side of a payment. Deliberately narrow:
+# these four phrases cover every real unpaired card payment in the 90-day
+# dataset (Chase "Payment Thank You - Web", Amex "ONLINE PAYMENT - THANK YOU")
+# while excluding all 20 merchant refunds and statement credits, which never use
+# payment wording. Do not broaden to bare "payment" or "credit" — a refund would
+# then be misread as debt paydown.
+CARD_PAYMENT_HINTS = (
+    "payment thank you", "payment received", "online payment", "mobile payment",
+)
+
 
 def _cents(amount) -> int:
     """Money compares as integer cents. Float equality would silently fail to
@@ -221,7 +231,7 @@ def classify_flow(txn, role, partner_role, paired, income_hints):
 
     # 3. Transfer — any other matched pair between two known accounts. Also the
     #    landing spot when a matched pair's partner has aged out of the window:
-    #    a paired row must never fall through to rules 4/5/6 just because its
+    #    a paired row must never fall through to rules 4/5/6/7 just because its
     #    partner isn't visible right now — that would invent phantom spending or
     #    (worse) mislabel a payroll-shaped transfer as income.
     if paired:
@@ -229,9 +239,27 @@ def classify_flow(txn, role, partner_role, paired, income_hints):
 
     amount = float(txn["amount"])
 
-    # 4. Income — an unpaired deposit into a spending/bills account whose payee or
+    # 4. Unpaired card payment — a positive amount on a credit-card account whose
+    #    text uses issuer payment wording. The paying account is not connected to
+    #    SimpleFIN (the SoFi hazard), so no opposite outflow exists to pair with,
+    #    but a credit to a card that says "PAYMENT - THANK YOU" cannot be income
+    #    and cannot be spending: it is unambiguously debt paydown. Scoped by role
+    #    AND by wording so merchant refunds and statement credits — which post to
+    #    the same accounts with the same sign — stay in `inflow_unknown`.
+    #    Sits below rules 1-3: investment still wins, and every paired row has
+    #    already returned, so nothing that classifies today changes.
+    if amount > 0 and role == "credit_card":
+        payee = txn.get("payee")
+        description = txn.get("description")
+        for hint in CARD_PAYMENT_HINTS:
+            if _hint_matches_field(hint, payee) or _hint_matches_field(hint, description):
+                return "card_payment"
+
+    # 5. Income — an unpaired deposit into a spending/bills account whose payee or
     #    description matches a configured payroll signature. Conservative by
     #    design, and reachable ONLY when genuinely unpaired (see rule 3 above).
+    #    A credit_card role never reaches here — rule 4 owns that account role's
+    #    inflows, and payroll never lands on a card.
     if amount > 0 and role in ("spending", "bills"):
         payee = txn.get("payee")
         description = txn.get("description")
@@ -242,13 +270,13 @@ def classify_flow(txn, role, partner_role, paired, income_hints):
             if _hint_matches_field(hint, payee) or _hint_matches_field(hint, description):
                 return "income"
 
-    # 5. Any other unpaired deposit. Counted as neither income nor spending.
+    # 6. Any other unpaired deposit. Counted as neither income nor spending.
     #    This is the SoFi hazard guard: money drawn down from an unconnected
     #    savings account arrives here, and must never be reported as earnings.
     if amount > 0:
         return "inflow_unknown"
 
-    # 6. Everything else.
+    # 7. Everything else.
     return "spending"
 
 
