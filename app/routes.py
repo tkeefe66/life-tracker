@@ -10,7 +10,7 @@ import ai_metrics
 import database as db
 import metrics
 from app.auth import require_auth
-from app.scorecard import _local_today, history, insights, scorecard_for_week, spend, today_snapshot
+from app.scorecard import _local_today, history, insights, scorecard_for_week, spend, today_snapshot, week_days
 from services import google_auth
 
 router = APIRouter(dependencies=[Depends(require_auth)])
@@ -64,6 +64,18 @@ def get_scorecard(week_start: Optional[str] = None):
     else:
         start = _local_today()
     return scorecard_for_week(start)
+
+
+@router.get("/week-days")
+def get_week_days(week_start: Optional[str] = None):
+    if week_start:
+        try:
+            start = datetime.date.fromisoformat(week_start)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="week_start must be YYYY-MM-DD")
+    else:
+        start = _local_today()
+    return week_days(start)
 
 
 @router.get("/history")

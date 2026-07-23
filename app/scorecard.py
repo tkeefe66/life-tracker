@@ -204,6 +204,66 @@ def spend(weeks: int) -> dict:
     return {"weeks": weeks_out, "by_service": by_service_out, "items": items[:SPEND_ITEMS_CAP]}
 
 
+def week_days(week_start: date) -> dict:
+    """Day-by-day view for the Week tab: always exactly 7 entries, Monday-first,
+    including empty days. Built from one ranged query per source, grouped by day
+    in Python — never seven per-day round trips. Work rides (confirmed via
+    user_is_work) appear in items labeled is_work but are excluded from both the
+    day total and the week total, same rule as every other spend figure."""
+    ws, we = metrics.week_bounds(week_start)
+    start, end = ws.isoformat(), we.isoformat()
+    checkins = db.get_checkins_range(start, end)
+    orders = db.get_delivery_orders_range(start, end)
+    rides = db.get_rides_range(start, end)
+    social = [e for e in db.get_social_events_range(start, end) if _social_counts(e)]
+    personal_ride_ids = {r["id"] for r in _personal_rides(rides)}
+
+    days = []
+    week_total = 0.0
+    for i in range(7):
+        d_iso = (ws + timedelta(days=i)).isoformat()
+
+        day_checkins = [c for c in checkins if c["date"] == d_iso]
+        alcohol = next((c for c in day_checkins if c["type"] == "alcohol"), None)
+
+        items = []
+        day_total = 0.0
+        for o in orders:
+            if o["ordered_at"][:10] == d_iso:
+                amount = o["amount"] or 0
+                items.append({"kind": "delivery", "service": o["service"], "label": o["subject"],
+                              "at": o["ordered_at"], "amount": round(amount, 2), "is_work": False})
+                day_total += amount
+        for r in rides:
+            if r["ride_at"][:10] == d_iso:
+                amount = r["amount"] or 0
+                is_work = r["id"] not in personal_ride_ids
+                items.append({"kind": "ride", "service": r["service"], "label": r["subject"],
+                              "at": r["ride_at"], "amount": round(amount, 2), "is_work": is_work})
+                if not is_work:
+                    day_total += amount
+        for e in social:
+            if e["end_at"][:10] == d_iso:
+                amount = e["amount"] or 0
+                items.append({"kind": "social", "service": "Social", "label": e["title"],
+                              "at": e["end_at"], "amount": round(amount, 2), "is_work": False})
+                day_total += amount
+        items.sort(key=lambda i: i["at"])
+
+        day_total = round(day_total, 2)
+        week_total += day_total
+        days.append({
+            "date": d_iso,
+            "gym": any(c["type"] == "gym" for c in day_checkins),
+            "alcohol_level": alcohol["level"] if alcohol else None,
+            "substances": any(c["type"] == "substances" for c in day_checkins),
+            "total": day_total,
+            "items": items,
+        })
+
+    return {"week_start": start, "week_end": end, "week_total": round(week_total, 2), "days": days}
+
+
 def today_snapshot(day: Optional[date] = None) -> dict:
     d = (day or _local_today()).isoformat()
     checkins = db.get_checkins_range(d, d)

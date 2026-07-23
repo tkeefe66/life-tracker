@@ -401,6 +401,94 @@ def test_patch_ride_unknown_id_404(temp_db_path):
     assert resp.status_code == 404
 
 
+# ── /api/week-days: the day-by-day view's data source ────────────────────────
+#
+# Seeded relative to app.scorecard._local_today(), never a hardcoded calendar
+# date — three tests on this repo already rotted that way.
+
+def test_week_days_shape_grouping_and_work_ride_exclusion(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    import metrics
+    from app.scorecard import _local_today
+    this_monday = metrics.week_bounds(_local_today())[0]
+    last_monday = this_monday - datetime.timedelta(weeks=1)
+    mon = last_monday
+    tue = last_monday + datetime.timedelta(days=1)
+    wed = last_monday + datetime.timedelta(days=2)
+
+    db.record_checkin(mon.isoformat(), "gym")
+    db.record_checkin(tue.isoformat(), "alcohol", level=2)
+    db.add_delivery_order("m1", "Uber Eats", f"{wed.isoformat()}T12:00:00-06:00", "Lunch order", 12.0)
+    db.add_delivery_order("m2", "DoorDash", f"{wed.isoformat()}T19:00:00-06:00", "Dinner order", 18.0)
+    db.add_ride("r1", "Uber", f"{mon.isoformat()}T08:00:00-06:00", f"{mon.isoformat()}T08:00", "Personal trip", 10.0)
+    db.add_ride("r2", "Lyft", f"{tue.isoformat()}T09:00:00-06:00", f"{tue.isoformat()}T09:00", "Work trip", 40.0)
+    rides = db.get_rides_range(last_monday.isoformat(), (last_monday + datetime.timedelta(days=6)).isoformat())
+    by_subject = {r["subject"]: r["id"] for r in rides}
+    db.set_ride_classification(by_subject["Personal trip"], True, 0.7)  # AI flags work, unconfirmed — still counted
+    db.set_ride_work_override(by_subject["Work trip"], True)  # confirmed work — excluded from totals
+    db.add_manual_social_event(
+        "manual:dinner", "Dinner out", f"{wed.isoformat()}T18:00:00", f"{wed.isoformat()}T19:00:00", amount=25.0
+    )
+
+    body = client.get(f"/api/week-days?week_start={last_monday.isoformat()}").json()
+    assert body["week_start"] == last_monday.isoformat()
+    assert body["week_end"] == (last_monday + datetime.timedelta(days=6)).isoformat()
+
+    days = body["days"]
+    assert len(days) == 7
+    expected_dates = [(last_monday + datetime.timedelta(days=i)).isoformat() for i in range(7)]
+    assert [d["date"] for d in days] == expected_dates  # Monday-first, contiguous
+
+    by_date = {d["date"]: d for d in days}
+    empty_days = [d for iso, d in by_date.items() if iso not in {mon.isoformat(), tue.isoformat(), wed.isoformat()}]
+    assert len(empty_days) == 4
+    for d in empty_days:
+        assert d["items"] == []
+        assert d["total"] == 0
+        assert d["gym"] is False
+        assert d["alcohol_level"] is None
+        assert d["substances"] is False
+
+    mon_day = by_date[mon.isoformat()]
+    assert mon_day["gym"] is True
+    ride_item = next(i for i in mon_day["items"] if i["kind"] == "ride")
+    assert ride_item["label"] == "Personal trip"
+    assert ride_item["is_work"] is False  # AI flag alone never excludes
+    assert mon_day["total"] == 10.0  # AI-flagged-but-unconfirmed ride IS counted
+
+    tue_day = by_date[tue.isoformat()]
+    assert tue_day["alcohol_level"] == 2
+    work_item = next(i for i in tue_day["items"] if i["kind"] == "ride")
+    assert work_item["label"] == "Work trip"
+    assert work_item["is_work"] is True  # present in items, labeled work
+    assert tue_day["total"] == 0  # but excluded from the day total
+
+    wed_day = by_date[wed.isoformat()]
+    assert len([i for i in wed_day["items"] if i["kind"] == "delivery"]) == 2
+    social_item = next(i for i in wed_day["items"] if i["kind"] == "social")
+    assert social_item["label"] == "Dinner out"
+    assert wed_day["total"] == 12.0 + 18.0 + 25.0
+
+    assert body["week_total"] == mon_day["total"] + tue_day["total"] + wed_day["total"]
+    assert body["week_total"] == 10.0 + 0 + 55.0
+
+
+def test_week_days_malformed_start_400(temp_db_path):
+    client = _client(temp_db_path)
+    assert client.get("/api/week-days?week_start=not-a-date").status_code == 400
+
+
+def test_week_days_midweek_start_resolves_to_its_monday(temp_db_path):
+    client = _client(temp_db_path)
+    import metrics
+    from app.scorecard import _local_today
+    this_monday = metrics.week_bounds(_local_today())[0]
+    mid_week = this_monday + datetime.timedelta(days=3)  # a Thursday
+    body = client.get(f"/api/week-days?week_start={mid_week.isoformat()}").json()
+    assert body["week_start"] == this_monday.isoformat()
+
+
 def test_scorecard_rides_count_and_spend_exclude_confirmed_work_include_ai_flagged(temp_db_path):
     client = _client(temp_db_path)
     import database as db
