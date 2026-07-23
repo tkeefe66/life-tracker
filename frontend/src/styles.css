@@ -703,3 +703,113 @@ details.orders {
 }
 details.orders summary { cursor: pointer; font-size: 14px; color: var(--ink-2); }
 details.orders .quiet { margin: 10px 0 0; }
+
+/* ── Week day rows (Week tab day-by-day view) ── */
+.weekdays {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-item);
+  overflow: hidden;
+}
+
+.day-row + .day-row { border-top: 1px solid var(--line); }
+
+.day-row-head { display: flex; align-items: stretch; }
+
+.day-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 58px;
+  min-height: 44px;
+  padding: 10px 6px;
+  border: none;
+  background: none;
+  flex-shrink: 0;
+}
+
+.day-date .day-weekday {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--ink-2);
+  text-decoration: underline dotted;
+  text-decoration-color: var(--muted);
+  text-underline-offset: 4px;
+}
+
+.day-date .day-monthday { font-size: 0.72rem; color: var(--muted); }
+
+.day-expand {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 14px 10px 2px;
+  border: none;
+  background: none;
+  text-align: left;
+}
+
+.day-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
+.day-empty { flex: 1; font-size: 0.85rem; }
+
+.chip {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.chip-accent { background: var(--accent-soft); color: var(--accent); }
+.chip-over { background: var(--over-soft); color: var(--over); }
+
+.day-cost { font-size: 0.85rem; color: var(--ink-2); white-space: nowrap; flex-shrink: 0; }
+
+.day-chevron {
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform var(--dur) var(--ease);
+}
+.day-chevron.open { transform: rotate(180deg); }
+
+.day-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 16px 14px 66px;
+}
+
+.day-panel-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+.day-panel-tag { font-size: 0.8em; }
+.day-panel-amount { color: var(--ink); white-space: nowrap; }
+.day-panel-empty { font-size: 0.85rem; padding: 2px 0; }
+
+.day-panel-link {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 6px 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.day-total-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 16px;
+  font-weight: 600;
+  background: var(--surface-2);
+}

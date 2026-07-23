@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { dayChips, dayLabel, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel, type Day } from "./lib";
+import {
+  dayChips, dayLabel, dayRowDate, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel, type Day,
+} from "./lib";
 
 describe("weekLabel", () => {
   it("formats a Monday week start as a Mon–Sun range", () => {
@@ -20,6 +22,13 @@ describe("targetLabel", () => {
 describe("dayLabel", () => {
   it("formats a date with weekday and full month", () => {
     expect(dayLabel("2026-07-20")).toBe("Monday, July 20");
+  });
+});
+
+describe("dayRowDate", () => {
+  it("splits a date into a 3-letter weekday and an abbreviated month + day", () => {
+    expect(dayRowDate("2026-07-20")).toEqual({ weekday: "Mon", monthDay: "Jul 20" });
+    expect(dayRowDate("2026-07-19")).toEqual({ weekday: "Sun", monthDay: "Jul 19" });
   });
 });
 

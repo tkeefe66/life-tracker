@@ -169,6 +169,13 @@ export interface Day {
 
 export interface Chip { label: string; tone: "accent" | "over" }
 
+/** Splits a date into the two lines a week-day row's date button shows:
+ * a 3-letter weekday ("Mon") over an abbreviated month + day ("Jul 20"). */
+export function dayRowDate(iso: string): { weekday: string; monthDay: string } {
+  const d = parseDay(iso);
+  return { weekday: DAYS[d.getDay()].slice(0, 3), monthDay: `${MONTHS[d.getMonth()]} ${d.getDate()}` };
+}
+
 /**
  * Chips summarise a day, they do not enumerate it — one chip per category, not
  * one per item. Ceiling metrics (delivery, alcohol, substances) tint `over`;
