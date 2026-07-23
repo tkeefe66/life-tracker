@@ -563,6 +563,18 @@ def _init_v2_tables():
             if "amount" not in cols:
                 c.execute("ALTER TABLE delivery_orders ADD COLUMN amount REAL")
 
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS user_title TEXT")
+            c.execute(f"ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS user_is_social {bool_t}")
+            c.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'gcal'")
+            c.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS amount REAL")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(calendar_events)").fetchall()]
+            for name, defn in (("user_title", "TEXT"), ("user_is_social", bool_t),
+                               ("source", "TEXT DEFAULT 'gcal'"), ("amount", "REAL")):
+                if name not in cols:
+                    c.execute(f"ALTER TABLE calendar_events ADD COLUMN {name} {defn}")
+
 
 # ── Check-ins ─────────────────────────────────────────────────────────────────
 
@@ -683,8 +695,10 @@ def get_social_events_range(start_day, end_day):
     p = _p()
     with _cursor() as c:
         c.execute(
-            f"""SELECT gcal_event_id, title, start_at, end_at FROM calendar_events
-                WHERE is_social = {_social_true()}
+            f"""SELECT gcal_event_id, COALESCE(user_title, title) AS title, start_at, end_at,
+                       source, amount
+                FROM calendar_events
+                WHERE COALESCE(user_is_social, is_social) = {_social_true()}
                   AND substr(end_at, 1, 10) >= {p} AND substr(end_at, 1, 10) <= {p}
                 ORDER BY start_at""",
             (start_day, end_day),
@@ -696,10 +710,65 @@ def get_events_for_day(day):
     p = _p()
     with _cursor() as c:
         c.execute(
-            f"""SELECT gcal_event_id, title, start_at, end_at FROM calendar_events
-                WHERE is_social = {_social_true()} AND substr(start_at, 1, 10) = {p}
+            f"""SELECT gcal_event_id, COALESCE(user_title, title) AS title, start_at, end_at,
+                       source, amount
+                FROM calendar_events
+                WHERE COALESCE(user_is_social, is_social) = {_social_true()} AND substr(start_at, 1, 10) = {p}
                 ORDER BY start_at""",
             (day,),
+        )
+        return [dict(r) for r in c.fetchall()]
+
+
+def add_manual_social_event(event_id, title, start_at, end_at, amount=None):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(
+            f"""INSERT INTO calendar_events
+                    (gcal_event_id, title, start_at, end_at, is_social, source, confidence, classified_at, amount)
+                VALUES ({p}, {p}, {p}, {p}, {_social_true()}, 'manual', 1.0, CURRENT_TIMESTAMP, {p})""",
+            (event_id, title, start_at, end_at, amount),
+        )
+
+
+def get_event(event_id):
+    p = _p()
+    with _cursor() as c:
+        c.execute("SELECT * FROM calendar_events WHERE gcal_event_id = " + p, (event_id,))
+        row = c.fetchone()
+        return dict(row) if row else None
+
+
+def set_event_overrides(event_id, updates: dict):
+    """Partial UPDATE from a dict of column->value. Only mentioned columns are touched."""
+    if not updates:
+        return
+    p = _p()
+    allowed = {"user_title", "user_is_social", "amount"}
+    cols = [k for k in updates if k in allowed]
+    if not cols:
+        return
+    set_clause = ", ".join(f"{col} = {p}" for col in cols)
+    values = [updates[col] for col in cols] + [event_id]
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE calendar_events SET {set_clause} WHERE gcal_event_id = {p}", values)
+
+
+def delete_event(event_id):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"DELETE FROM calendar_events WHERE gcal_event_id = {p}", (event_id,))
+
+
+def get_classification_examples(limit=10):
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"""SELECT COALESCE(user_title, title) AS title, user_is_social
+                FROM calendar_events
+                WHERE user_is_social IS NOT NULL
+                ORDER BY id DESC LIMIT {p}""",
+            (limit,),
         )
         return [dict(r) for r in c.fetchall()]
 
