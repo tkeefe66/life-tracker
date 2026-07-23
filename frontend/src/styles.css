@@ -841,8 +841,36 @@ details.orders .quiet { margin: 10px 0 0; }
 }
 .triage-detail { flex: 1; min-width: 0; }
 .triage-label { display: block; font-size: 0.9rem; }
+.triage-note { display: block; font-size: 0.78rem; color: var(--muted); }
 .triage-meta { display: block; font-size: 0.78rem; }
 .triage-amount { color: var(--ink); white-space: nowrap; }
+
+/* "Add note" toggle — quiet-btn's coloring/interaction at inline, meta-line
+   scale (quiet-btn itself is a full-width block, wrong shape here). */
+.triage-note-toggle {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  padding: 0;
+  margin-left: 6px;
+}
+.triage-note-toggle:active { color: var(--ink-2); }
+
+.triage-note-input {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
 
 /* The choice buttons reuse .chips button's colors and interaction states —
    only sizing changes, since that treatment was built for single-digit

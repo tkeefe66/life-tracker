@@ -20,6 +20,7 @@ export interface TriageRow {
   signature: string;
   signature_count: number;
   signature_amount: number;
+  user_note: string | null;
 }
 
 interface Props {
@@ -27,7 +28,11 @@ interface Props {
   prompt: string;
   rows: TriageRow[];
   choices: TriageChoice[];
-  onAnswer: (id: string, flow: string) => void;
+  // `note` is optional so the answer can carry free text without forcing
+  // every caller to pass one — an existing caller with a two-arg handler
+  // stays type-valid (spec §3: notes are optional, ride along with the
+  // answer, and a note alone never clears a row).
+  onAnswer: (id: string, flow: string, note?: string) => void;
   onBulk: (ids: string[], flow: string) => void;
 }
 
@@ -59,6 +64,12 @@ function displaySignature(signature: string): string {
 
 export default function TriageQueue({ title, prompt, rows, choices, onAnswer, onBulk }: Props) {
   const [justAnswered, setJustAnswered] = useState<JustAnswered | null>(null);
+  // Per-row note UI state, keyed by simplefin_id. Kept here rather than on
+  // the row itself: a note is draft input that only becomes real when a
+  // choice chip is tapped alongside it (spec §3) — it's never independently
+  // saved, so it has no business living in the row data the parent owns.
+  const [openNotes, setOpenNotes] = useState<Record<string, boolean>>({});
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
 
   if (rows.length === 0) {
     return (
@@ -69,9 +80,22 @@ export default function TriageQueue({ title, prompt, rows, choices, onAnswer, on
     );
   }
 
+  const toggleNote = (id: string) => {
+    setOpenNotes((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const setDraft = (id: string, value: string) => {
+    setNoteDrafts((prev) => ({ ...prev, [id]: value }));
+  };
+
   const handleAnswer = (row: TriageRow, flow: string) => {
+    // Trimmed, and only passed at all when non-empty — an accidental clear
+    // from this surface must be impossible (spec §3: omitting the key on
+    // the write path leaves the stored note untouched; "" would clear it).
+    const trimmed = noteDrafts[row.simplefin_id]?.trim();
+    const note = trimmed ? trimmed : undefined;
     setJustAnswered({ id: row.simplefin_id, flow });
-    onAnswer(row.simplefin_id, flow);
+    onAnswer(row.simplefin_id, flow, note);
   };
 
   const handleBulk = (row: TriageRow, flow: string) => {
@@ -89,16 +113,38 @@ export default function TriageQueue({ title, prompt, rows, choices, onAnswer, on
         {rows.map((row) => {
           const answeredWith = justAnswered?.id === row.simplefin_id ? justAnswered : null;
           const { monthDay } = dayRowDate(row.posted);
+          const noteOpen = !!openNotes[row.simplefin_id];
 
           return (
             <li key={row.simplefin_id} className={`triage-row${answeredWith ? " settle" : ""}`}>
               <div className="triage-row-top">
                 <span className="triage-detail">
                   <span className="triage-label">{row.label}</span>
-                  <span className="triage-meta">{row.account_name} · {monthDay}</span>
+                  {row.user_note && <span className="triage-note">{row.user_note}</span>}
+                  <span className="triage-meta">
+                    {row.account_name} · {monthDay}
+                    <button
+                      type="button"
+                      className="triage-note-toggle"
+                      onClick={() => toggleNote(row.simplefin_id)}
+                    >
+                      Add note
+                    </button>
+                  </span>
                 </span>
                 <span className="triage-amount num">{money(Math.abs(row.amount))}</span>
               </div>
+
+              {noteOpen && (
+                <input
+                  type="text"
+                  className="triage-note-input"
+                  maxLength={500}
+                  placeholder="What's this?"
+                  value={noteDrafts[row.simplefin_id] ?? ""}
+                  onChange={(e) => setDraft(row.simplefin_id, e.target.value)}
+                />
+              )}
 
               <div className="chips">
                 {choices.map((c) => (

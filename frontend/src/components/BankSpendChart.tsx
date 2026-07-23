@@ -33,8 +33,14 @@ export default function BankSpendChart({ weeks, onSelect }: Props) {
         const colX = PLOT_LEFT + i * bw;
         const barX = colX + 1;
         const barWidth = Math.max(bw - 2, 1);
-        const hasBar = w.spending > 0;
-        const h = Math.max((w.spending / max) * PLOT_H, 1);
+        // Refunds can net a week negative (spec §2) — the backend reports the
+        // true net so the tap caption tells the truth, but bar geometry has
+        // no way to draw "negative", so it's floored at zero here. The
+        // `<title>`/`aria-label` and `onSelect` below stay wired to `w`
+        // itself, never this floored value, so the caption keeps the sign.
+        const barSpending = Math.max(0, w.spending);
+        const hasBar = barSpending > 0;
+        const h = Math.max((barSpending / max) * PLOT_H, 1);
         const barY = BASELINE - h;
         const title = weekCaption(w);
 
