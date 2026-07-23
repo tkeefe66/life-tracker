@@ -192,6 +192,11 @@ doesn't exist.
 | `SESSION_MAX_DAYS` | Absolute session lifetime cap regardless of renewal — closes off an actively-used or stolen cookie renewing forever (default 60) |
 | `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` | Off-Railway S3-compatible destination for the weekly `pg_dump` backup (`jobs/backup_db.py`). All unset = backups no-op with a logged warning |
 | `BACKUP_HOUR` | Sunday backup hour, local time (default 4) |
+| `SIMPLEFIN_ACCESS_URL` | SimpleFIN bearer credential — the URL *is* the secret. Unset = bank sync no-ops. Never logged or stored |
+| `SIMPLEFIN_SYNC_INTERVAL_HOURS` | Bank sync interval (default 12) |
+| `SIMPLEFIN_LOOKBACK_DAYS` | Bank sync lookback window (default 90 — SimpleFIN's hard cap) |
+| `PAIR_WINDOW_DAYS` | Max days between the two halves of a matched transfer (default 3) |
+| `INCOME_PAYEE_HINTS` | Comma-separated payroll signatures; only matching unpaired deposits count as income |
 
 **Note:** `.env.example` has historically lagged this table (a sandbox
 permission guardrail on dotenv files has blocked editing it directly in past

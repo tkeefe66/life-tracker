@@ -33,6 +33,28 @@ GMAIL_SCAN_LOOKBACK_DAYS = int(os.getenv("GMAIL_SCAN_LOOKBACK_DAYS", "7"))
 CALENDAR_SCAN_HOUR = int(os.getenv("CALENDAR_SCAN_HOUR", "6"))
 WEEKLY_PUSH_HOUR = int(os.getenv("WEEKLY_PUSH_HOUR", "9"))
 
+# SimpleFIN bank ingestion. The access URL is a BEARER CREDENTIAL — it carries
+# its own authentication inside the URL. It is read here and nowhere else, never
+# logged, never stored in the database, never returned by any route. Unset =
+# jobs/sync_bank.py no-ops with a "not configured" status, so local dev and an
+# un-configured deploy are unaffected.
+SIMPLEFIN_ACCESS_URL = os.getenv("SIMPLEFIN_ACCESS_URL", "")
+SIMPLEFIN_SYNC_INTERVAL_HOURS = int(os.getenv("SIMPLEFIN_SYNC_INTERVAL_HOURS", "12"))
+# SimpleFIN caps history at a rolling 90 days; asking for more is harmless (the
+# API caps it and reports the cap as a non-fatal error) but pointless.
+SIMPLEFIN_LOOKBACK_DAYS = int(os.getenv("SIMPLEFIN_LOOKBACK_DAYS", "90"))
+# How many days apart the two halves of a transfer may post and still pair.
+# Settlement routinely lags a day or two; 3 is deliberately generous because a
+# missed pair becomes phantom spending, which is the failure mode that matters.
+PAIR_WINDOW_DAYS = int(os.getenv("PAIR_WINDOW_DAYS", "3"))
+# Payroll signatures, comma-separated, matched case-insensitively against a
+# transaction's payee and description. Deliberately conservative: only an
+# unpaired deposit that matches one of these is called income. See the SoFi
+# hazard in the spec — an unmatched deposit is never silently income.
+INCOME_PAYEE_HINTS = [
+    h.strip() for h in os.getenv("INCOME_PAYEE_HINTS", "").split(",") if h.strip()
+]
+
 # Session lifetime, in days. The session token itself is random
 # (secrets.token_urlsafe) and stored server-side — APP_PASSWORD can no longer be
 # used to compute a valid cookie offline.
