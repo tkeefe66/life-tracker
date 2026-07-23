@@ -149,6 +149,49 @@ export function subtotalsFromDay(day: SubtotalDay, now: number = Date.now()): Sp
     .sort((a, b) => b.amount - a.amount);
 }
 
+export interface DayItem {
+  kind: "delivery" | "ride" | "social";
+  service: string;
+  label: string;
+  at: string;
+  amount: number;
+  is_work: boolean;
+}
+
+export interface Day {
+  date: string;
+  gym: boolean;
+  alcohol_level: number | null;
+  substances: boolean;
+  total: number;
+  items: DayItem[];
+}
+
+export interface Chip { label: string; tone: "accent" | "over" }
+
+/**
+ * Chips summarise a day, they do not enumerate it — one chip per category, not
+ * one per item. Ceiling metrics (delivery, alcohol, substances) tint `over`;
+ * floor metrics and rides tint `accent`. Work rides never produce a chip of
+ * their own — they only surface in the expanded panel — so the ride count
+ * here is personal rides only.
+ */
+export function dayChips(day: Day): Chip[] {
+  const chips: Chip[] = [];
+  if (day.gym) chips.push({ label: "Gym", tone: "accent" });
+  if (day.items.some((i) => i.kind === "social")) chips.push({ label: "Social", tone: "accent" });
+  if (day.alcohol_level != null) chips.push({ label: `Alcohol ${day.alcohol_level}`, tone: "over" });
+  if (day.substances) chips.push({ label: "Substances", tone: "over" });
+
+  const deliveryCount = day.items.filter((i) => i.kind === "delivery").length;
+  if (deliveryCount > 0) chips.push({ label: `${deliveryCount} delivery`, tone: "over" });
+
+  const rideCount = day.items.filter((i) => i.kind === "ride" && !i.is_work).length;
+  if (rideCount > 0) chips.push({ label: `${rideCount} ride${rideCount === 1 ? "" : "s"}`, tone: "accent" });
+
+  return chips;
+}
+
 /**
  * Diff the editor's current fields against what was loaded and return only the
  * fields the user actually changed — so PATCH never manufactures an override

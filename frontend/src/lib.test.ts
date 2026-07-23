@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayLabel, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel } from "./lib";
+import { dayChips, dayLabel, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel, type Day } from "./lib";
 
 describe("weekLabel", () => {
   it("formats a Monday week start as a Mon–Sun range", () => {
@@ -231,5 +231,82 @@ describe("subtotalsFromDay", () => {
       social_events: [{ amount: 25 }],
     });
     expect(rows).toEqual([{ kind: "social", service: "Social", amount: 25 }]);
+  });
+});
+
+function emptyDay(overrides: Partial<Day> = {}): Day {
+  return {
+    date: "2026-07-20",
+    gym: false,
+    alcohol_level: null,
+    substances: false,
+    total: 0,
+    items: [],
+    ...overrides,
+  };
+}
+
+describe("dayChips", () => {
+  it("returns nothing for a day with nothing logged", () => {
+    expect(dayChips(emptyDay())).toEqual([]);
+  });
+
+  it("chips gym, social, alcohol level, and substances", () => {
+    const day = emptyDay({
+      gym: true,
+      alcohol_level: 2,
+      substances: true,
+      items: [
+        { kind: "social", service: "Social", label: "Dinner", at: "2026-07-20T19:00:00", amount: 25, is_work: false },
+      ],
+    });
+    expect(dayChips(day)).toEqual([
+      { label: "Gym", tone: "accent" },
+      { label: "Social", tone: "accent" },
+      { label: "Alcohol 2", tone: "over" },
+      { label: "Substances", tone: "over" },
+    ]);
+  });
+
+  it("counts delivery items into an over-tinted N delivery chip", () => {
+    const day = emptyDay({
+      items: [
+        { kind: "delivery", service: "Uber Eats", label: "Pizza", at: "2026-07-20T18:00:00", amount: 16, is_work: false },
+        { kind: "delivery", service: "DoorDash", label: "Tacos", at: "2026-07-20T19:00:00", amount: 12, is_work: false },
+      ],
+    });
+    expect(dayChips(day)).toEqual([{ label: "2 delivery", tone: "over" }]);
+  });
+
+  it("counts personal ride items into an accent-tinted N ride/N rides chip", () => {
+    const oneRide = emptyDay({
+      items: [{ kind: "ride", service: "Uber", label: "Trip", at: "2026-07-20T08:00:00", amount: 10, is_work: false }],
+    });
+    expect(dayChips(oneRide)).toEqual([{ label: "1 ride", tone: "accent" }]);
+
+    const twoRides = emptyDay({
+      items: [
+        { kind: "ride", service: "Uber", label: "Trip 1", at: "2026-07-20T08:00:00", amount: 10, is_work: false },
+        { kind: "ride", service: "Lyft", label: "Trip 2", at: "2026-07-20T18:00:00", amount: 14, is_work: false },
+      ],
+    });
+    expect(dayChips(twoRides)).toEqual([{ label: "2 rides", tone: "accent" }]);
+  });
+
+  it("work rides do not produce a chip", () => {
+    const day = emptyDay({
+      items: [{ kind: "ride", service: "Uber", label: "Commute", at: "2026-07-20T08:00:00", amount: 10, is_work: true }],
+    });
+    expect(dayChips(day)).toEqual([]);
+  });
+
+  it("a day with one personal and one work ride chips only the personal one", () => {
+    const day = emptyDay({
+      items: [
+        { kind: "ride", service: "Uber", label: "Personal", at: "2026-07-20T08:00:00", amount: 10, is_work: false },
+        { kind: "ride", service: "Uber", label: "Work", at: "2026-07-20T09:00:00", amount: 20, is_work: true },
+      ],
+    });
+    expect(dayChips(day)).toEqual([{ label: "1 ride", tone: "accent" }]);
   });
 });
