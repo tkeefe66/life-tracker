@@ -868,3 +868,39 @@ details.orders .quiet { margin: 10px 0 0; }
 /* Same settle pulse the Today check-ins use (spec §6.2) — the row itself is
    removed by the parent, this just gives the tap a moment of feedback first. */
 .triage-row.settle { animation: settle 200ms var(--ease); }
+
+.triage-more { font-size: 0.78rem; color: var(--muted); margin: 4px 4px 18px; }
+
+/* ── Money screen: collapsed disclosures (tracked-category chart, recently
+   sorted) — same treatment as details.numbers / details.orders ── */
+details.money-details {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 14px 0 18px;
+}
+details.money-details summary { cursor: pointer; font-size: 14px; color: var(--ink-2); }
+details.money-details .spend-chart,
+details.money-details .legend,
+details.money-details .trend-caption { margin-top: 10px; }
+
+.recent-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+.recent-row + .recent-row { border-top: 1px solid var(--line); }
+.recent-row button {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 2px 0;
+}

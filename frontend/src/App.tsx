@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { apiGet, LockedOutError, login, onUnauthorized, UnauthorizedError } from "./api";
 import Today from "./screens/Today";
 import Scorecard from "./screens/Scorecard";
+import Money from "./screens/Money";
 import Insights from "./screens/Insights";
 import Settings from "./screens/Settings";
 
-type Tab = "today" | "scorecard" | "insights" | "settings";
+type Tab = "today" | "scorecard" | "money" | "insights" | "settings";
 
 const TAB_META: { id: Tab; label: string; icon: JSX.Element }[] = [
   {
@@ -24,6 +25,16 @@ const TAB_META: { id: Tab; label: string; icon: JSX.Element }[] = [
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
         <path d="M4 16V9M10 16V4M16 16v-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    id: "money",
+    label: "Money",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <rect x="2.5" y="5.5" width="15" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+        <circle cx="10" cy="10" r="2.25" stroke="currentColor" strokeWidth="1.5" />
       </svg>
     ),
   },
@@ -128,6 +139,7 @@ export default function App() {
         {tab === "scorecard" && (
           <Scorecard onOpenDay={(iso) => { setPendingDay(iso); setTab("today"); }} />
         )}
+        {tab === "money" && <Money />}
         {tab === "insights" && <Insights />}
         {tab === "settings" && <Settings onLoggedOut={() => setAuthed(false)} />}
       </main>

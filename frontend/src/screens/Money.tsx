@@ -1,0 +1,345 @@
+import { useEffect, useRef, useState } from "react";
+import { apiGet, apiSend } from "../api";
+import {
+  coverageNote, flowLabel, money, trackedShareSentence, weekCaption, weekRangeLabel,
+  TRIAGE_CHOICES, type SpendRow, type WeekSpendPoint,
+} from "../lib";
+import BankSpendChart from "../components/BankSpendChart";
+import SpendChart, { type SpendWeekPoint } from "../components/SpendChart";
+import SpendSubtotals from "../components/SpendSubtotals";
+import TriageQueue, { type TriageRow } from "../components/TriageQueue";
+
+interface BankFlowTotal { count: number; amount: number }
+interface BankSummaryData {
+  covered_from: string | null;
+  covered_to: string | null;
+  weeks: WeekSpendPoint[];
+  totals: Record<string, BankFlowTotal>;
+  spent: number;
+  tracked: SpendRow[];
+  triage_counts: { ambiguous: number; inflow_unknown: number };
+}
+interface BankTriageData {
+  ambiguous: TriageRow[];
+  inflow_unknown: TriageRow[];
+  recent: TriageRow[];
+}
+interface MoneySettings { bank_last_status: string | null; bank_last_run: string | null }
+interface TrackedSpendData { weeks: SpendWeekPoint[] }
+
+const MOVEMENT_FLOWS: { flow: string }[] = [
+  { flow: "card_payment" },
+  { flow: "transfer" },
+  { flow: "investment" },
+];
+
+const LEGEND: { key: "delivery" | "rides" | "social"; label: string; token: string }[] = [
+  { key: "delivery", label: "Delivery", token: "var(--chart-delivery)" },
+  { key: "rides", label: "Rides", token: "var(--chart-rides)" },
+  { key: "social", label: "Social", token: "var(--chart-social)" },
+];
+
+// How long an answered row lingers in its queue before actually being removed.
+// TriageQueue's one-shot bulk offer ("Apply to the other N…") renders directly
+// under the row that was just answered, for as long as that row is still in
+// the `rows` array (see TriageQueue's own doc comment). Removing the row in
+// the exact same tick as answering it — which "optimistic, immediate removal"
+// would literally mean — would make the bulk offer invisible for its entire
+// life. This linger is what makes §6.3's bulk correction usable at all: the
+// network request still fires immediately in the background (truly
+// optimistic — nothing waits on it), only the row's on-screen removal is
+// deferred a few seconds so the offer has a real window to be tapped.
+const ANSWERED_LINGER_MS = 4000;
+
+function bankStatusLine(status: string | null, run: string | null): string {
+  if (!status) return "Hasn't run yet";
+  const when = run ? new Date(run) : null;
+  const at = when && !isNaN(when.getTime())
+    ? when.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : "";
+  return status === "ok" ? `OK${at ? ` · ${at}` : ""}` : status;
+}
+
+export default function Money() {
+  const [summary, setSummary] = useState<BankSummaryData | null>(null);
+  const [settings, setSettings] = useState<MoneySettings | null>(null);
+  const [trackedSpend, setTrackedSpend] = useState<TrackedSpendData | null>(null);
+  const [ambiguousRows, setAmbiguousRows] = useState<TriageRow[] | null>(null);
+  const [inflowRows, setInflowRows] = useState<TriageRow[] | null>(null);
+  const [recentRows, setRecentRows] = useState<TriageRow[] | null>(null);
+
+  const [selectedBankWeek, setSelectedBankWeek] = useState<number | null>(null);
+  const [selectedTrackedWeek, setSelectedTrackedWeek] = useState<number | null>(null);
+
+  const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  useEffect(() => {
+    apiGet<BankSummaryData>("/bank/summary?weeks=12").then(setSummary).catch(() => setSummary(null));
+  }, []);
+
+  useEffect(() => {
+    apiGet<MoneySettings>("/settings").then(setSettings).catch(() => setSettings(null));
+  }, []);
+
+  useEffect(() => {
+    apiGet<TrackedSpendData>("/spend?weeks=12").then(setTrackedSpend).catch(() => setTrackedSpend(null));
+  }, []);
+
+  useEffect(() => {
+    apiGet<BankTriageData>("/bank/triage?limit=50")
+      .then((d) => {
+        setAmbiguousRows(d.ambiguous);
+        setInflowRows(d.inflow_unknown);
+        setRecentRows(d.recent);
+      })
+      .catch(() => {
+        setAmbiguousRows(null);
+        setInflowRows(null);
+        setRecentRows(null);
+      });
+  }, []);
+
+  // Clear any pending linger timers on unmount so a stale setState never fires
+  // after the screen has gone away.
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      Object.values(timers).forEach(clearTimeout);
+    };
+  }, []);
+
+  const reloadSummary = () => {
+    apiGet<BankSummaryData>("/bank/summary?weeks=12").then(setSummary).catch(() => {});
+  };
+
+  const scheduleRemoval = (
+    id: string,
+    setRows: React.Dispatch<React.SetStateAction<TriageRow[] | null>>,
+  ) => {
+    clearTimeout(timersRef.current[id]);
+    timersRef.current[id] = setTimeout(() => {
+      setRows((prev) => prev?.filter((r) => r.simplefin_id !== id) ?? prev);
+      delete timersRef.current[id];
+    }, ANSWERED_LINGER_MS);
+  };
+
+  const cancelRemoval = (id: string) => {
+    clearTimeout(timersRef.current[id]);
+    delete timersRef.current[id];
+  };
+
+  const handleAnswer = (bucket: "ambiguous" | "inflow", row: TriageRow, flow: string) => {
+    const setRows = bucket === "ambiguous" ? setAmbiguousRows : setInflowRows;
+    // Fires now, in the background — the request never waits on anything above.
+    scheduleRemoval(row.simplefin_id, setRows);
+    apiSend("POST", `/bank/transactions/${row.simplefin_id}/flow`, { flow })
+      .then(() => reloadSummary())
+      .catch(() => {
+        cancelRemoval(row.simplefin_id);
+        setRows((prev) => (prev && !prev.some((r) => r.simplefin_id === row.simplefin_id)
+          ? [row, ...prev]
+          : prev));
+      });
+  };
+
+  const handleBulk = (bucket: "ambiguous" | "inflow", ids: string[], flow: string) => {
+    const rows = bucket === "ambiguous" ? ambiguousRows : inflowRows;
+    const setRows = bucket === "ambiguous" ? setAmbiguousRows : setInflowRows;
+    const removed = (rows ?? []).filter((r) => ids.includes(r.simplefin_id));
+    // Nothing left matching these ids — either already applied by an earlier
+    // click, or the state just hasn't caught up yet. Either way, do nothing:
+    // this is the guard against a double-fire the child button doesn't have.
+    if (removed.length === 0) return;
+    removed.forEach((r) => cancelRemoval(r.simplefin_id));
+    setRows((prev) => prev?.filter((r) => !ids.includes(r.simplefin_id)) ?? prev);
+    apiSend("POST", "/bank/transactions/flow", { simplefin_ids: ids, flow })
+      .then(() => reloadSummary())
+      .catch(() => {
+        setRows((prev) => (prev ? [...removed, ...prev] : prev));
+      });
+  };
+
+  const handlePutBack = (row: TriageRow) => {
+    setRecentRows((prev) => prev?.filter((r) => r.simplefin_id !== row.simplefin_id) ?? prev);
+    apiSend("POST", `/bank/transactions/${row.simplefin_id}/flow`, { flow: null })
+      .then(() => reloadSummary())
+      .catch(() => setRecentRows((prev) => (prev ? [row, ...prev] : prev)));
+  };
+
+  const notConfigured = settings?.bank_last_status === "error: not configured";
+  const awaitingFirstSync = !!summary && !notConfigured && summary.covered_from === null;
+  const bankSectionsVisible = !!summary && !notConfigured && !awaitingFirstSync;
+
+  const selectedBankPoint = bankSectionsVisible && selectedBankWeek !== null
+    ? summary!.weeks[selectedBankWeek] ?? null
+    : null;
+  const selectedTrackedPoint = trackedSpend && selectedTrackedWeek !== null
+    ? trackedSpend.weeks[selectedTrackedWeek] ?? null
+    : null;
+
+  const ambiguousMore = bankSectionsVisible && ambiguousRows
+    ? Math.max(0, summary!.triage_counts.ambiguous - ambiguousRows.length)
+    : 0;
+  const inflowMore = bankSectionsVisible && inflowRows
+    ? Math.max(0, summary!.triage_counts.inflow_unknown - inflowRows.length)
+    : 0;
+
+  const coverage = summary ? coverageNote(summary.covered_from) : "";
+
+  return (
+    <div>
+      {notConfigured && <p className="quiet empty">Bank sync isn't set up.</p>}
+
+      {awaitingFirstSync && (
+        <>
+          <p className="quiet empty">Waiting for the first sync.</p>
+          {settings && (
+            <p className="footnote">{bankStatusLine(settings.bank_last_status, settings.bank_last_run)}</p>
+          )}
+        </>
+      )}
+
+      {bankSectionsVisible && summary && (
+        <>
+          <p className="money-hero">{money(summary.spent)}</p>
+          <p className="money-hero-sub">spent · last 12 weeks</p>
+
+          <BankSpendChart
+            weeks={summary.weeks}
+            onSelect={(i) => setSelectedBankWeek((prev) => (prev === i ? null : i))}
+          />
+          {selectedBankPoint && (
+            <p className="trend-caption">{weekCaption(selectedBankPoint)}</p>
+          )}
+
+          {MOVEMENT_FLOWS.some((m) => summary.totals[m.flow]) && (
+            <>
+              <p className="section-label">Where the rest went</p>
+              <div className="spend">
+                {MOVEMENT_FLOWS.map(({ flow }) => {
+                  const t = summary.totals[flow];
+                  if (!t) return null;
+                  return (
+                    <div className="spend-row" key={flow}>
+                      <span className="spend-service">{flowLabel(flow)}</span>
+                      <span className="spend-amount num">{t.count} · {money(t.amount)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="footnote">Separated out so they don't count as spending.</p>
+            </>
+          )}
+
+          {summary.totals.income && (
+            <>
+              <p className="section-label">Money in</p>
+              <div className="spend">
+                <div className="spend-row">
+                  <span className="spend-service">at least</span>
+                  <span className="spend-amount num">{money(summary.totals.income.amount)}</span>
+                </div>
+              </div>
+              <p className="footnote">
+                Only deposits matching a known payroll signature count. Anything from an account
+                that isn't connected doesn't appear here.
+              </p>
+            </>
+          )}
+        </>
+      )}
+
+      {summary && (
+        <>
+          {trackedShareSentence(
+            summary.tracked.reduce((sum, r) => sum + r.amount, 0),
+            summary.spent,
+          ) && (
+            <p className="quiet">
+              <span>
+                {trackedShareSentence(
+                  summary.tracked.reduce((sum, r) => sum + r.amount, 0),
+                  summary.spent,
+                )}
+              </span>
+            </p>
+          )}
+          <SpendSubtotals rows={summary.tracked} title="Of that, the things you're tracking" />
+
+          {trackedSpend && trackedSpend.weeks.length > 0 && (
+            <details className="money-details">
+              <summary>Show tracked categories over time</summary>
+              <SpendChart
+                weeks={trackedSpend.weeks}
+                onSelect={(i) => setSelectedTrackedWeek((prev) => (prev === i ? null : i))}
+              />
+              <div className="legend">
+                {LEGEND.map((l) => (
+                  <span className="legend-item" key={l.key}>
+                    <span className="legend-swatch" style={{ background: l.token }} />
+                    {l.label}
+                  </span>
+                ))}
+              </div>
+              {selectedTrackedPoint && (
+                <p className="trend-caption">
+                  {weekRangeLabel(selectedTrackedPoint.week_start)} · Delivery{" "}
+                  {money(selectedTrackedPoint.delivery)} · Rides {money(selectedTrackedPoint.rides)} ·
+                  {" "}Social {money(selectedTrackedPoint.social)}
+                  {selectedTrackedWeek === trackedSpend.weeks.length - 1 && " · In progress"}
+                </p>
+              )}
+            </details>
+          )}
+        </>
+      )}
+
+      {bankSectionsVisible && (
+        <>
+          <p className="section-label">Needs a decision</p>
+          <TriageQueue
+            title="Spent it, or moved it?"
+            prompt="These read like transfers but were counted as spending."
+            rows={ambiguousRows ?? []}
+            choices={TRIAGE_CHOICES.outflow}
+            onAnswer={(id, flow) => {
+              const row = ambiguousRows?.find((r) => r.simplefin_id === id);
+              if (row) handleAnswer("ambiguous", row, flow);
+            }}
+            onBulk={(ids, flow) => handleBulk("ambiguous", ids, flow)}
+          />
+          {ambiguousMore > 0 && <p className="triage-more">{ambiguousMore} more</p>}
+
+          <TriageQueue
+            title="Where did this come from?"
+            prompt="A deposit that isn't payroll."
+            rows={inflowRows ?? []}
+            choices={TRIAGE_CHOICES.inflow}
+            onAnswer={(id, flow) => {
+              const row = inflowRows?.find((r) => r.simplefin_id === id);
+              if (row) handleAnswer("inflow", row, flow);
+            }}
+            onBulk={(ids, flow) => handleBulk("inflow", ids, flow)}
+          />
+          {inflowMore > 0 && <p className="triage-more">{inflowMore} more</p>}
+
+          {recentRows && recentRows.length > 0 && (
+            <details className="money-details">
+              <summary>Recently sorted</summary>
+              {recentRows.map((r) => (
+                <div className="recent-row" key={r.simplefin_id}>
+                  <span>
+                    {r.label} — {r.resolved_flow === "spending" ? "Spent it" : flowLabel(r.resolved_flow)}
+                  </span>
+                  <button type="button" onClick={() => handlePutBack(r)}>Put it back</button>
+                </div>
+              ))}
+            </details>
+          )}
+        </>
+      )}
+
+      {coverage && <p className="footnote">{coverage}</p>}
+    </div>
+  );
+}
