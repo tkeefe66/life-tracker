@@ -104,6 +104,88 @@ export function money(amount: number): string {
   return `$${amount.toFixed(2).replace(/\.00$/, "")}`;
 }
 
+/**
+ * Button -> `user_flow` mapping for the triage worklist (spec §6.1). The user
+ * never sees the word "flow" or any of its six values — these are the plain-
+ * language labels the buttons show, and this table is the whole correctness
+ * surface: get a row wrong and a correction writes the wrong flow silently.
+ * Two queues, two answer sets — "Moved it" (ambiguous/outflow queue) and
+ * "Moved from another account" (inflow_unknown queue) are different buttons
+ * that both resolve to `transfer`.
+ */
+export interface TriageChoice { label: string; flow: string }
+export const TRIAGE_CHOICES: { outflow: TriageChoice[]; inflow: TriageChoice[] } = {
+  outflow: [
+    { label: "Spent it", flow: "spending" },
+    { label: "Moved it", flow: "transfer" },
+    { label: "Paid a card", flow: "card_payment" },
+    { label: "Saved / invested", flow: "investment" },
+  ],
+  inflow: [
+    { label: "It's income", flow: "income" },
+    { label: "Moved from another account", flow: "transfer" },
+  ],
+};
+
+const FLOW_LABELS: Record<string, string> = {
+  card_payment: "Paid off cards",
+  transfer: "Moved between accounts",
+  investment: "Into investments",
+  income: "Money in",
+};
+
+/** Display label for a resolved bank flow (§5.2 row headings). An unresolved
+ * or unrecognized value is returned as-is rather than throwing — a display
+ * helper should degrade, not crash the money screen. */
+export function flowLabel(flow: string): string {
+  return FLOW_LABELS[flow] ?? flow;
+}
+
+/** The permanent coverage footnote (spec §5.6 / §4): explains why data
+ * before `covered_from` doesn't exist, rather than looking like a gap. No
+ * coverage yet (`null`, e.g. before the first sync) renders nothing. */
+export function coverageNote(coveredFrom: string | null): string {
+  if (coveredFrom == null) return "";
+  const { monthDay } = dayRowDate(coveredFrom);
+  return `Bank data starts ${monthDay}. SimpleFIN keeps 90 days, so nothing before that exists.`;
+}
+
+export interface WeekSpendPoint { week_start: string; spending: number; partial: boolean }
+
+/** Tap caption for a bar in the weekly bank-spending chart (spec §5.1): the
+ * week range, the total, and "partial week" only when the week is partial —
+ * a zero-spend week still shows `$0`, never an empty gap. */
+export function weekCaption(week: WeekSpendPoint): string {
+  const suffix = week.partial ? " · partial week" : "";
+  return `${weekRangeLabel(week.week_start)} · ${money(week.spending)}${suffix}`;
+}
+
+/**
+ * Inserts thousands separators on top of `money()`'s cents/whole-dollar
+ * trimming. The shared `money()` used everywhere else in the app (delivery,
+ * ride, and social amounts — all comfortably sub-$1,000) is left untouched;
+ * only the whole-account bank total in `trackedShareSentence` runs large
+ * enough to need grouping.
+ */
+function moneyGrouped(amount: number): string {
+  const formatted = money(amount);
+  const match = formatted.match(/^\$(\d+)(\.\d+)?$/);
+  if (!match) return formatted;
+  const [, wholePart, decimalPart = ""] = match;
+  const grouped = wholePart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `$${grouped}${decimalPart}`;
+}
+
+/** "Of that, the things you're tracking" sentence (spec §5.4): the tracked
+ * (delivery/rides/social) share of the whole-account bank total, stated as
+ * prose rather than a gauge. `spent === 0` means there is nothing to be a
+ * share of, so the sentence is suppressed entirely rather than reading
+ * "$0 of the $0 above." */
+export function trackedShareSentence(tracked: number, spent: number): string {
+  if (spent === 0) return "";
+  return `Delivery, rides and social are ${moneyGrouped(tracked)} of the ${moneyGrouped(spent)} above.`;
+}
+
 interface SubtotalDelivery { service: string; amount: number | null }
 interface SubtotalRide { service: string; amount: number | null; user_is_work: boolean | null }
 interface SubtotalSocialEvent { amount: number | null; end_at?: string }

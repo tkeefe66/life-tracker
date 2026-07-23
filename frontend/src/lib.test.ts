@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   dayChips, dayLabel, dayRowDate, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel, type Day,
+  TRIAGE_CHOICES, flowLabel, coverageNote, weekCaption, trackedShareSentence,
 } from "./lib";
 
 describe("weekLabel", () => {
@@ -317,5 +318,87 @@ describe("dayChips", () => {
       ],
     });
     expect(dayChips(day)).toEqual([{ label: "1 ride", tone: "accent" }]);
+  });
+});
+
+describe("TRIAGE_CHOICES", () => {
+  it("maps the ambiguous-queue buttons to their exact user_flow, in spec order", () => {
+    expect(TRIAGE_CHOICES.outflow).toEqual([
+      { label: "Spent it", flow: "spending" },
+      { label: "Moved it", flow: "transfer" },
+      { label: "Paid a card", flow: "card_payment" },
+      { label: "Saved / invested", flow: "investment" },
+    ]);
+  });
+
+  it("maps the inflow-unknown-queue buttons to their exact user_flow, in spec order", () => {
+    expect(TRIAGE_CHOICES.inflow).toEqual([
+      { label: "It's income", flow: "income" },
+      { label: "Moved from another account", flow: "transfer" },
+    ]);
+  });
+});
+
+describe("flowLabel", () => {
+  it("labels the known flow values", () => {
+    expect(flowLabel("card_payment")).toBe("Paid off cards");
+    expect(flowLabel("transfer")).toBe("Moved between accounts");
+    expect(flowLabel("investment")).toBe("Into investments");
+    expect(flowLabel("income")).toBe("Money in");
+  });
+
+  it("returns an unknown value as-is rather than throwing", () => {
+    expect(flowLabel("spending")).toBe("spending");
+    expect(flowLabel("something_new")).toBe("something_new");
+  });
+});
+
+describe("coverageNote", () => {
+  it("states the coverage start date and the SimpleFIN 90-day cap", () => {
+    expect(coverageNote("2026-04-25")).toBe(
+      "Bank data starts Apr 25. SimpleFIN keeps 90 days, so nothing before that exists."
+    );
+  });
+
+  it("renders nothing when there is no coverage yet", () => {
+    expect(coverageNote(null)).toBe("");
+  });
+});
+
+describe("weekCaption", () => {
+  it("shows the week range, total, and partial-week suffix", () => {
+    expect(weekCaption({ week_start: "2026-07-13", spending: 412.5, partial: true })).toBe(
+      "Jul 13–19 · $412.50 · partial week"
+    );
+  });
+
+  it("omits the suffix for a complete week", () => {
+    expect(weekCaption({ week_start: "2026-07-13", spending: 412.5, partial: false })).toBe(
+      "Jul 13–19 · $412.50"
+    );
+  });
+
+  it("renders a real zero spending total, not an empty string", () => {
+    expect(weekCaption({ week_start: "2026-07-13", spending: 0, partial: false })).toBe(
+      "Jul 13–19 · $0"
+    );
+  });
+});
+
+describe("trackedShareSentence", () => {
+  it("states the tracked share of total bank spending", () => {
+    expect(trackedShareSentence(120, 3400)).toBe(
+      "Delivery, rides and social are $120 of the $3,400 above."
+    );
+  });
+
+  it("renders a real zero tracked amount, not an empty string", () => {
+    expect(trackedShareSentence(0, 3400)).toBe(
+      "Delivery, rides and social are $0 of the $3,400 above."
+    );
+  });
+
+  it("returns nothing when there is no spend to be a share of", () => {
+    expect(trackedShareSentence(0, 0)).toBe("");
   });
 });
