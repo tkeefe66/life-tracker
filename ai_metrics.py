@@ -29,6 +29,33 @@ def _strip_fences(s: str) -> str:
     return s.strip()
 
 
+_DECODER = json.JSONDecoder()
+
+
+def _extract_json_object(s: str) -> dict:
+    """Pull the first complete JSON object out of a model response.
+
+    Models routinely wrap the answer in ```json fences and/or pad it with prose
+    ("...``` \n\n This is a ride receipt"), which plain json.loads rejects with
+    "Extra data". Rather than regex the braces (which breaks on a `}` inside a
+    string value), walk each `{` and let the real JSON decoder tell us where the
+    object ends — raw_decode stops at the close brace and ignores the rest.
+    Raises ValueError when no JSON object is present, so the caller's failure
+    path (log + default) is unchanged for genuinely unparseable responses."""
+    stripped = _strip_fences(s)
+    for text in (stripped, s):
+        start = text.find("{")
+        while start != -1:
+            try:
+                parsed, _ = _DECODER.raw_decode(text, start)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                return parsed
+            start = text.find("{", start + 1)
+    raise ValueError("no JSON object found in response")
+
+
 def _call_json(prompt: str, max_tokens: int = 300, default=None):
     raw = ""
     try:
@@ -38,10 +65,7 @@ def _call_json(prompt: str, max_tokens: int = 300, default=None):
             messages=[{"role": "user", "content": prompt}],
         )
         raw = msg.content[0].text.strip()
-        parsed = json.loads(_strip_fences(raw))
-        if not isinstance(parsed, dict):
-            raise ValueError(f"expected JSON object, got {type(parsed).__name__}")
-        return parsed
+        return _extract_json_object(raw)
     except Exception as e:
         # `raw` is model output generated from personal content (and, once bank
         # data flows through this same helper, transaction descriptions) — cap

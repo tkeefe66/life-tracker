@@ -30,6 +30,78 @@ def test_classify_receipt_includes_snippet(mock_anthropic):
     assert "Thanks for ordering, preview text" in prompt
 
 
+def test_call_json_fenced_json_label(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '```json\n{"is_order": true}\n```')
+    assert ai_metrics.classify_receipt("noreply@uber.com", "Your order") is True
+
+
+def test_call_json_bare_fence(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '```\n{"is_order": true}\n```')
+    assert ai_metrics.classify_receipt("noreply@uber.com", "Your order") is True
+
+
+def test_call_json_fenced_with_trailing_prose(mock_anthropic):
+    """The exact production failure: fenced JSON followed by chatter."""
+    import ai_metrics
+    _set_response(
+        mock_anthropic,
+        '```json\n{"is_order": false}\n```\n\nThis is a ride receipt, not a food order.',
+    )
+    assert ai_metrics.classify_receipt("noreply@uber.com", "Your trip") is False
+    mock_anthropic.messages.create.reset_mock()
+    _set_response(
+        mock_anthropic,
+        '```json\n{"is_order": true}\n```\n\nThis is clearly an Uber Eats order.',
+    )
+    assert ai_metrics.classify_receipt("noreply@uber.com", "Your order") is True
+
+
+def test_call_json_leading_prose_then_json(mock_anthropic):
+    import ai_metrics
+    _set_response(
+        mock_anthropic,
+        'Sure! Here is the classification:\n\n{"is_order": true}\n\nHope that helps.',
+    )
+    assert ai_metrics.classify_receipt("noreply@uber.com", "Your order") is True
+
+
+def test_call_json_plain_unfenced_still_works(mock_anthropic):
+    """Regression: the happy path must not change."""
+    import ai_metrics
+    _set_response(mock_anthropic, '{"is_social": true, "confidence": 0.42}')
+    assert ai_metrics.classify_social_event("Dinner", "", "", []) == {
+        "is_social": True, "confidence": 0.42,
+    }
+
+
+def test_call_json_braces_inside_string_value(mock_anthropic):
+    """A `}` inside a string must not end the object early."""
+    import ai_metrics
+    _set_response(
+        mock_anthropic,
+        '```json\n{"reflection": "You wrote {curly} braces \\"and\\" quotes."}\n```\ndone',
+    )
+    assert ai_metrics.weekly_reflection(_card(), []) == 'You wrote {curly} braces "and" quotes.'
+
+
+def test_call_json_nested_object(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '```json\n{"reflection": "ok", "meta": {"a": {"b": 1}}}\n```')
+    assert ai_metrics.weekly_reflection(_card(), []) == "ok"
+
+
+def test_call_json_unparseable_still_returns_default_and_logs(mock_anthropic, caplog):
+    """Contract on real failures is unchanged: default returned, error logged."""
+    import logging
+    import ai_metrics
+    _set_response(mock_anthropic, "I'm sorry, I can't help with that. {not json")
+    with caplog.at_level(logging.ERROR):
+        assert ai_metrics.classify_receipt("x@uber.com", "??") is False
+    assert "ai_metrics JSON call failed" in caplog.text
+
+
 def test_classify_social_event(mock_anthropic):
     import ai_metrics
     _set_response(mock_anthropic, '{"is_social": true, "confidence": 0.92}')
