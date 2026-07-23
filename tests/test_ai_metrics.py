@@ -51,6 +51,32 @@ def test_classify_social_event_non_numeric_confidence(mock_anthropic):
     assert out == {"is_social": True, "confidence": 0.0}
 
 
+def test_classify_social_event_prompt_includes_examples(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"is_social": true, "confidence": 0.9}')
+    examples = [
+        {"title": "Taco Tuesday", "user_is_social": True},
+        {"title": "Team standup", "user_is_social": False},
+    ]
+    ai_metrics.classify_social_event("Dinner", "", "", [], examples=examples)
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "The user has corrected past classifications:" in prompt
+    assert '"Taco Tuesday" IS social' in prompt
+    assert '"Team standup" IS NOT social' in prompt
+
+
+def test_classify_social_event_prompt_omits_examples_block_when_empty(mock_anthropic):
+    import ai_metrics
+    _set_response(mock_anthropic, '{"is_social": true, "confidence": 0.9}')
+    ai_metrics.classify_social_event("Dinner", "", "", [], examples=None)
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "corrected past classifications" not in prompt
+
+    ai_metrics.classify_social_event("Dinner", "", "", [], examples=[])
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "corrected past classifications" not in prompt
+
+
 def _card():
     return {
         "week_start": "2026-07-13", "week_end": "2026-07-19",

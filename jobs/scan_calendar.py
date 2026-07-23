@@ -25,12 +25,13 @@ def run():
         return
     try:
         events = calendar_service.get_events_range(days_back=DAYS_BACK)
+        examples = db.get_classification_examples()
         classified = 0
         for ev in events:
             db.upsert_calendar_event(ev["event_id"], ev["title"], ev["start_datetime"], ev["end_datetime"])
             if db.event_needs_classification(ev["event_id"]):
                 result = ai_metrics.classify_social_event(
-                    ev["title"], ev["description"], ev["location"], ev["attendees"]
+                    ev["title"], ev["description"], ev["location"], ev["attendees"], examples=examples
                 )
                 db.set_event_classification(ev["event_id"], result["is_social"], result["confidence"])
                 classified += 1
