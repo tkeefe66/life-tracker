@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.auth import COOKIE_NAME, session_token, verify_password
+from app.auth import create_session, set_session_cookie, verify_password
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
@@ -40,10 +40,8 @@ def create_app(lifespan=None) -> FastAPI:
     def login(body: LoginBody, response: Response):
         if not verify_password(body.password):
             raise HTTPException(status_code=401, detail="Wrong password")
-        response.set_cookie(
-            COOKIE_NAME, session_token(),
-            httponly=True, samesite="lax", secure=True, max_age=365 * 24 * 3600,
-        )
+        token = create_session()
+        set_session_cookie(response, token)
         return {"ok": True}
 
     from app.routes import router  # imported late so routes can import database freely

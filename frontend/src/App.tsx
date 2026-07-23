@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet, login, UnauthorizedError } from "./api";
+import { apiGet, login, onUnauthorized, UnauthorizedError } from "./api";
 import Today from "./screens/Today";
 import Scorecard from "./screens/Scorecard";
 import Insights from "./screens/Insights";
@@ -100,6 +100,12 @@ export default function App() {
     probe();
   }, []);
 
+  // Any screen's fetch can hit a 401 once a session genuinely expires or is
+  // revoked elsewhere — not just this initial probe.
+  useEffect(() => {
+    onUnauthorized(() => setAuthed(false));
+  }, []);
+
   if (probeError) {
     return (
       <div className="center">
@@ -122,7 +128,7 @@ export default function App() {
           <Scorecard onOpenDay={(iso) => { setPendingDay(iso); setTab("today"); }} />
         )}
         {tab === "insights" && <Insights />}
-        {tab === "settings" && <Settings />}
+        {tab === "settings" && <Settings onLoggedOut={() => setAuthed(false)} />}
       </main>
       <nav className="tabs">
         {TAB_META.map((t) => (

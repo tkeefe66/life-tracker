@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiSend } from "../api";
+import { apiGet, apiSend, logout } from "../api";
 import { targetLabel } from "../lib";
 
 interface Target { direction: string; value: number }
@@ -38,7 +38,7 @@ function statusLine(status: string | null, run: string | null): string {
   return status === "ok" ? `OK${at ? ` · ${at}` : ""}` : status;
 }
 
-export default function Settings() {
+export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [targets, setTargets] = useState<Record<string, Target> | null>(null);
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [deliveries, setDeliveries] = useState<Delivery[] | null>(null);
@@ -70,6 +70,11 @@ export default function Settings() {
     } catch (e) {
       setSaveError((e as Error).message);
     }
+  };
+
+  const signOut = async () => {
+    await logout();
+    onLoggedOut();
   };
 
   const togglePush = async () => {
@@ -185,6 +190,14 @@ export default function Settings() {
           </details>
         </>
       )}
+
+      <p className="section-label">Account</p>
+      <div className="group">
+        <div className="row">
+          <span className="grow">Sign out</span>
+          <button type="button" onClick={signOut}>Sign out</button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -3,17 +3,24 @@ import datetime
 from typing import Literal, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 import ai_metrics
 import database as db
 import metrics
-from app.auth import require_auth
+from app.auth import COOKIE_NAME, logout as auth_logout, require_auth
 from app.scorecard import _local_today, history, insights, scorecard_for_week, spend, today_snapshot, week_days
 from services import google_auth
 
 router = APIRouter(dependencies=[Depends(require_auth)])
+
+
+@router.post("/logout")
+def post_logout(request: Request, response: Response):
+    auth_logout(request.cookies.get(COOKIE_NAME, ""))
+    response.delete_cookie(COOKIE_NAME)
+    return {"ok": True}
 
 
 class CheckinBody(BaseModel):

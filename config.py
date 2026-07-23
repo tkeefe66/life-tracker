@@ -32,3 +32,8 @@ GMAIL_SCAN_INTERVAL_HOURS = int(os.getenv("GMAIL_SCAN_INTERVAL_HOURS", "4"))
 GMAIL_SCAN_LOOKBACK_DAYS = int(os.getenv("GMAIL_SCAN_LOOKBACK_DAYS", "7"))
 CALENDAR_SCAN_HOUR = int(os.getenv("CALENDAR_SCAN_HOUR", "6"))
 WEEKLY_PUSH_HOUR = int(os.getenv("WEEKLY_PUSH_HOUR", "9"))
+
+# Session lifetime, in days. The session token itself is random
+# (secrets.token_urlsafe) and stored server-side — APP_PASSWORD can no longer be
+# used to compute a valid cookie offline.
+SESSION_TTL_DAYS = int(os.getenv("SESSION_TTL_DAYS", "14"))

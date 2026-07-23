@@ -51,3 +51,116 @@ def test_security_headers_present(temp_db_path):
     assert resp.headers["referrer-policy"] == "same-origin"
     assert "max-age=31536000" in resp.headers["strict-transport-security"]
     assert "includesubdomains" in resp.headers["strict-transport-security"].lower()
+
+
+# ── Sessions: expiry, revocation, logout ──────────────────────────────────────
+
+def test_session_cookie_is_not_derivable_from_password(temp_db_path):
+    """The old scheme was hmac(APP_PASSWORD, fixed-string) — the same password
+    always produced the same cookie, and anyone who learned APP_PASSWORD could
+    compute a valid session offline without ever calling /api/login. Two logins
+    with the identical correct password must now yield two different, random
+    tokens."""
+    import hashlib
+    import hmac as hmac_mod
+
+    client_a = _client(temp_db_path)
+    client_b = _client(temp_db_path)
+    resp_a = client_a.post("/api/login", json={"password": "test-password"})
+    resp_b = client_b.post("/api/login", json={"password": "test-password"})
+
+    token_a = resp_a.cookies["ontrack_session"]
+    token_b = resp_b.cookies["ontrack_session"]
+    assert token_a != token_b  # random per-login, not a deterministic function of the password
+
+    old_style_token = hmac_mod.new(b"test-password", b"on-track-session-v1", hashlib.sha256).hexdigest()
+    assert token_a != old_style_token
+    assert token_b != old_style_token
+
+
+def test_unknown_session_token_401s(temp_db_path):
+    client = _client(temp_db_path)
+    client.cookies.set("ontrack_session", "not-a-real-token")
+    assert client.get("/api/targets").status_code == 401
+
+
+def test_expired_session_401s_and_is_swept(temp_db_path):
+    import datetime
+
+    import database as db
+    client = _client(temp_db_path)
+
+    past = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
+    created = past - datetime.timedelta(days=14)
+    db.create_session("expired-token", created.isoformat(timespec="microseconds"), past.isoformat(timespec="microseconds"))
+    client.cookies.set("ontrack_session", "expired-token")
+
+    assert client.get("/api/targets").status_code == 401
+    # require_auth deletes an expired session the moment it's presented.
+    assert db.get_session("expired-token") is None
+
+
+def test_logout_invalidates_only_that_session(temp_db_path):
+    """Seed two independent sessions (two devices/browsers) and confirm logging
+    one out never touches the other."""
+    client_a = _client(temp_db_path)
+    client_b = _client(temp_db_path)
+    client_a.post("/api/login", json={"password": "test-password"})
+    client_b.post("/api/login", json={"password": "test-password"})
+
+    assert client_a.post("/api/logout").status_code == 200
+    assert client_a.get("/api/targets").status_code == 401
+    assert client_b.get("/api/targets").status_code == 200  # untouched
+
+
+def test_sliding_renewal_extends_a_session_past_its_halfway_point(temp_db_path, monkeypatch):
+    """A session more than halfway to expiry gets its expires_at pushed out on the
+    next authenticated request — bounds a stolen cookie's life while keeping
+    normal, regular use from ever hitting the original expiry."""
+    import datetime
+
+    import database as db
+    from app import auth as auth_mod
+
+    client = _client(temp_db_path)
+    client.post("/api/login", json={"password": "test-password"})
+    token = client.cookies["ontrack_session"]
+    original_expiry = auth_mod._parse(db.get_session(token)["expires_at"])
+
+    # Jump the clock to just past the session's halfway point.
+    created_at = auth_mod._parse(db.get_session(token)["created_at"])
+    past_halfway = created_at + (original_expiry - created_at) * 0.6
+    monkeypatch.setattr(auth_mod, "_utcnow", lambda: past_halfway)
+
+    assert client.get("/api/targets").status_code == 200
+    renewed_expiry = auth_mod._parse(db.get_session(token)["expires_at"])
+    assert renewed_expiry > original_expiry
+
+
+def test_session_not_yet_halfway_is_not_renewed(temp_db_path, monkeypatch):
+    import datetime
+
+    import database as db
+    from app import auth as auth_mod
+
+    client = _client(temp_db_path)
+    client.post("/api/login", json={"password": "test-password"})
+    token = client.cookies["ontrack_session"]
+    original_expiry = db.get_session(token)["expires_at"]
+
+    created_at = auth_mod._parse(db.get_session(token)["created_at"])
+    just_after_login = created_at + datetime.timedelta(seconds=1)
+    monkeypatch.setattr(auth_mod, "_utcnow", lambda: just_after_login)
+
+    assert client.get("/api/targets").status_code == 200
+    assert db.get_session(token)["expires_at"] == original_expiry
+
+
+def test_logout_clears_the_cookie(temp_db_path):
+    client = _client(temp_db_path)
+    client.post("/api/login", json={"password": "test-password"})
+    resp = client.post("/api/logout")
+    assert resp.status_code == 200
+    # httpx/starlette expresses "clear this cookie" as an immediately-expired Set-Cookie.
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "ontrack_session=" in set_cookie

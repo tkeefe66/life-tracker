@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app):
     db.initialize_db()
     db.seed_default_targets()
+    db.delete_expired_sessions(datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"))
 
     from jobs.scan_calendar import run as scan_calendar
     from jobs.scan_gmail import run as scan_gmail
