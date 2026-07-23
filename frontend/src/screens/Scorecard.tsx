@@ -115,9 +115,10 @@ export default function Scorecard() {
                 <span className="trend-name">{card.metrics[key].label}</span>
                 <TrendChart
                   points={insights.weeks.map((w) => ({
-                    count: w.metrics[key].count, hit: w.metrics[key].hit,
+                    count: w.metrics[key].count, hit: w.metrics[key].hit, weekStart: w.week_start,
                   }))}
                   target={card.metrics[key].target}
+                  direction={card.metrics[key].direction}
                 />
               </div>
             ))}
