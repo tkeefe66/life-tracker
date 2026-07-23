@@ -1,6 +1,9 @@
 """SimpleFIN transport + normalization. The access URL must never escape."""
+import math
+
 import httpx
 import pytest
+import pytz
 
 
 def _payload():
@@ -25,8 +28,11 @@ def _payload():
     }
 
 
-def test_normalize_flattens_accounts_and_transactions():
+def test_normalize_flattens_accounts_and_transactions(monkeypatch):
     from services import simplefin_service
+    # Pin the conversion timezone so the expected date below is deterministic
+    # regardless of the machine (or CI runner) actually running the test.
+    monkeypatch.setattr(simplefin_service, "_TZ", pytz.timezone("America/Denver"))
     accounts, txns = simplefin_service.normalize(_payload())
 
     assert [a["simplefin_id"] for a in accounts] == ["acct-1", "acct-2"]
@@ -35,7 +41,24 @@ def test_normalize_flattens_accounts_and_transactions():
     assert [t["simplefin_id"] for t in txns] == ["t1", "t2"]
     assert txns[0]["account_simplefin_id"] == "acct-1"
     assert txns[0]["amount"] == -14.20
-    assert txns[0]["posted"] == "2026-06-30" or len(txns[0]["posted"]) == 10
+    # epoch 1751328000 == 2025-07-01 05:20:00 UTC == 2025-06-30 23:20:00 in
+    # America/Denver (MDT, UTC-6) — the exact expected date, not a tautology.
+    assert txns[0]["posted"] == "2025-06-30"
+    assert txns[0]["transacted_at"] == "2025-06-29"
+
+
+def test_epoch_to_day_uses_the_configured_timezone_not_the_machines(monkeypatch):
+    """The direct regression test for the naive-fromtimestamp bug: pick an
+    epoch that lands on different calendar days in UTC vs. America/Denver and
+    assert the configured (pinned) zone wins, independent of the host's TZ."""
+    from services import simplefin_service
+
+    epoch = 1751328000  # 2025-07-01 UTC, 2025-06-30 in America/Denver
+    monkeypatch.setattr(simplefin_service, "_TZ", pytz.timezone("UTC"))
+    assert simplefin_service._epoch_to_day(epoch) == "2025-07-01"
+
+    monkeypatch.setattr(simplefin_service, "_TZ", pytz.timezone("America/Denver"))
+    assert simplefin_service._epoch_to_day(epoch) == "2025-06-30"
 
 
 def test_normalize_tolerates_missing_optional_fields():
@@ -61,6 +84,63 @@ def test_normalize_skips_transactions_without_an_id():
     payload["accounts"][0]["transactions"].append({"amount": "-1.00"})
     _, txns = simplefin_service.normalize(payload)
     assert [t["simplefin_id"] for t in txns] == ["t1", "t2"]
+
+
+@pytest.mark.parametrize("bad_epoch", [0, -1, -1751328000])
+def test_epoch_to_day_rejects_zero_and_negative_epochs(bad_epoch):
+    """SimpleFIN bridges commonly emit `posted: 0` for a pending transaction —
+    naive fromtimestamp(0) resolves to 1969-12-31/1970-01-01 instead of being
+    treated as absent."""
+    from services import simplefin_service
+    assert simplefin_service._epoch_to_day(bad_epoch) is None
+
+
+def test_normalize_skips_transactions_with_posted_zero():
+    from services import simplefin_service
+    payload = _payload()
+    payload["accounts"][0]["transactions"].append(
+        {"id": "t-pending", "posted": 0, "amount": "-5.00"}
+    )
+    _, txns = simplefin_service.normalize(payload)
+    assert [t["simplefin_id"] for t in txns] == ["t1", "t2"]
+
+
+@pytest.mark.parametrize("bad_amount", ["nan", "inf", "-inf"])
+def test_normalize_skips_non_finite_amounts(bad_amount):
+    """amount: "nan" parses to a float NaN, which is not valid JSON and would
+    poison every downstream sum."""
+    from services import simplefin_service
+    payload = _payload()
+    payload["accounts"][0]["transactions"].append(
+        {"id": "t-bad-amount", "posted": 1751328000, "amount": bad_amount}
+    )
+    _, txns = simplefin_service.normalize(payload)
+    assert [t["simplefin_id"] for t in txns] == ["t1", "t2"]
+    assert all(math.isfinite(t["amount"]) for t in txns)
+
+
+@pytest.mark.parametrize("bad_payload", [None, [], "not a dict", 42])
+def test_normalize_tolerates_a_non_dict_payload(bad_payload):
+    from services import simplefin_service
+    accounts, txns = simplefin_service.normalize(bad_payload)
+    assert accounts == []
+    assert txns == []
+
+
+def test_normalize_tolerates_a_non_dict_account_entry():
+    from services import simplefin_service
+    payload = _payload()
+    payload["accounts"].append("not an account object")
+    accounts, txns = simplefin_service.normalize(payload)
+    assert [a["simplefin_id"] for a in accounts] == ["acct-1", "acct-2"]
+
+
+def test_normalize_treats_a_string_org_as_the_org_name():
+    from services import simplefin_service
+    payload = _payload()
+    payload["accounts"][0]["org"] = "Wells Fargo"
+    accounts, _ = simplefin_service.normalize(payload)
+    assert accounts[0]["org"] == "Wells Fargo"
 
 
 def test_not_configured_when_url_is_blank(monkeypatch):
@@ -96,6 +176,12 @@ def test_the_access_url_never_survives_a_transport_failure(monkeypatch, exc_fact
     blob = f"{err!r} {err} {err.args} {err.status}"
     assert "sup3rsecret" not in blob
     assert "bridge.example.com" not in blob
+    # `raise SimpleFinError(...) from None` must suppress the original
+    # exception's traceback context — without it, the credential-bearing
+    # original exception (and its message) rides along on __context__/__cause__
+    # and can surface via traceback formatting, Sentry, etc.
+    assert err.__suppress_context__ is True
+    assert err.__cause__ is None
 
 
 def test_http_401_maps_to_auth(monkeypatch):
@@ -116,6 +202,8 @@ def test_non_json_body_maps_to_see_logs(monkeypatch):
     with pytest.raises(simplefin_service.SimpleFinError) as ei:
         simplefin_service.fetch_accounts()
     assert ei.value.status == "error: see logs"
+    assert ei.value.__suppress_context__ is True
+    assert ei.value.__cause__ is None
 
 
 def test_successful_fetch_returns_the_payload(monkeypatch):

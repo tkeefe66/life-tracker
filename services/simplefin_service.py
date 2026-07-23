@@ -15,14 +15,23 @@ server-side, with logger.exception.
 """
 import datetime
 import logging
+import math
 import time
 
 import httpx
+import pytz
 
-from config import SIMPLEFIN_ACCESS_URL, SIMPLEFIN_LOOKBACK_DAYS
+from config import SIMPLEFIN_ACCESS_URL, SIMPLEFIN_LOOKBACK_DAYS, TIMEZONE
 from services.safe_status import safe_status
 
 logger = logging.getLogger(__name__)
+
+# Matches the repo-wide convention (services/gmail_service.py, database.py,
+# app/scorecard.py, all four jobs): epoch -> local date must go through the
+# configured TIMEZONE, never the container's local tz. Railway runs UTC while
+# dev runs America/Denver — a naive conversion silently misfiles any
+# transaction posted after ~17:00 local into the next day/week.
+_TZ = pytz.timezone(TIMEZONE)
 
 
 class SimpleFinError(Exception):
@@ -86,8 +95,17 @@ def _epoch_to_day(value):
     if value in (None, ""):
         return None
     try:
-        return datetime.date.fromtimestamp(int(value)).isoformat()
-    except (TypeError, ValueError, OSError):
+        value = int(value)
+    except (TypeError, ValueError):
+        return None
+    # 0 and negative epochs are not real posted dates — SimpleFIN bridges
+    # commonly emit `posted: 0` for a still-pending transaction. Treat them
+    # like a missing value rather than resolving to 1969/1970.
+    if value <= 0:
+        return None
+    try:
+        return datetime.datetime.fromtimestamp(value, _TZ).date().isoformat()
+    except (OSError, OverflowError, ValueError):
         return None
 
 
@@ -100,11 +118,20 @@ def normalize(payload):
     every optional field tolerates absence rather than assuming presence.
     """
     accounts, txns = [], []
+    if not isinstance(payload, dict):
+        return accounts, txns
     for acct in payload.get("accounts", []) or []:
+        if not isinstance(acct, dict):
+            continue
         sfid = acct.get("id")
         if not sfid:
             continue
         org = acct.get("org") or {}
+        if isinstance(org, str):
+            # Some bridges send `org` as a bare name string rather than an object.
+            org = {"name": org}
+        elif not isinstance(org, dict):
+            org = {}
         accounts.append({
             "simplefin_id": str(sfid),
             "name": acct.get("name") or "?",
@@ -113,6 +140,8 @@ def normalize(payload):
             "kind": acct.get("type") or "",
         })
         for t in acct.get("transactions", []) or []:
+            if not isinstance(t, dict):
+                continue
             tid = t.get("id")
             if not tid:
                 continue
@@ -122,6 +151,8 @@ def normalize(payload):
             try:
                 amount = float(t.get("amount"))
             except (TypeError, ValueError):
+                continue
+            if not math.isfinite(amount):
                 continue
             txns.append({
                 "simplefin_id": str(tid),
