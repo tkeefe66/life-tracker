@@ -50,6 +50,12 @@ def counts_for_week(week_start: date) -> dict:
     }
 
 
+def _personal_rides(rides: list) -> list:
+    """Resolved work flag = COALESCE(user_is_work, false) — only a CONFIRMED user
+    verdict excludes a ride. An AI flag alone never excludes it (flag but still count)."""
+    return [r for r in rides if not r.get("user_is_work")]
+
+
 def scorecard_for_week(week_start: date) -> dict:
     ws, we = metrics.week_bounds(week_start)
     card = metrics.build_scorecard(week_start, counts_for_week(week_start), db.get_targets())
@@ -57,6 +63,9 @@ def scorecard_for_week(week_start: date) -> dict:
     card["delivery_spend"] = round(sum(o["amount"] or 0 for o in orders), 2)
     social = [e for e in db.get_social_events_range(ws.isoformat(), we.isoformat()) if _social_counts(e)]
     card["social_spend"] = round(sum(e["amount"] or 0 for e in social), 2)
+    rides = _personal_rides(db.get_rides_range(ws.isoformat(), we.isoformat()))
+    card["rides_count"] = len(rides)
+    card["rides_spend"] = round(sum(r["amount"] or 0 for r in rides), 2)
     return card
 
 
@@ -110,4 +119,5 @@ def today_snapshot(day: Optional[date] = None) -> dict:
         "substances": any(c["type"] == "substances" for c in checkins),
         "deliveries": db.get_delivery_orders_range(d, d),
         "social_events": db.get_events_for_day(d),
+        "rides": [{**r, "is_work": bool(r["user_is_work"])} for r in db.get_rides_range(d, d)],
     }

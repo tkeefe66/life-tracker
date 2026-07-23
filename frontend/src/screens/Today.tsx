@@ -13,13 +13,25 @@ interface SocialEvent {
   is_social: boolean;
 }
 
+interface Ride {
+  id: number;
+  service: string;
+  ride_at: string;
+  subject: string;
+  amount: number | null;
+  ai_is_work: boolean | null;
+  user_is_work: boolean | null;
+  is_work: boolean;
+}
+
 interface TodayData {
   date: string;
   gym: boolean;
   alcohol_level: number | null;
   substances: boolean;
-  deliveries: { service: string; subject: string; ordered_at: string }[];
+  deliveries: { service: string; subject: string; ordered_at: string; amount: number | null }[];
   social_events: SocialEvent[];
+  rides: Ride[];
 }
 
 interface Metric { label: string; count: number; target: number; direction: string; hit: boolean }
@@ -178,7 +190,18 @@ export default function Today() {
     }
   };
 
-  const detections = data.deliveries.length + data.social_events.length;
+  const toggleRideWork = async (r: Ride) => {
+    try {
+      // Tapping also teaches future classification — the API folds confirmed
+      // overrides back into the AI's examples on the next scan.
+      await apiSend("PATCH", `/rides/${r.id}`, { is_work: !r.is_work });
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const detections = data.deliveries.length + data.social_events.length + data.rides.length;
 
   return (
     <div>
@@ -241,9 +264,24 @@ export default function Today() {
       {data.deliveries.map((d) => (
         <p className="quiet" key={d.ordered_at}>
           <span>{d.service} order</span>
-          <span className="when">{timeLabel(d.ordered_at)}</span>
+          <span className="when">
+            {d.amount != null && `$${d.amount.toFixed(2).replace(/\.00$/, "")} · `}
+            {timeLabel(d.ordered_at)}
+          </span>
         </p>
       ))}
+      {data.rides.map((r) => {
+        const unconfirmed = r.ai_is_work === true && r.user_is_work === null;
+        return (
+          <button className="quiet quiet-btn" key={r.id} onClick={() => toggleRideWork(r)}>
+            <span>{r.service} ride{unconfirmed ? " · work?" : ""}</span>
+            <span className="when">
+              {r.amount != null && `$${r.amount.toFixed(2).replace(/\.00$/, "")} · `}
+              {timeLabel(r.ride_at)}
+            </span>
+          </button>
+        );
+      })}
       {data.social_events.map((e) => (
         <div className="quiet-row" key={e.gcal_event_id}>
           <button className="quiet quiet-btn" onClick={() => openEditSocial(e)}>

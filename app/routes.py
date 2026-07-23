@@ -205,3 +205,24 @@ def get_deliveries(days: int = 60):
         {"service": o["service"], "subject": o["subject"], "ordered_at": o["ordered_at"], "amount": o["amount"]}
         for o in orders
     ]}
+
+
+class RidePatch(BaseModel):
+    is_work: bool
+
+
+@router.get("/rides")
+def get_rides(days: int = 60):
+    d = min(max(days, 1), 365)
+    end = _local_today()
+    start = end - datetime.timedelta(days=d)
+    rides = db.get_rides_range(start.isoformat(), end.isoformat())
+    rides.sort(key=lambda r: r["ride_at"], reverse=True)
+    return {"rides": [{**r, "is_work": bool(r["user_is_work"])} for r in rides]}
+
+
+@router.patch("/rides/{ride_id}")
+def patch_ride(ride_id: int, body: RidePatch):
+    if not db.set_ride_work_override(ride_id, body.is_work):
+        raise HTTPException(status_code=404, detail="ride not found")
+    return {"ok": True}

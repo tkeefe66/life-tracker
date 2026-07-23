@@ -918,6 +918,17 @@ def set_ride_work_override(ride_id, is_work):
         return c.rowcount > 0
 
 
+def _ride_bool_rows(rows):
+    """Cast the nullable ai_is_work / user_is_work columns to real bool-or-None —
+    SQLite returns 0/1 ints, which would otherwise leak into the API as non-bool JSON."""
+    out = [dict(r) for r in rows]
+    for r in out:
+        for col in ("ai_is_work", "user_is_work"):
+            if r[col] is not None:
+                r[col] = bool(r[col])
+    return out
+
+
 def get_rides_range(start_day, end_day):
     p = _p()
     with _cursor() as c:
@@ -928,7 +939,7 @@ def get_rides_range(start_day, end_day):
                 ORDER BY ride_at""",
             (start_day, end_day),
         )
-        return [dict(r) for r in c.fetchall()]
+        return _ride_bool_rows(c.fetchall())
 
 
 def get_ride_examples(limit=10):
