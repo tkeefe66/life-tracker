@@ -131,11 +131,14 @@ export default function Money() {
   // Build the "recently sorted" representation of a row that was just
   // answered — resolved_flow/user_flow follow the same COALESCE(user_flow,
   // flow) resolution the server does, just computed here since we already
-  // hold the row and don't want to wait on a refetch to show it.
-  const toRecentRow = (row: TriageRow, flow: string): TriageRow => ({
+  // hold the row and don't want to wait on a refetch to show it. `note`,
+  // when provided, is the just-typed text that rides along with this
+  // answer; otherwise the row keeps whatever user_note it already had.
+  const toRecentRow = (row: TriageRow, flow: string, note?: string): TriageRow => ({
     ...row,
     user_flow: flow,
     resolved_flow: flow,
+    user_note: note !== undefined ? note : row.user_note,
   });
 
   const addToRecent = (rows: TriageRow[]) => {
@@ -146,7 +149,7 @@ export default function Money() {
     });
   };
 
-  const handleAnswer = (bucket: "ambiguous" | "inflow", row: TriageRow, flow: string) => {
+  const handleAnswer = (bucket: "ambiguous" | "inflow", row: TriageRow, flow: string, note?: string) => {
     // A second tap on the same row while it's still lingering from the first
     // answer — the earlier POST is in flight (or already resolved) and this
     // one would race it for which flow wins. Mirror handleBulk's guard: if
@@ -156,10 +159,13 @@ export default function Money() {
     const setRows = bucket === "ambiguous" ? setAmbiguousRows : setInflowRows;
     // Fires now, in the background — the request never waits on anything above.
     scheduleRemoval(row.simplefin_id, setRows);
-    apiSend("POST", `/bank/transactions/${row.simplefin_id}/flow`, { flow })
+    // `note` only enters the body when defined — omitted means "don't touch"
+    // server-side; it must never be sent as an explicit null or empty string.
+    const body: { flow: string; note?: string } = note !== undefined ? { flow, note } : { flow };
+    apiSend("POST", `/bank/transactions/${row.simplefin_id}/flow`, body)
       .then(() => {
         reloadSummary();
-        addToRecent([toRecentRow(row, flow)]);
+        addToRecent([toRecentRow(row, flow, note)]);
       })
       .catch(() => {
         cancelRemoval(row.simplefin_id);
@@ -261,6 +267,9 @@ export default function Money() {
         <>
           <p className="money-hero">{money(summary.spent)}</p>
           <p className="money-hero-sub">spent · last 12 weeks</p>
+          {summary.totals.refund?.amount > 0 && (
+            <p className="money-hero-sub">after {money(summary.totals.refund.amount)} refunded</p>
+          )}
 
           <BankSpendChart
             weeks={summary.weeks}
@@ -358,9 +367,9 @@ export default function Money() {
             prompt="These read like transfers but were counted as spending."
             rows={ambiguousRows ?? []}
             choices={TRIAGE_CHOICES.outflow}
-            onAnswer={(id, flow) => {
+            onAnswer={(id, flow, note) => {
               const row = ambiguousRows?.find((r) => r.simplefin_id === id);
-              if (row) handleAnswer("ambiguous", row, flow);
+              if (row) handleAnswer("ambiguous", row, flow, note);
             }}
             onBulk={(ids, flow) => handleBulk("ambiguous", ids, flow)}
           />
@@ -371,9 +380,9 @@ export default function Money() {
             prompt="A deposit that isn't payroll."
             rows={inflowRows ?? []}
             choices={TRIAGE_CHOICES.inflow}
-            onAnswer={(id, flow) => {
+            onAnswer={(id, flow, note) => {
               const row = inflowRows?.find((r) => r.simplefin_id === id);
-              if (row) handleAnswer("inflow", row, flow);
+              if (row) handleAnswer("inflow", row, flow, note);
             }}
             onBulk={(ids, flow) => handleBulk("inflow", ids, flow)}
           />
@@ -386,6 +395,7 @@ export default function Money() {
                 <div className="recent-row" key={r.simplefin_id}>
                   <span>
                     {r.label} — {r.resolved_flow === "spending" ? "Spent it" : flowLabel(r.resolved_flow)}
+                    {r.user_note && <span className="triage-note">{r.user_note}</span>}
                   </span>
                   <button type="button" onClick={() => handlePutBack(r)}>Put it back</button>
                 </div>
