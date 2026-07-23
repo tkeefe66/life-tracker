@@ -576,14 +576,19 @@ details.numbers summary { cursor: pointer; font-size: 14px; color: var(--ink-2);
 
 /* ── Weekday heatmap ── */
 .heatmap { display: grid; gap: 6px; }
-.hm-row { display: grid; grid-template-columns: minmax(90px, 1fr) repeat(7, 28px); gap: 6px; align-items: center; }
+.hm-row { display: grid; grid-template-columns: minmax(72px, 1fr) repeat(7, 28px); gap: 6px; align-items: center; }
 .hm-day { font-size: 11px; color: var(--muted); text-align: center; }
 .hm-label { font-size: 13px; color: var(--ink-2); }
+.hm-max { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .hm-cell {
-  height: 28px; border-radius: 6px; border: 1px solid var(--line);
-  background: color-mix(in oklch, var(--accent) var(--pct, 0%), var(--surface-2));
+  height: 28px; border-radius: 6px; border: 0; padding: 0; margin: 0;
+  cursor: pointer; font: inherit;
 }
-.hm-cell.over { background: color-mix(in oklch, var(--over) var(--pct, 0%), var(--surface-2)); }
+.hm-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hm-legend { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.hm-legend-word { font-size: 11px; color: var(--muted); }
+.hm-swatch { width: 16px; height: 16px; border-radius: 4px; }
+.hm-caption { font-size: 11px; color: var(--muted); margin-top: 8px; }
 
 /* ── Reflection ── */
 .reflection {
