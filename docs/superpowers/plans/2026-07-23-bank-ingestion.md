@@ -1,6 +1,6 @@
 # Bank Transaction Ingestion (SimpleFIN) — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Ingest all bank and card transactions from SimpleFIN and classify each one as spending, transfer, card payment, investment, income, or unknown inflow — so the app can answer "what did I actually spend?" without double-counting money that merely moved.
 
@@ -60,7 +60,7 @@ Two things the spec requires but its schema table omits. Both are settled here s
 **Interfaces:**
 - Produces: `config.SIMPLEFIN_ACCESS_URL: str`, `config.SIMPLEFIN_SYNC_INTERVAL_HOURS: int`, `config.SIMPLEFIN_LOOKBACK_DAYS: int`, `config.PAIR_WINDOW_DAYS: int`, `config.INCOME_PAYEE_HINTS: list[str]`
 
-- [ ] **Step 1: Add the config block**
+- [x] **Step 1: Add the config block**
 
 Insert after line 34 (`WEEKLY_PUSH_HOUR = ...`) in `config.py`:
 
@@ -88,12 +88,12 @@ INCOME_PAYEE_HINTS = [
 ]
 ```
 
-- [ ] **Step 2: Verify config still imports**
+- [x] **Step 2: Verify config still imports**
 
 Run: `./venv/bin/python -c "import config; print(config.PAIR_WINDOW_DAYS, config.SIMPLEFIN_LOOKBACK_DAYS)"`
 Expected: `3 90`
 
-- [ ] **Step 3: Document the new vars in CLAUDE.md**
+- [x] **Step 3: Document the new vars in CLAUDE.md**
 
 In `CLAUDE.md`, under **Environment Variables → Optional**, add these rows:
 
@@ -105,7 +105,7 @@ In `CLAUDE.md`, under **Environment Variables → Optional**, add these rows:
 | `INCOME_PAYEE_HINTS` | Comma-separated payroll signatures; only matching unpaired deposits count as income |
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add config.py CLAUDE.md
@@ -133,7 +133,7 @@ git commit -m "feat(config): SimpleFIN ingestion env vars"
   - `db.set_bank_transaction_derived(simplefin_id, flow, pair_id, ambiguous) -> None`
   - `db.set_bank_flow_override(simplefin_id, user_flow) -> bool`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_database_bank.py`:
 
@@ -223,12 +223,12 @@ def test_balances_are_never_stored(temp_db_path):
     assert not (cols & {"balance", "available_balance"})
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `./venv/bin/python -m pytest tests/test_database_bank.py -v`
 Expected: FAIL — `AttributeError: module 'database' has no attribute 'upsert_bank_account'`
 
-- [ ] **Step 3: Add the schema**
+- [x] **Step 3: Add the schema**
 
 In `database.py::_init_v2_tables()`, insert after the `rides` index (line 574, `CREATE INDEX IF NOT EXISTS ix_rides_ride_key ...`):
 
@@ -272,7 +272,7 @@ In `database.py::_init_v2_tables()`, insert after the `rides` index (line 574, `
 
 Both are brand-new tables, so no migration is needed — `CREATE TABLE IF NOT EXISTS` is sufficient per the repo convention.
 
-- [ ] **Step 4: Add the accessors**
+- [x] **Step 4: Add the accessors**
 
 Append to the end of `database.py`:
 
@@ -419,17 +419,17 @@ def get_unclassified_window(start_day):
         return _bank_txn_rows(c.fetchall())
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `./venv/bin/python -m pytest tests/test_database_bank.py -v`
 Expected: PASS (7 tests)
 
-- [ ] **Step 6: Run the full suite for regressions**
+- [x] **Step 6: Run the full suite for regressions**
 
 Run: `./venv/bin/python -m pytest tests/ -q`
 Expected: all pass
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add database.py tests/test_database_bank.py
@@ -448,7 +448,7 @@ git commit -m "feat(db): bank_accounts and bank_transactions schema and accessor
 - Consumes: transaction dicts shaped like `db.get_unclassified_window()` output — keys used: `simplefin_id`, `account_id`, `posted` (ISO `YYYY-MM-DD`), `amount` (float), `pair_id`.
 - Produces: `bank_flows.match_pairs(txns, window_days=3) -> dict[str, str]` — maps `simplefin_id` → `pair_id` for **newly** matched transactions only. `pair_id` is the lexicographically smaller `simplefin_id` of the pair, so re-running produces identical values.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_bank_flows.py`:
 
@@ -564,12 +564,12 @@ def test_one_outflow_claims_only_one_partner():
     assert out == {"a": "a", "b": "a"}  # 'c' is left unpaired
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `./venv/bin/python -m pytest tests/test_bank_flows.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'bank_flows'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `bank_flows.py`:
 
@@ -662,12 +662,12 @@ def match_pairs(txns, window_days=3):
     return matched
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `./venv/bin/python -m pytest tests/test_bank_flows.py -v`
 Expected: PASS (12 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add bank_flows.py tests/test_bank_flows.py
@@ -689,7 +689,7 @@ git commit -m "feat(bank): deterministic pair matcher for money movements"
   - `bank_flows.is_ambiguous(txn, flow) -> bool`
   - `bank_flows.classify_all(txns, roles_by_account_id, pair_map, income_hints) -> dict[str, tuple[str, str | None, bool]]` — maps `simplefin_id` → `(flow, pair_id, ambiguous)`, which is exactly the argument triple `db.set_bank_transaction_derived` takes.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_bank_flows.py`:
 
@@ -809,12 +809,12 @@ def test_classify_all_honours_a_preexisting_pair_id():
     assert out["b"][0] == "card_payment"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `./venv/bin/python -m pytest tests/test_bank_flows.py -v -k "flow or ambiguous or classify"`
 Expected: FAIL with `AttributeError: module 'bank_flows' has no attribute 'classify_flow'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Append to `bank_flows.py`:
 
@@ -913,12 +913,12 @@ def classify_all(txns, roles_by_account_id, pair_map, income_hints):
     return out
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `./venv/bin/python -m pytest tests/test_bank_flows.py -v`
 Expected: PASS (28 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add bank_flows.py tests/test_bank_flows.py
@@ -940,7 +940,7 @@ git commit -m "feat(bank): deterministic flow classifier with conservative incom
   - `simplefin_service.fetch_accounts(days=None) -> dict` — raises `SimpleFinError` on any transport or protocol failure. **`SimpleFinError` carries a `status` attribute from `CLOSED_SET` and never any message text.**
   - `simplefin_service.normalize(payload) -> tuple[list[dict], list[dict]]` — `(accounts, transactions)`. Account dicts: `simplefin_id, name, org, kind`. Transaction dicts: `simplefin_id, account_simplefin_id, posted, transacted_at, amount, description, payee, memo, mcc`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_simplefin_service.py`:
 
@@ -1074,12 +1074,12 @@ def test_successful_fetch_returns_the_payload(monkeypatch):
     assert len(data["accounts"]) == 2
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `./venv/bin/python -m pytest tests/test_simplefin_service.py -v`
 Expected: FAIL with `ImportError: cannot import name 'simplefin_service'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `services/simplefin_service.py`:
 
@@ -1223,16 +1223,16 @@ def normalize(payload):
     return accounts, txns
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `./venv/bin/python -m pytest tests/test_simplefin_service.py -v`
 Expected: PASS (10 tests)
 
-- [ ] **Step 5: Extend the shared boundary test**
+- [x] **Step 5: Extend the shared boundary test**
 
 `tests/test_safe_status.py::test_job_modules_use_the_shared_constants_not_ad_hoc_literals` enumerates job modules. Read that test and add `jobs/sync_bank.py` to its module list so the new job is held to the same invariant. (Task 6 creates the file; if it does not exist yet, do this step at the end of Task 6 instead.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add services/simplefin_service.py tests/test_simplefin_service.py
@@ -1251,7 +1251,7 @@ git commit -m "feat(services): SimpleFIN transport with an absolute redaction bo
 - Consumes: everything from Tasks 1–5.
 - Produces: `sync_bank.run(payload=None) -> None`. **`payload` exists so a saved snapshot can be replayed through the identical ingest path** (Task 8) — when given, no network call happens.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_sync_bank.py`:
 
@@ -1403,12 +1403,12 @@ def test_transaction_for_an_unknown_account_is_skipped_not_crashed(temp_db_path,
     assert db.get_setting("bank_last_status") == "ok"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `./venv/bin/python -m pytest tests/test_sync_bank.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'jobs.sync_bank'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `jobs/sync_bank.py`:
 
@@ -1524,19 +1524,19 @@ def run(payload=None):
         db.set_setting("bank_last_status", safe_status(e))
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `./venv/bin/python -m pytest tests/test_sync_bank.py -v`
 Expected: PASS (8 tests)
 
-- [ ] **Step 5: Add the job to the shared boundary test**
+- [x] **Step 5: Add the job to the shared boundary test**
 
 Open `tests/test_safe_status.py::test_job_modules_use_the_shared_constants_not_ad_hoc_literals` and add `jobs/sync_bank.py` to the list of modules it scans.
 
 Run: `./venv/bin/python -m pytest tests/test_safe_status.py -v`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add jobs/sync_bank.py tests/test_sync_bank.py tests/test_safe_status.py
@@ -1556,7 +1556,7 @@ git commit -m "feat(jobs): SimpleFIN sync with pair matching and flow classifica
 - Consumes: `jobs.sync_bank.run`, `db.get_bank_accounts`, `db.get_bank_transactions_range`, `db.set_bank_account_role`.
 - Produces: `GET /api/bank/debug?start=YYYY-MM-DD&end=YYYY-MM-DD`, `POST /api/bank/accounts/{simplefin_id}/role`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_api_routes.py` (match the auth/client fixture pattern already used in that file — read the top of the file first and reuse its authenticated-client helper):
 
@@ -1606,12 +1606,12 @@ def test_set_account_role_404s_for_an_unknown_account(client, temp_db_path):
     assert r.status_code == 404
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `./venv/bin/python -m pytest tests/test_api_routes.py -v -k bank`
 Expected: FAIL with 404s (routes do not exist)
 
-- [ ] **Step 3: Add the routes**
+- [x] **Step 3: Add the routes**
 
 Append to `app/routes.py`:
 
@@ -1656,7 +1656,7 @@ def set_bank_account_role(simplefin_id: str, body: dict):
 
 If `HTTPException` is not already imported in `app/routes.py`, add `from fastapi import HTTPException` to its imports.
 
-- [ ] **Step 4: Add the Settings fields**
+- [x] **Step 4: Add the Settings fields**
 
 In `app/routes.py::get_settings()`, after line 157's `"backup_last_status"` entry, add:
 
@@ -1666,7 +1666,7 @@ In `app/routes.py::get_settings()`, after line 157's `"backup_last_status"` entr
         "bank_last_result": db.get_setting("bank_last_result"),
 ```
 
-- [ ] **Step 5: Schedule the job**
+- [x] **Step 5: Schedule the job**
 
 In `main.py`, extend the config import on line 13:
 
@@ -1705,17 +1705,17 @@ Update the startup log line (line 46-48) to mention it:
                 CALENDAR_SCAN_HOUR, WEEKLY_PUSH_HOUR, BACKUP_HOUR)
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `./venv/bin/python -m pytest tests/test_api_routes.py -v -k bank`
 Expected: PASS (5 tests)
 
-- [ ] **Step 7: Verify the app still boots**
+- [x] **Step 7: Verify the app still boots**
 
 Run: `./venv/bin/python -c "import main; print('ok')"`
 Expected: `ok`
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add main.py app/routes.py tests/test_api_routes.py
@@ -1735,7 +1735,7 @@ git commit -m "feat(api): bank debug route, account roles, scheduled sync"
 
 **Why this exists:** SimpleFIN keeps a rolling 90 days. A snapshot was captured on 2026-07-22 covering 2026-04-25 → 2026-07-21, before any of this code existed. Without a replay path that history is unreachable — the live API can no longer return its early weeks.
 
-- [ ] **Step 1: Write the script**
+- [x] **Step 1: Write the script**
 
 Create `scripts/simplefin_backfill.py`:
 
@@ -1856,7 +1856,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 2: Verify against the real snapshot, locally**
+- [x] **Step 2: Verify against the real snapshot, locally**
 
 Run: `./venv/bin/python scripts/simplefin_backfill.py`
 
@@ -1864,7 +1864,7 @@ Expected, in order: `Replaying simplefin-2026-07-22.json …`, a result line rep
 
 If any account is left `unknown`, the script prints it — report that rather than editing `ROLE_SEEDS` to force a match, since an unmatched name means the seed table and reality disagree.
 
-- [ ] **Step 3: Confirm the arithmetic is actually right**
+- [x] **Step 3: Confirm the arithmetic is actually right**
 
 **This is the real acceptance test for the whole feature** — it is the first moment anyone can see whether the classification does the job the spec exists to do.
 
@@ -1878,7 +1878,7 @@ Check the totals against the spec's central premise: roughly **a quarter of tran
 
 Report the actual numbers. If the non-spending share is far off ~25%, stop and say so rather than proceeding — it means the matcher or the roles are wrong, and a wrong answer here is exactly the failure the spec was written to prevent.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add scripts/simplefin_backfill.py
@@ -1889,22 +1889,22 @@ git commit -m "feat(scripts): replay saved SimpleFIN snapshots through the sync 
 
 ## Final Verification
 
-- [ ] **Run the full backend suite**
+- [x] **Run the full backend suite**
 
 Run: `./venv/bin/python -m pytest tests/ -v`
 Expected: all pass, including the pre-existing suites.
 
-- [ ] **Run the frontend suite** (nothing here should touch it — this confirms that)
+- [x] **Run the frontend suite** (nothing here should touch it — this confirms that)
 
 Run: `cd frontend && npm test -- --run && npm run build`
 Expected: pass.
 
-- [ ] **Grep for the credential across everything the user can reach**
+- [x] **Grep for the credential across everything the user can reach**
 
 Run: `./venv/bin/python -m pytest tests/ -q -k "credential or redaction or never_expose or closed_set"`
 Expected: pass — the boundary tests are the ones that matter most in this feature.
 
-- [ ] **Confirm no SQL escaped `database.py`**
+- [x] **Confirm no SQL escaped `database.py`**
 
 Run: `grep -rn "SELECT \|INSERT \|UPDATE \|DELETE " jobs/sync_bank.py services/simplefin_service.py bank_flows.py app/routes.py`
 Expected: no matches.
