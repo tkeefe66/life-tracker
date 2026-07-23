@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../api";
-import { addDays, mondayOf, targetLabel } from "../lib";
+import { addDays, mondayOf, targetLabel, weekRangeLabel } from "../lib";
 import WeekNav from "../components/WeekNav";
 import TrendChart from "../components/TrendChart";
 import WeekdayHeatmap from "../components/WeekdayHeatmap";
@@ -32,6 +32,7 @@ export default function Scorecard() {
   const [insights, setInsights] = useState<Insights | null>(null);
   const [reflection, setReflection] = useState<Reflection | null>(null);
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState<Record<string, number | null>>({});
 
   useEffect(() => {
     apiGet<Card>(`/scorecard${weekStart ? `?week_start=${weekStart}` : ""}`)
@@ -110,17 +111,44 @@ export default function Scorecard() {
         <>
           <p className="section-label">Trends · last 12 weeks</p>
           <div className="trends">
-            {ORDER.map((key) => (
-              <div className="trend-row" key={key}>
-                <span className="trend-name">{card.metrics[key].label}</span>
-                <TrendChart
-                  points={insights.weeks.map((w) => ({
-                    count: w.metrics[key].count, hit: w.metrics[key].hit,
-                  }))}
-                  target={card.metrics[key].target}
-                />
-              </div>
-            ))}
+            {ORDER.map((key) => {
+              const m = card.metrics[key];
+              const points = insights.weeks.map((w) => ({
+                count: w.metrics[key].count, hit: w.metrics[key].hit, weekStart: w.week_start,
+              }));
+              const allZero = points.every((p) => p.count === 0);
+              const selectedIndex = selected[key] ?? null;
+              const selectedPoint = selectedIndex !== null ? points[selectedIndex] : null;
+              return (
+                <div className="trend-row" key={key}>
+                  <div className="trend-row-head">
+                    <span className="trend-name">{m.label}</span>
+                    <span className="trend-current">
+                      <span className="num">{m.count}</span> of {targetLabel(m.direction, m.target)}
+                    </span>
+                  </div>
+                  {allZero ? (
+                    <p className="trend-empty">No data yet</p>
+                  ) : (
+                    <>
+                      <TrendChart
+                        points={points}
+                        target={m.target}
+                        direction={m.direction}
+                        onSelect={(i) =>
+                          setSelected((prev) => ({ ...prev, [key]: prev[key] === i ? null : i }))
+                        }
+                      />
+                      {selectedPoint && (
+                        <p className="trend-caption">
+                          {weekRangeLabel(selectedPoint.weekStart)} · {selectedPoint.count}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <p className="section-label">Patterns · by weekday, last 8 weeks</p>
@@ -131,6 +159,30 @@ export default function Scorecard() {
               caution: card.metrics[key].direction === "ceiling",
             }))}
           />
+
+          <details className="numbers">
+            <summary>Show the numbers</summary>
+            <div className="numbers-scroll">
+              <table className="numbers-table">
+                <thead>
+                  <tr>
+                    <th>Week</th>
+                    {ORDER.map((key) => <th key={key}>{card.metrics[key].label}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...insights.weeks].reverse().map((w) => (
+                    <tr key={w.week_start}>
+                      <td>{weekRangeLabel(w.week_start)}</td>
+                      {ORDER.map((key) => (
+                        <td key={key} className="num">{w.metrics[key].count}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
 
           {insights.noticings.length > 0 && (
             <>

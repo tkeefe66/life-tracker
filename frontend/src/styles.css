@@ -16,6 +16,9 @@
   --over: oklch(56% 0.135 60);
   --over-soft: oklch(56% 0.135 60 / 0.14);
   --danger: oklch(52% 0.19 27);
+  --chart-hit: oklch(50% 0.185 277);
+  --chart-over: oklch(56% 0.135 60);
+  --chart-zero: var(--line);
   --shadow-item: 0 1px 2px oklch(25% 0.02 277 / 0.05), 0 6px 20px -12px oklch(25% 0.02 277 / 0.1);
   --r: 12px;
   --dur: 160ms;
@@ -39,6 +42,8 @@
     --over-soft: oklch(73% 0.125 65 / 0.16);
     --danger: oklch(68% 0.17 25);
     --shadow-item: 0 1px 2px oklch(0% 0 0 / 0.35), 0 6px 20px -12px oklch(0% 0 0 / 0.5);
+    --chart-hit: oklch(63% 0.17 277);
+    --chart-over: oklch(62% 0.14 60);
   }
 }
 
@@ -527,23 +532,63 @@ button.quiet-btn:active { background: var(--accent-soft); }
 }
 
 /* ── Trends ── */
-.trends { display: grid; gap: 14px; }
-.trend-row .trend-name { display: block; font-size: 13px; color: var(--ink-2); margin-bottom: 4px; }
-.trend { width: 100%; height: 56px; display: block; }
-.trend rect.hit { fill: var(--accent); }
-.trend rect.miss { fill: var(--over); }
-.trend line.target { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.trends { display: grid; gap: 18px; }
+.trend-row {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px 8px;
+}
+.trend-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.trend-row .trend-name { font-size: 13px; color: var(--ink-2); }
+.trend-row .trend-current { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.trend-row .trend-current .num { font-variant-numeric: tabular-nums; }
+.trend-caption { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.trend-empty { font-size: 13px; color: var(--muted); padding: 4px 0 8px; }
+.trend { width: 100%; height: auto; display: block; }
+.trend-bar.hit { fill: var(--chart-hit); }
+.trend-bar.over { fill: var(--chart-over); }
+.trend-bar.zero { fill: var(--chart-zero); }
+.trend-target { stroke: var(--muted); stroke-width: 1; }
+.trend-target-label {
+  font-size: 9px; fill: var(--muted);
+  paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round;
+}
+.trend-axis { font-size: 9px; fill: var(--muted); }
+.trend-value {
+  font-size: 10px; fill: var(--ink-2); font-weight: 600;
+  paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round;
+}
+.trend-hit { fill: transparent; cursor: pointer; }
+.trend-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ── Numbers table ── */
+details.numbers {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; margin-top: 14px;
+}
+details.numbers summary { cursor: pointer; font-size: 14px; color: var(--ink-2); }
+.numbers-scroll { overflow-x: auto; margin-top: 10px; }
+.numbers-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+.numbers-table th, .numbers-table td { padding: 6px 10px; text-align: right; }
+.numbers-table th:first-child, .numbers-table td:first-child { text-align: left; }
+.numbers-table th { color: var(--muted); font-weight: 500; }
+.numbers-table td { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.numbers-table tbody tr + tr { border-top: 1px solid var(--line); }
 
 /* ── Weekday heatmap ── */
 .heatmap { display: grid; gap: 6px; }
-.hm-row { display: grid; grid-template-columns: minmax(90px, 1fr) repeat(7, 28px); gap: 6px; align-items: center; }
+.hm-row { display: grid; grid-template-columns: minmax(72px, 1fr) repeat(7, 28px); gap: 6px; align-items: center; }
 .hm-day { font-size: 11px; color: var(--muted); text-align: center; }
 .hm-label { font-size: 13px; color: var(--ink-2); }
+.hm-max { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .hm-cell {
-  height: 28px; border-radius: 6px; border: 1px solid var(--line);
-  background: color-mix(in oklch, var(--accent) var(--pct, 0%), var(--surface-2));
+  height: 28px; border-radius: 6px; border: 0; padding: 0; margin: 0;
+  cursor: pointer; font: inherit;
 }
-.hm-cell.over { background: color-mix(in oklch, var(--over) var(--pct, 0%), var(--surface-2)); }
+.hm-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hm-legend { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.hm-legend-word { font-size: 11px; color: var(--muted); }
+.hm-swatch { width: 16px; height: 16px; border-radius: 4px; }
+.hm-caption { font-size: 11px; color: var(--muted); margin-top: 8px; }
 
 /* ── Reflection ── */
 .reflection {

@@ -16,6 +16,33 @@ export function targetLabel(direction: string, target: number): string {
   return `${direction === "ceiling" ? "≤" : "≥"}${target}`;
 }
 
+/**
+ * The y-axis top for a trend chart: the tallest bar and the target line both
+ * need to sit comfortably inside the plot, never flush with the top edge (a
+ * flush target line reads as "off the chart" rather than "the ceiling").
+ */
+export function niceMax(values: number[], target: number): number {
+  const rawMax = Math.max(...values, target, 1);
+  let max = Math.ceil(rawMax);
+  if (max === target) max += 1;
+  return max;
+}
+
+/**
+ * A compact week-range label for chart axes: same-month weeks show the month
+ * once ("Jul 13–19"), weeks crossing a month boundary repeat it ("Jun 29–Jul 5").
+ */
+export function weekRangeLabel(weekStartIso: string): string {
+  const start = parseDay(weekStartIso);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const startMonth = MONTHS[start.getMonth()];
+  const endMonth = MONTHS[end.getMonth()];
+  return startMonth === endMonth
+    ? `${startMonth} ${start.getDate()}–${end.getDate()}`
+    : `${startMonth} ${start.getDate()}–${endMonth} ${end.getDate()}`;
+}
+
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MONTHS_FULL = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
