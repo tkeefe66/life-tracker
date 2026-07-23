@@ -594,3 +594,125 @@ def test_summary_ignores_suggested_flow(temp_db_path):
 
     after = money.summary(weeks=12)
     assert after == before
+
+
+# ── breakdown(): vendor aggregation ────────────────────────────────────────────
+
+def _vendor_txn(db, sfid, account_id, posted, amount, payee, flow="spending",
+                user_flow=None, description="RAW DESC"):
+    db.upsert_bank_transaction(sfid, account_id, posted, posted, amount,
+                               description, payee, "", None)
+    db.set_bank_transaction_derived(sfid, flow, None, False)
+    if user_flow is not None:
+        db.set_bank_flow_override(sfid, user_flow)
+
+
+def test_breakdown_groups_by_payee_and_sorts_by_net_desc(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "a1", acct["id"], today, -30.0, "Amazon")
+    _vendor_txn(db, "a2", acct["id"], today, -20.0, "Amazon")
+    _vendor_txn(db, "u1", acct["id"], today, -40.0, "Uber")
+
+    lines = money.breakdown(weeks=1)["lines"]
+    assert lines == [
+        {"vendor": "Amazon", "count": 2, "amount": 50.0},
+        {"vendor": "Uber", "count": 1, "amount": 40.0},
+    ]
+
+
+def test_breakdown_nets_refunds_into_vendor_line_and_keeps_negative_net(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "r1", acct["id"], today, -100.0, "REI")
+    _vendor_txn(db, "r2", acct["id"], today, 30.0, "REI", flow="spending",
+                user_flow="refund")
+    # A refund-only vendor in the window: negative net, still listed, last.
+    _vendor_txn(db, "z1", acct["id"], today, 25.0, "Zappos", flow="spending",
+                user_flow="refund")
+
+    lines = money.breakdown(weeks=1)["lines"]
+    assert lines[0] == {"vendor": "REI", "count": 1, "amount": 70.0}
+    assert lines[-1] == {"vendor": "Zappos", "count": 0, "amount": -25.0}
+
+
+def test_breakdown_excludes_non_spending_flows_and_positive_spending_rows(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "t1", acct["id"], today, -500.0, "Vanguard", flow="transfer")
+    _vendor_txn(db, "i1", acct["id"], today, 2000.0, "Payroll", flow="income")
+    # Mis-signed spending row (positive) is inert, mirroring _totals().
+    _vendor_txn(db, "s1", acct["id"], today, 15.0, "Oddity")
+
+    assert money.breakdown(weeks=1)["lines"] == []
+
+
+def test_breakdown_account_filter(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct_a = _account(db, "acct-a")
+    acct_b = _account(db, "acct-b")
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "a1", acct_a["id"], today, -10.0, "Amazon")
+    _vendor_txn(db, "b1", acct_b["id"], today, -99.0, "Uber")
+
+    lines = money.breakdown(weeks=1, account_id=acct_a["id"])["lines"]
+    assert lines == [{"vendor": "Amazon", "count": 1, "amount": 10.0}]
+
+
+def test_breakdown_vendor_key_falls_back_to_description_when_payee_empty(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "e1", acct["id"], today, -12.0, "", description="CHECK 1042")
+
+    lines = money.breakdown(weeks=1)["lines"]
+    assert lines == [{"vendor": "CHECK 1042", "count": 1, "amount": 12.0}]
+
+
+def test_breakdown_window_excludes_older_weeks(temp_db_path):
+    import database as db
+    from app import scorecard
+    import metrics
+    import app.money as money
+
+    acct = _account(db)
+    monday = _this_monday(scorecard, metrics)
+    old = (monday - timedelta(weeks=2)).isoformat()
+    _vendor_txn(db, "old1", acct["id"], old, -50.0, "Amazon")
+    _vendor_txn(db, "new1", acct["id"], monday.isoformat(), -10.0, "Amazon")
+
+    lines = money.breakdown(weeks=1)["lines"]
+    assert lines == [{"vendor": "Amazon", "count": 1, "amount": 10.0}]
+
+
+def test_breakdown_rounds_once_per_group(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    # Three thirds that each round to 3.33 but sum to 10.0 raw.
+    for i, amt in enumerate((-3.334, -3.333, -3.333)):
+        _vendor_txn(db, f"c{i}", acct["id"], today, amt, "Cafe")
+
+    lines = money.breakdown(weeks=1)["lines"]
+    assert lines == [{"vendor": "Cafe", "count": 3, "amount": 10.0}]

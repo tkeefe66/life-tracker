@@ -167,6 +167,50 @@ def summary(weeks: int) -> dict:
     }
 
 
+def _window(weeks: int) -> tuple:
+    """The same window summary() computes: `weeks` Monday-starts back through
+    the end (Sunday) of the current in-progress week."""
+    this_monday = metrics.week_bounds(_local_today())[0]
+    start = (this_monday - timedelta(weeks=weeks - 1)).isoformat()
+    end = metrics.week_bounds(this_monday)[1].isoformat()
+    return start, end
+
+
+def _vendor_key(t: dict) -> str:
+    return t["payee"] or t["description"]
+
+
+def breakdown(weeks: int, account_id=None) -> dict:
+    """Spending grouped by vendor (payee, description fallback) over the same
+    window summary() uses. Refund rows net into their vendor's line — a
+    refund-only vendor shows a negative net, which is the true figure. Raw
+    sums per group, rounded once at the end (see _totals's rounding note).
+    `count` is contributing spending rows only; refunds adjust amount, not
+    count."""
+    weeks = _clamp_weeks(weeks)
+    start, end = _window(weeks)
+    txns = db.get_bank_transactions_range(start, end)
+    if account_id is not None:
+        txns = [t for t in txns if t["account_id"] == account_id]
+
+    groups: dict = {}
+    for t in txns:
+        if t["resolved_flow"] == "spending" and t["amount"] < 0:
+            g = groups.setdefault(_vendor_key(t), {"count": 0, "raw": 0.0})
+            g["count"] += 1
+            g["raw"] += -t["amount"]
+        elif t["resolved_flow"] == "refund" and t["amount"] > 0:
+            g = groups.setdefault(_vendor_key(t), {"count": 0, "raw": 0.0})
+            g["raw"] -= t["amount"]
+
+    lines = [
+        {"vendor": vendor, "count": g["count"], "amount": round(g["raw"], 2)}
+        for vendor, g in groups.items()
+    ]
+    lines.sort(key=lambda l: (-l["amount"], l["vendor"]))
+    return {"lines": lines}
+
+
 def _decorate_bucket(rows: list) -> list:
     """Attach `label` and the signature-grouping fields to one bucket's rows.
 
