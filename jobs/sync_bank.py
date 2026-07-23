@@ -80,7 +80,12 @@ def run(payload=None):
         # a different value must be free to lose its old pairing rather than
         # keep a stale (and now wrong) pair_id/card_payment flow forever.
         fresh = [{**t, "pair_id": None} for t in all_txns]
-        pair_map = bank_flows.match_pairs(fresh, window_days=PAIR_WINDOW_DAYS)
+        # `stored` is passed so the matcher can corroborate an equal-amount
+        # collision against the counterparty named in the description (a stated
+        # last-four, or an issuer signature like "AMERICAN EXPRESS ACH PMT").
+        # Ranking only — nothing that paired without it stops pairing.
+        pair_map = bank_flows.match_pairs(fresh, window_days=PAIR_WINDOW_DAYS,
+                                          accounts=stored)
         derived = bank_flows.classify_all(fresh, roles_by_id, pair_map, INCOME_PAYEE_HINTS)
 
         # Written in ONE database transaction (set_bank_transactions_derived_bulk),

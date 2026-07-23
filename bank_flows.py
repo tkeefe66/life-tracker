@@ -33,7 +33,93 @@ def _day(posted) -> date:
     return date.fromisoformat(str(posted)[:10])
 
 
-def match_pairs(txns, window_days=3):
+# ── Text corroboration ────────────────────────────────────────────────────────
+# Amount + date + different-account is not enough on its own: when several
+# equal-amount rows land inside the pairing window they cross-wire, and one
+# mis-pair invents phantom spending on one side and a phantom inflow on the
+# other. Descriptions frequently name the counterparty — Wells Fargo online
+# transfers state its last four digits, card payments name the issuer — so we
+# use that text to RANK candidates. It is a tie-break, never a filter: a row
+# with no extractable signature ranks exactly as it did before, and a single
+# contradicting candidate still pairs.
+
+# The masked account number Wells Fargo embeds in transfer descriptions,
+# e.g. "ONLINE TRANSFER TO KEEFE T EVERYDAY CHECKING XXXXXX0407 REF #...".
+_STATED_LAST4_RE = re.compile(r"X{4,}(\d{4})")
+
+# Trailing "(1234)" in a SimpleFIN account name, e.g. "Platinum Card® (2006)".
+_ACCOUNT_LAST4_RE = re.compile(r"\((\d{4})\)\s*$")
+
+# Issuer wording that appears in the *paying* account's description (the card's
+# own side usually says only "ONLINE PAYMENT - THANK YOU"), mapped to a keyword
+# matched against the counterparty account's org/name.
+ISSUER_SIGNATURES = (
+    ("american express", "american express"),
+    ("barclaycard", "barclay"),
+    ("chase credit", "chase"),
+)
+
+
+def _account_last4(account) -> str:
+    name = str(account.get("name") or "")
+    m = _ACCOUNT_LAST4_RE.search(name)
+    return m.group(1) if m else ""
+
+
+def _build_account_index(accounts):
+    """{last4 -> {account_id}} and {issuer signature -> {account_id}}.
+
+    Both are derived from the accounts actually passed in — nothing about this
+    user's specific account numbers is hardcoded.
+    """
+    by_last4, by_issuer = {}, {}
+    for a in accounts or []:
+        aid = a.get("id")
+        if aid is None:
+            continue
+        last4 = _account_last4(a)
+        if last4:
+            by_last4.setdefault(last4, set()).add(aid)
+        haystack = f"{a.get('org') or ''} {a.get('name') or ''}".lower()
+        for signature, keyword in ISSUER_SIGNATURES:
+            if keyword in haystack:
+                by_issuer.setdefault(signature, set()).add(aid)
+    return by_last4, by_issuer
+
+
+def _stated_counterparty_ids(txn, by_last4, by_issuer):
+    """Account ids this transaction's own text claims as the other side.
+
+    Empty means "no opinion" — an unrecognised last-four maps to nothing and is
+    treated as silence, not as a contradiction.
+    """
+    text = f"{txn.get('description') or ''} {txn.get('payee') or ''}"
+    ids = set()
+    for last4 in _STATED_LAST4_RE.findall(text.upper()):
+        ids |= by_last4.get(last4, set())
+    lowered = text.lower()
+    for signature, _ in ISSUER_SIGNATURES:
+        if signature in lowered:
+            ids |= by_issuer.get(signature, set())
+    return ids
+
+
+def _contradicts(out_txn, candidate, stated):
+    """1 when either side names a counterparty and the other side isn't it.
+
+    Symmetric on purpose: only one half of a real transfer usually carries the
+    identifying text, and either half's claim is equally good evidence.
+    """
+    out_ids = stated[out_txn["simplefin_id"]]
+    cand_ids = stated[candidate["simplefin_id"]]
+    if out_ids and candidate["account_id"] not in out_ids:
+        return 1
+    if cand_ids and out_txn["account_id"] not in cand_ids:
+        return 1
+    return 0
+
+
+def match_pairs(txns, window_days=3, accounts=None):
     """Find the two halves of each money movement.
 
     Two transactions pair when ALL hold:
@@ -47,12 +133,18 @@ def match_pairs(txns, window_days=3):
     partner. `pair_id` is the lexicographically smaller of the two ids, so the
     value is stable across re-runs.
 
-    Ties break by smallest date gap, then lowest partner id — deterministic and
-    independent of input order.
+    Ties break by text corroboration (a candidate contradicting a stated
+    counterparty sorts last), then smallest date gap, then lowest partner id —
+    deterministic and independent of input order. `accounts` is optional; omit
+    it and ranking falls back to exactly the date-gap/id behaviour.
     """
+    by_last4, by_issuer = _build_account_index(accounts)
     free = [t for t in txns if not t.get("pair_id")]
     # Sort so iteration order never depends on how the caller ordered its query.
     free.sort(key=lambda t: (str(t["posted"]), str(t["simplefin_id"])))
+
+    stated = {t["simplefin_id"]: _stated_counterparty_ids(t, by_last4, by_issuer)
+              for t in free}
 
     # Index the positive side by absolute cents; outflows go looking for a partner.
     by_cents = {}
@@ -76,7 +168,8 @@ def match_pairs(txns, window_days=3):
         ]
         if not candidates:
             continue
-        partner = min(candidates, key=lambda c: (abs((_day(c["posted"]) - out_day).days),
+        partner = min(candidates, key=lambda c: (_contradicts(out_txn, c, stated),
+                                                 abs((_day(c["posted"]) - out_day).days),
                                                  str(c["simplefin_id"])))
         pair_id = min(str(out_txn["simplefin_id"]), str(partner["simplefin_id"]))
         matched[out_txn["simplefin_id"]] = pair_id

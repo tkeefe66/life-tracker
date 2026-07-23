@@ -109,6 +109,111 @@ def test_one_outflow_claims_only_one_partner():
     assert out == {"a": "a", "b": "a"}  # 'c' is left unpaired
 
 
+# ── Text corroboration as a tie-break (equal-amount collisions) ───────────────
+# Real Wells Fargo online transfers state the counterparty's last four digits
+# ("...XXXXXX0407"), and card payments state the issuer ("AMERICAN EXPRESS ACH
+# PMT"). When several equal-amount rows land inside the window, amount+date
+# alone cross-wires them. Text is used ONLY to rank candidates, never to
+# exclude one — a row with no extractable signature must pair exactly as before.
+
+ACCOUNTS = [
+    {"id": 1, "name": "EVERYDAY CHECKING ...4116 (4116)", "org": "Wells Fargo"},
+    {"id": 2, "name": "EVERYDAY CHECKING ...0407 (0407)", "org": "Wells Fargo"},
+    {"id": 3, "name": "Platinum Card® (2006)", "org": "American Express"},
+    {"id": 4, "name": "SAVINGS (5511)", "org": "Wells Fargo"},
+]
+
+
+def test_equal_amount_collision_pairs_by_stated_last_four():
+    """The 2026-04-29 $3,200 collision: a checking-to-checking transfer and an
+    Amex payment settle the same day for the same amount. Without text the
+    matcher pairs 4116's transfer outflow with the Amex inflow, inventing
+    $3,200 of phantom spending AND $3,200 of phantom inflow_unknown."""
+    rows = [
+        txn("a1", 1, "2026-04-29", -3200.0,
+            description="ONLINE TRANSFER TO KEEFE T EVERYDAY CHECKING XXXXXX0407 REF #IB0X ON 04/29/26"),
+        txn("a2", 2, "2026-04-29", -3200.0,
+            description="AMERICAN EXPRESS ACH PMT    260429 W3006    Thomas Keefe"),
+        txn("b1", 3, "2026-04-29", 3200.0, description="ONLINE PAYMENT - THANK YOU"),
+        txn("b2", 2, "2026-04-29", 3200.0,
+            description="ONLINE TRANSFER FROM KEEFE T EVERYDAY CHECKING XXXXXX4116 REF #IB0X ON 04/29/26"),
+    ]
+    out = bank_flows.match_pairs(rows, accounts=ACCOUNTS)
+    assert out == {"a1": "a1", "b2": "a1", "a2": "a2", "b1": "a2"}
+
+
+def test_issuer_signature_outranks_a_lower_id_candidate():
+    """'AMERICAN EXPRESS ACH PMT' must prefer the Amex account even when a
+    same-day, same-amount candidate has a lexicographically smaller id."""
+    rows = [
+        txn("out", 2, "2026-05-15", -200.0, description="AMERICAN EXPRESS ACH PMT 260515"),
+        txn("aaa", 4, "2026-05-15", 200.0, description="ONLINE TRANSFER FROM CHECKING"),
+        txn("zzz", 3, "2026-05-15", 200.0, description="ONLINE PAYMENT - THANK YOU"),
+    ]
+    out = bank_flows.match_pairs(rows, accounts=ACCOUNTS)
+    assert out == {"out": "out", "zzz": "out"}
+
+
+def test_rows_without_a_signature_pair_exactly_as_before():
+    """Regression guard: no extractable text signature anywhere means the old
+    (date gap, lowest partner id) ranking still decides, accounts or not."""
+    rows = [
+        txn("m", 1, "2026-07-01", -500.0, description="SOMETHING OPAQUE"),
+        txn("z", 2, "2026-07-01", 500.0, description="ALSO OPAQUE"),
+        txn("a", 4, "2026-07-01", 500.0, description=""),
+    ]
+    assert bank_flows.match_pairs(rows, accounts=ACCOUNTS) == bank_flows.match_pairs(rows)
+    assert bank_flows.match_pairs(rows, accounts=ACCOUNTS) == {"m": "a", "a": "a"}
+
+
+def test_text_corroboration_never_prevents_a_pair():
+    """Tie-break only: a contradicting description with a single candidate must
+    still pair. Nothing that paired before may become unpaired."""
+    rows = [
+        txn("a", 1, "2026-07-01", -500.0,
+            description="ONLINE TRANSFER TO KEEFE T EVERYDAY CHECKING XXXXXX0407 REF #IB0X"),
+        txn("b", 4, "2026-07-01", 500.0, description="DEPOSIT"),
+    ]
+    assert bank_flows.match_pairs(rows, accounts=ACCOUNTS) == {"a": "a", "b": "a"}
+
+
+def test_stated_last_four_for_an_unknown_account_is_ignored():
+    """A last-four that maps to no known account carries no information and must
+    not be treated as a contradiction."""
+    rows = [
+        txn("m", 1, "2026-07-01", -500.0, description="ONLINE TRANSFER TO XXXXXX9999 REF #IB0X"),
+        txn("z", 2, "2026-07-01", 500.0),
+        txn("a", 4, "2026-07-01", 500.0),
+    ]
+    assert bank_flows.match_pairs(rows, accounts=ACCOUNTS) == {"m": "a", "a": "a"}
+
+
+def test_corroborated_pairing_is_independent_of_input_order():
+    rows = [
+        txn("a1", 1, "2026-04-29", -3200.0,
+            description="ONLINE TRANSFER TO KEEFE T EVERYDAY CHECKING XXXXXX0407 REF #IB0X"),
+        txn("a2", 2, "2026-04-29", -3200.0, description="AMERICAN EXPRESS ACH PMT 260429"),
+        txn("b1", 3, "2026-04-29", 3200.0, description="ONLINE PAYMENT - THANK YOU"),
+        txn("b2", 2, "2026-04-29", 3200.0,
+            description="ONLINE TRANSFER FROM KEEFE T EVERYDAY CHECKING XXXXXX4116 REF #IB0X"),
+    ]
+    forward = bank_flows.match_pairs(rows, accounts=ACCOUNTS)
+    backward = bank_flows.match_pairs(list(reversed(rows)), accounts=ACCOUNTS)
+    shuffled = bank_flows.match_pairs([rows[2], rows[0], rows[3], rows[1]], accounts=ACCOUNTS)
+    assert forward == backward == shuffled
+
+
+def test_a_nearer_date_still_beats_a_corroborated_farther_candidate_only_when_uncontradicted():
+    """Date gap remains the second key: among candidates that don't contradict,
+    the nearer date wins, exactly as before."""
+    rows = [
+        txn("a", 1, "2026-07-01", -500.0, description="SOMETHING OPAQUE"),
+        txn("z", 2, "2026-07-03", 500.0),
+        txn("y", 4, "2026-07-01", 500.0),
+    ]
+    assert bank_flows.match_pairs(rows, accounts=ACCOUNTS) == {"a": "a", "y": "a"}
+
+
 # ── Flow classification ───────────────────────────────────────────────────────
 
 HINTS = ["demandbase", "acme payroll"]
