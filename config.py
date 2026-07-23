@@ -37,3 +37,13 @@ WEEKLY_PUSH_HOUR = int(os.getenv("WEEKLY_PUSH_HOUR", "9"))
 # (secrets.token_urlsafe) and stored server-side — APP_PASSWORD can no longer be
 # used to compute a valid cookie offline.
 SESSION_TTL_DAYS = int(os.getenv("SESSION_TTL_DAYS", "14"))
+
+# Weekly database backup — an off-Railway S3-compatible destination (e.g.
+# Cloudflare R2, Backblaze B2). All optional: jobs/backup_db.py logs a warning
+# and no-ops when any is unset, so local dev and an un-configured deploy are
+# unaffected.
+BACKUP_S3_BUCKET = os.getenv("BACKUP_S3_BUCKET", "")
+BACKUP_S3_ENDPOINT = os.getenv("BACKUP_S3_ENDPOINT", "")
+BACKUP_S3_ACCESS_KEY = os.getenv("BACKUP_S3_ACCESS_KEY", "")
+BACKUP_S3_SECRET_KEY = os.getenv("BACKUP_S3_SECRET_KEY", "")
+BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "4"))

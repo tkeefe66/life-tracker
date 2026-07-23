@@ -10,7 +10,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 import database as db
 from app.api import create_app
-from config import CALENDAR_SCAN_HOUR, GMAIL_SCAN_INTERVAL_HOURS, TIMEZONE, WEEKLY_PUSH_HOUR
+from config import BACKUP_HOUR, CALENDAR_SCAN_HOUR, GMAIL_SCAN_INTERVAL_HOURS, TIMEZONE, WEEKLY_PUSH_HOUR
 
 logging.basicConfig(
     format="%(asctime)s  %(name)s  %(levelname)s  %(message)s",
@@ -25,6 +25,7 @@ async def lifespan(app):
     db.seed_default_targets()
     db.delete_expired_sessions(datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"))
 
+    from jobs.backup_db import run as backup_db
     from jobs.scan_calendar import run as scan_calendar
     from jobs.scan_gmail import run as scan_gmail
     from jobs.weekly_push import run as weekly_push
@@ -40,9 +41,11 @@ async def lifespan(app):
     )
     scheduler.add_job(scan_calendar, CronTrigger(hour=CALENDAR_SCAN_HOUR, minute=0), id="scan_calendar")
     scheduler.add_job(weekly_push, CronTrigger(day_of_week="mon", hour=WEEKLY_PUSH_HOUR, minute=0), id="weekly_push")
+    scheduler.add_job(backup_db, CronTrigger(day_of_week="sun", hour=BACKUP_HOUR, minute=0), id="backup_db")
     scheduler.start()
-    logger.info("On Track started — gmail every %dh, calendar daily @%02d:00, push Mon @%02d:00",
-                GMAIL_SCAN_INTERVAL_HOURS, CALENDAR_SCAN_HOUR, WEEKLY_PUSH_HOUR)
+    logger.info("On Track started — gmail every %dh, calendar daily @%02d:00, push Mon @%02d:00, "
+                "backup Sun @%02d:00",
+                GMAIL_SCAN_INTERVAL_HOURS, CALENDAR_SCAN_HOUR, WEEKLY_PUSH_HOUR, BACKUP_HOUR)
     yield
     scheduler.shutdown(wait=False)
 

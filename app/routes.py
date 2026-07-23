@@ -152,6 +152,8 @@ def get_settings():
         "gmail_last_result": db.get_setting("gmail_last_result"),
         "calendar_last_run": db.get_setting("calendar_last_run"),
         "calendar_last_status": db.get_setting("calendar_last_status"),
+        "backup_last_run": db.get_setting("backup_last_run"),
+        "backup_last_status": db.get_setting("backup_last_status"),
     }
 
 

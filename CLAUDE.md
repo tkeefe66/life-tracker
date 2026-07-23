@@ -185,6 +185,13 @@ Matches `.env.example`.
 | `GMAIL_SCAN_LOOKBACK_DAYS` | Gmail scan lookback window in days (default 7) |
 | `CALENDAR_SCAN_HOUR` | Daily calendar scan hour, local time (default 6) |
 | `WEEKLY_PUSH_HOUR` | Monday scorecard push hour, local time (default 9) |
+| `SESSION_TTL_DAYS` | Session lifetime before expiry, with sliding renewal past the halfway point (default 14) |
+| `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` | Off-Railway S3-compatible destination for the weekly `pg_dump` backup (`jobs/backup_db.py`). All unset = backups no-op with a logged warning |
+| `BACKUP_HOUR` | Sunday backup hour, local time (default 4) |
+
+**Note:** `.env.example` could not be updated in this pass (path is blocked by a
+sandbox permission guardrail on dotenv files). Add the four `SESSION_TTL_DAYS` /
+`BACKUP_S3_*` / `BACKUP_HOUR` lines above to it by hand.
 
 ---
 

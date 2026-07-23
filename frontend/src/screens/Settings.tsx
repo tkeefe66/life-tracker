@@ -12,6 +12,8 @@ interface SettingsData {
   gmail_last_result: string | null;
   calendar_last_run: string | null;
   calendar_last_status: string | null;
+  backup_last_run: string | null;
+  backup_last_status: string | null;
 }
 
 interface Delivery { service: string; subject: string; ordered_at: string; amount: number | null }
@@ -165,6 +167,16 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
           <span className="grow">
             Calendar events
             <span className="hint">{statusLine(settings.calendar_last_status, settings.calendar_last_run)}</span>
+          </span>
+        </div>
+        <div className="row">
+          <span className="grow">
+            Backups
+            <span className="hint">
+              {settings.backup_last_status
+                ? statusLine(settings.backup_last_status, settings.backup_last_run)
+                : "Not configured — BACKUP_S3_* is unset"}
+            </span>
           </span>
         </div>
       </div>

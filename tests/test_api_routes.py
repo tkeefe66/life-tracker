@@ -71,6 +71,7 @@ def test_settings_roundtrip(temp_db_path):
     s = client.get("/api/settings").json()
     assert s["telegram_push"] == "off"
     assert "google_configured" in s
+    assert "backup_last_run" in s and "backup_last_status" in s
     assert client.put("/api/settings", json={"telegram_push": "on"}).status_code == 200
     assert client.get("/api/settings").json()["telegram_push"] == "on"
 
