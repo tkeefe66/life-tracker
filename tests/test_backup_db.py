@@ -413,3 +413,62 @@ def test_run_records_distinct_status_on_pg_dump_version_mismatch(temp_db_path, m
     backup_db.run()  # must not raise
 
     assert db.get_setting("backup_last_status") == PG_DUMP_VERSION_MISMATCH
+
+
+def test_retention_keeps_a_month_of_daily_dumps(monkeypatch):
+    """The job runs daily (main.py's CronTrigger has no day_of_week), so
+    RETENTION counts days, not weeks. It was 8 while the schedule was weekly —
+    switching to daily without raising it would have silently cut history from
+    eight weeks to eight days, leaving nothing clean for a problem noticed a
+    fortnight late. A dump is ~390 KB, so a month costs ~12 MB."""
+    from jobs import backup_db
+
+    assert backup_db.RETENTION >= 30
+
+
+def test_prune_deletes_only_the_oldest_beyond_retention(monkeypatch):
+    """Pins the retention arithmetic itself: the newest RETENTION dumps
+    survive, everything older is deleted, and pruning is keyed on the sortable
+    timestamp in the object name."""
+    from jobs import backup_db
+
+    monkeypatch.setattr(backup_db, "BACKUP_S3_BUCKET", "test-bucket")
+
+    keys = [f"{backup_db.BACKUP_PREFIX}2026{m:02d}{d:02d}T040000.dump"
+            for m in (1, 2) for d in range(1, 21)]  # 40 dumps, oldest first
+    deleted = []
+
+    class _FakeClient:
+        def list_objects_v2(self, **kw):
+            return {"Contents": [{"Key": k} for k in keys]}
+
+        def delete_object(self, Bucket, Key):
+            deleted.append(Key)
+
+    monkeypatch.setattr(backup_db, "_s3_client", lambda: _FakeClient())
+    backup_db._prune_old_backups()
+
+    assert len(deleted) == len(keys) - backup_db.RETENTION
+    survivors = [k for k in keys if k not in deleted]
+    assert survivors == sorted(keys)[-backup_db.RETENTION:]
+    assert all(d < min(survivors) for d in deleted)
+
+
+def test_prune_is_a_noop_when_under_retention(monkeypatch):
+    from jobs import backup_db
+
+    monkeypatch.setattr(backup_db, "BACKUP_S3_BUCKET", "test-bucket")
+    keys = [f"{backup_db.BACKUP_PREFIX}20260{i}01T040000.dump" for i in range(1, 4)]
+    deleted = []
+
+    class _FakeClient:
+        def list_objects_v2(self, **kw):
+            return {"Contents": [{"Key": k} for k in keys]}
+
+        def delete_object(self, Bucket, Key):
+            deleted.append(Key)
+
+    monkeypatch.setattr(backup_db, "_s3_client", lambda: _FakeClient())
+    backup_db._prune_old_backups()
+
+    assert deleted == []

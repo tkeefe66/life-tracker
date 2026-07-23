@@ -1,5 +1,5 @@
 """Scheduled job: weekly PostgreSQL backup to an off-Railway destination
-(BACKUP_HOUR, default 4am, every Sunday — see main.py's scheduler).
+(BACKUP_HOUR, default 4am, daily — see main.py's scheduler).
 
 Skips silently (with a logged warning) when the app isn't using PostgreSQL, or
 when any BACKUP_S3_* env var is unset, so local dev and an un-configured
@@ -48,7 +48,12 @@ from services.safe_status import NOT_CONFIGURED, PG_DUMP_VERSION_MISMATCH, safe_
 
 logger = logging.getLogger(__name__)
 
-RETENTION = 8
+# Counts dumps, not calendar time — so its meaning follows the schedule. The
+# job runs daily (main.py), so this is 30 days of history. It was 8 back when
+# the schedule was weekly; raising it is what keeps the switch to daily from
+# silently shortening history from eight weeks to eight days. A dump is ~390 KB,
+# so a month of them costs ~12 MB at the destination.
+RETENTION = 30
 BACKUP_PREFIX = "on-track-backups/"
 
 # Conservative floor for "this dump is real, not truncated/empty." Even an

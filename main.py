@@ -65,10 +65,13 @@ async def lifespan(app):
     )
     scheduler.add_job(scan_calendar, CronTrigger(hour=CALENDAR_SCAN_HOUR, minute=0), id="scan_calendar")
     scheduler.add_job(weekly_push, CronTrigger(day_of_week="mon", hour=WEEKLY_PUSH_HOUR, minute=0), id="weekly_push")
-    scheduler.add_job(backup_db, CronTrigger(day_of_week="sun", hour=BACKUP_HOUR, minute=0), id="backup_db")
+    # Daily, not weekly: manual check-ins are hand-entered and reconstructable
+    # from nothing, so a weekly cadence risked losing up to seven days of them.
+    # A dump is ~390 KB — the cost of daily is noise.
+    scheduler.add_job(backup_db, CronTrigger(hour=BACKUP_HOUR, minute=0), id="backup_db")
     scheduler.start()
     logger.info("On Track started — gmail every %dh, bank every %dh, calendar daily @%02d:00, "
-                "push Mon @%02d:00, backup Sun @%02d:00",
+                "push Mon @%02d:00, backup daily @%02d:00",
                 GMAIL_SCAN_INTERVAL_HOURS, SIMPLEFIN_SYNC_INTERVAL_HOURS,
                 CALENDAR_SCAN_HOUR, WEEKLY_PUSH_HOUR, BACKUP_HOUR)
     yield
