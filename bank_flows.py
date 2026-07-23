@@ -32,6 +32,45 @@ CARD_PAYMENT_HINTS = (
     "payment thank you", "payment received", "online payment", "mobile payment",
 )
 
+# ── Ambiguity suppressions ────────────────────────────────────────────────────
+# Wording that trips an AMBIGUOUS_HINT but is definitively money *spent*, so
+# there is nothing for the user to decide. Each is a narrow carve-out around one
+# real-world phrasing, never a retirement of the hint itself — the hint keeps
+# doing its job on every other shape. A suppression only ever clears the triage
+# flag; it can never reach `classify_flow`, so no flow can change.
+
+# "PAYPAL           PURCHASE   260519 CHEWY INC       THOMAS KEEFE"
+# PayPal standing in as a card network for an ordinary merchant — Apple, Chewy,
+# Netflix, Spotify, Uber, Uber Eats, PlayStation, DraftKings, City of Aurora.
+# 56 rows / $1,506.85 in the 90-day dataset, none of them a money movement.
+# The P2P form the `paypal` hint actually exists for is "PAYPAL *URDANETAEVELIN"
+# (5 rows / $1,833.08): a person's handle after a star, no PURCHASE token. The
+# gap between the two words is column padding in the raw feed, hence `\s+`.
+_PAYPAL_CARD_PURCHASE_RE = re.compile(r"paypal\s+purchase")
+
+# "NON-WELLS FARGO ATM TRANSACTION FEE", payee "ATM Fee" — 13 rows, all exactly
+# $3.00. A bank fee is money the bank took, definitively spending. Deliberately
+# does NOT cover "NON-WF ATM WITHDRAWAL ..." (13 rows / $1,139.10): the cash
+# withdrawal itself is the genuine deferred-policy case the `atm` hint is for.
+_ATM_FEE_RE = re.compile(r"atm\s+transaction\s+fee")
+
+
+def _is_paypal_card_purchase(payee, description):
+    text = f"{payee or ''} {description or ''}".lower()
+    return _PAYPAL_CARD_PURCHASE_RE.search(text) is not None
+
+
+def _is_atm_fee(payee, description):
+    if (payee or "").strip().lower() == "atm fee":
+        return True
+    return _ATM_FEE_RE.search((description or "").lower()) is not None
+
+
+AMBIGUITY_SUPPRESSIONS = (
+    ("paypal card-network purchase", _is_paypal_card_purchase),
+    ("bank ATM fee", _is_atm_fee),
+)
+
 
 def _cents(amount) -> int:
     """Money compares as integer cents. Float equality would silently fail to
@@ -296,8 +335,13 @@ def is_ambiguous(txn, flow):
         return False
     payee = txn.get("payee")
     description = txn.get("description")
-    return any(_hint_matches_field(hint, payee) or _hint_matches_field(hint, description)
-               for hint in AMBIGUOUS_HINTS)
+    if not any(_hint_matches_field(hint, payee) or _hint_matches_field(hint, description)
+               for hint in AMBIGUOUS_HINTS):
+        return False
+    # A hint fired. Drop the flag if this is one of the known shapes that reads
+    # transfer-ish but is definitively spending (see AMBIGUITY_SUPPRESSIONS).
+    return not any(matches(payee, description)
+                   for _reason, matches in AMBIGUITY_SUPPRESSIONS)
 
 
 def classify_all(txns, roles_by_account_id, pair_map, income_hints):

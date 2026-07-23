@@ -614,3 +614,65 @@ def test_every_ambiguous_hint_still_matches_its_real_world_form():
     for hint, description in real_forms.items():
         t = txn("a", 1, "2026-07-01", -10.0, description=description)
         assert bank_flows.is_ambiguous(t, "spending") is True, hint
+
+
+# ── Suppressions: wording that trips a hint but is definitively spending ──────
+# Descriptions below are copied verbatim from the real 90-day dataset, column
+# padding included — the padding is why the PayPal rule can't assume one space.
+
+PAYPAL_PURCHASE_DESC = (
+    "PAYPAL           PURCHASE   260519 CHEWY INC       THOMAS KEEFE           "
+)
+ATM_FEE_DESC = "NON-WELLS FARGO ATM TRANSACTION FEE"
+ATM_WITHDRAWAL_DESC = (
+    "NON-WF ATM WITHDRAWAL          AUTHORIZED ON   06/16 9999 W. 38TH AVENUE  "
+    "     WHEAT RIDGE   CO  356167514886913   ATM ID LK340169 CARD 7872"
+)
+
+
+def test_paypal_purchase_is_not_flagged():
+    """PayPal acting as a card network for a merchant — 56 rows / $1,506.85 of
+    ordinary spending, nothing to triage."""
+    t = txn("a", 1, "2026-07-01", -95.17, payee="Chewy",
+            description=PAYPAL_PURCHASE_DESC)
+    assert bank_flows.is_ambiguous(t, "spending") is False
+
+
+def test_paypal_p2p_to_a_person_is_still_flagged():
+    """The case the `paypal` hint exists for — 5 rows / $1,833.08."""
+    t = txn("a", 1, "2026-07-01", -700.0, payee="Securedreli",
+            description="PAYPAL *SECUREDRELI")
+    assert bank_flows.is_ambiguous(t, "spending") is True
+
+
+def test_paypal_remains_an_ambiguous_hint():
+    """The suppression is a carve-out, not a retirement of the hint."""
+    assert "paypal" in bank_flows.AMBIGUOUS_HINTS
+
+
+def test_atm_fee_is_not_flagged():
+    """A bank fee is money spent, not money moved — 13 rows, all exactly $3.00."""
+    t = txn("a", 1, "2026-07-01", -3.0, payee="ATM Fee",
+            description=ATM_FEE_DESC)
+    assert bank_flows.is_ambiguous(t, "spending") is False
+
+
+def test_atm_withdrawal_is_still_flagged():
+    """13 rows / $1,139.10 — the genuine deferred-policy case: cash out of an
+    ATM may be spending or may be a movement, and we haven't decided."""
+    t = txn("a", 1, "2026-07-01", -203.50, payee="ATM Withdrawal",
+            description=ATM_WITHDRAWAL_DESC)
+    assert bank_flows.is_ambiguous(t, "spending") is True
+
+
+def test_suppressions_never_change_the_flow():
+    """`ambiguous` is a triage marker only. Both suppressed shapes must still
+    classify — and still be reported — as spending."""
+    txns = [
+        txn("a", 1, "2026-07-01", -95.17, payee="Chewy",
+            description=PAYPAL_PURCHASE_DESC),
+        txn("b", 1, "2026-07-02", -3.0, payee="ATM Fee", description=ATM_FEE_DESC),
+    ]
+    out = bank_flows.classify_all(txns, {1: "spending"}, {}, HINTS)
+    assert out["a"] == ("spending", None, False)
+    assert out["b"] == ("spending", None, False)
