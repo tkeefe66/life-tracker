@@ -177,7 +177,7 @@ def _window(weeks: int) -> tuple:
 
 
 def _vendor_key(t: dict) -> str:
-    return t["payee"] or t["description"]
+    return bank_flows.vendor_key(t)
 
 
 def breakdown(weeks: int, account_id=None, by: str = "payee") -> dict:

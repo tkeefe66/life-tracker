@@ -787,3 +787,45 @@ def test_classify_flow_never_returns_refund():
             f"partner_role={partner_role!r}, paired={paired}, amount={amount}, "
             f"hint_match={hint_match}"
         )
+
+
+# ── vendor_key + label_suggestions: same-vendor label inheritance ──────────────
+
+def _ltxn(sfid, payee, user_label=None, description="RAW"):
+    return {"simplefin_id": sfid, "payee": payee, "description": description,
+            "user_label": user_label}
+
+
+def test_vendor_key_prefers_payee_falls_back_to_description():
+    assert bank_flows.vendor_key(_ltxn("a", "Amazon")) == "Amazon"
+    assert bank_flows.vendor_key(_ltxn("b", "", description="CHECK 1042")) == "CHECK 1042"
+
+
+def test_label_suggestions_unanimous_vendor_propagates():
+    txns = [
+        _ltxn("r1", "Check", user_label="Monthly Rent"),
+        _ltxn("r2", "Check"),
+        _ltxn("x1", "Cafe"),
+    ]
+    assert bank_flows.label_suggestions(txns) == {
+        "r1": None,          # already user-labeled — nothing to suggest
+        "r2": "Monthly Rent",
+        "x1": None,          # vendor has no user labels
+    }
+
+
+def test_label_suggestions_conflicting_vendor_stays_silent():
+    txns = [
+        _ltxn("a1", "Amazon", user_label="Household"),
+        _ltxn("a2", "Amazon", user_label="Gifts"),
+        _ltxn("a3", "Amazon"),
+    ]
+    assert bank_flows.label_suggestions(txns)["a3"] is None
+
+
+def test_label_suggestions_uses_vendor_key_fallback():
+    txns = [
+        _ltxn("c1", "", user_label="Monthly Rent", description="CHECK 1042"),
+        _ltxn("c2", "", description="CHECK 1042"),
+    ]
+    assert bank_flows.label_suggestions(txns)["c2"] == "Monthly Rent"

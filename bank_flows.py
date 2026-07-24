@@ -82,6 +82,31 @@ def _day(posted) -> date:
     return date.fromisoformat(str(posted)[:10])
 
 
+def vendor_key(txn) -> str:
+    """The vendor identity used everywhere labels and the breakdown group:
+    payee, falling back to description when the bridge sent no payee."""
+    return txn.get("payee") or txn.get("description") or ""
+
+
+def label_suggestions(txns):
+    """Same-vendor label inheritance, computed from scratch each sync (like
+    classify_all, unlike suggested_flow's write-once): a vendor's unlabeled
+    rows inherit its user label only when every user label on that vendor
+    agrees — any conflict and the vendor stays silent. Returns a suggestion
+    (or None) for EVERY row, so writing the result also retires stale
+    suggestions whose vendor lost its labels."""
+    labels_by_vendor = {}
+    for t in txns:
+        if t.get("user_label"):
+            labels_by_vendor.setdefault(vendor_key(t), set()).add(t["user_label"])
+    unanimous = {v: next(iter(ls)) for v, ls in labels_by_vendor.items() if len(ls) == 1}
+    return {
+        t["simplefin_id"]: (None if t.get("user_label")
+                            else unanimous.get(vendor_key(t)))
+        for t in txns
+    }
+
+
 # ── Text corroboration ────────────────────────────────────────────────────────
 # Amount + date + different-account is not enough on its own: when several
 # equal-amount rows land inside the pairing window they cross-wire, and one
