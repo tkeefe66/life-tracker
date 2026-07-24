@@ -730,6 +730,26 @@ def test_set_account_role_404s_for_an_unknown_account(client, temp_db_path):
     assert r.status_code == 404
 
 
+def test_bank_account_nickname_set_clear_and_404(temp_db_path):
+    import database as db
+    client = _client(temp_db_path)
+    db.upsert_bank_account("acct-r1", "EVERYDAY CHECKING ...7395 (7395)", "Wells Fargo", "checking")
+
+    r = client.post("/api/bank/accounts/acct-r1/nickname", json={"nickname": "Checking"})
+    assert r.status_code == 200 and r.json()["nickname"] == "Checking"
+    acct = next(a for a in client.get("/api/bank/accounts").json()
+                if a["simplefin_id"] == "acct-r1")
+    assert acct["display_name"] == "Checking"
+
+    r = client.post("/api/bank/accounts/acct-r1/nickname", json={"nickname": ""})
+    assert r.status_code == 200 and r.json()["nickname"] is None
+
+    assert client.post("/api/bank/accounts/nope/nickname",
+                       json={"nickname": "X"}).status_code == 404
+    assert client.post("/api/bank/accounts/acct-r1/nickname",
+                       json={"nickname": 7}).status_code == 400
+
+
 # ── Bank: summary, triage, flow overrides, accounts (Task 5) ──────────────────
 
 def _bank_account(db, sfid="acct-1", role="spending"):

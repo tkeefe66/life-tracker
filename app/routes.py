@@ -315,6 +315,20 @@ def set_bank_account_role(simplefin_id: str, body: dict):
     return {"ok": True, "simplefin_id": simplefin_id, "role": role}
 
 
+@router.post("/bank/accounts/{simplefin_id}/nickname")
+def set_bank_account_nickname(simplefin_id: str, body: dict):
+    """Set or clear an account's display nickname. Empty string clears back to
+    the bank's own name. Unlike roles, takes effect immediately — resolution
+    is COALESCE in SQL, no sync involved."""
+    nickname = (body or {}).get("nickname")
+    if nickname is not None and not isinstance(nickname, str):
+        raise HTTPException(status_code=400, detail="nickname must be a string")
+    if not db.set_bank_account_nickname(simplefin_id, nickname):
+        raise HTTPException(status_code=404, detail="unknown account")
+    return {"ok": True, "simplefin_id": simplefin_id,
+            "nickname": (nickname or "").strip() or None}
+
+
 @router.get("/bank/summary")
 def get_bank_summary(weeks: int = 12):
     return money.summary(weeks)
