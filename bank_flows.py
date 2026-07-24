@@ -101,7 +101,10 @@ def label_suggestions(txns):
     never inherit."""
     labels_by_vendor = {}
     for t in txns:
-        if t.get("user_label"):
+        # A row carrying both a label and the no-label flag is illegal (the
+        # writers enforce exclusivity) — but this function takes opaque dicts,
+        # so a rejected row's label must never seed the inheritance pool.
+        if t.get("user_label") and not t.get("user_no_label"):
             labels_by_vendor.setdefault(vendor_key(t), set()).add(t["user_label"])
     unanimous = {v: next(iter(ls)) for v, ls in labels_by_vendor.items() if v and len(ls) == 1}
     return {
