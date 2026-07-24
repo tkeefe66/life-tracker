@@ -738,7 +738,7 @@ def test_breakdown_rows_returns_vendor_rows_newest_first(temp_db_path):
     assert rows[0]["resolved_flow"] == "refund"
     assert set(rows[0]) == {"simplefin_id", "posted", "amount", "account_name",
                             "resolved_flow", "user_note", "user_label",
-                            "suggested_label", "vendor"}
+                            "suggested_label", "user_no_label", "vendor"}
 
 
 def test_breakdown_rows_respects_account_filter_and_limit_clamp(temp_db_path):
@@ -883,6 +883,28 @@ def test_breakdown_rows_label_filter_matches_resolved_and_carries_vendor(temp_db
     assert rows[0]["suggested_label"] == "Monthly Rent"
     assert rows[0]["user_label"] is None
     assert rows[0]["vendor"] == "Check"
+
+
+def test_breakdown_rows_rejected_suggestion_carries_flag_and_drops_from_label_filter(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "r3", acct["id"], today, -2000.0, "Check")
+    db.set_bank_label_suggestions_bulk({"r3": "Monthly Rent"})
+    db.set_bank_no_label("r3")
+
+    # A rejected suggestion's resolved_label is NULL, so it never matches
+    # a label= filter — the label vanishes from the breakdown row too.
+    assert money.breakdown_rows(weeks=1, label="Monthly Rent")["rows"] == []
+
+    rows = money.breakdown_rows(weeks=1, vendor="Check")["rows"]
+    assert [r["simplefin_id"] for r in rows] == ["r3"]
+    assert rows[0]["user_no_label"] is True
+    assert rows[0]["suggested_label"] == "Monthly Rent"
+    assert rows[0]["user_label"] is None
 
 
 # ── Label audit list + suggested badges ────────────────────────────────────────

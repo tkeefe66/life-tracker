@@ -1506,6 +1506,8 @@ _LABEL_SUGGESTION_WHERE = ("t.suggested_label IS NOT NULL AND t.user_label IS NU
 
 
 def get_bank_label_suggestion_rows(limit):
+    """The audit queue: rows carrying an unconfirmed suggestion — no user
+    verdict either way — newest first."""
     p = _p()
     with _cursor() as c:
         c.execute(f"{_BANK_TXN_SELECT} WHERE {_LABEL_SUGGESTION_WHERE} "
@@ -1514,6 +1516,7 @@ def get_bank_label_suggestion_rows(limit):
 
 
 def count_bank_label_suggestions():
+    """Table-wide audit-queue size, uncapped — the 'N more' figure."""
     with _cursor() as c:
         c.execute("SELECT COUNT(*) AS n FROM bank_transactions t "
                   f"WHERE {_LABEL_SUGGESTION_WHERE}")

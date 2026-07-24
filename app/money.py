@@ -287,6 +287,7 @@ def breakdown_rows(weeks: int, vendor: str = None, label: str = None,
         "user_note": t["user_note"],
         "user_label": t["user_label"],
         "suggested_label": t["suggested_label"],
+        "user_no_label": t["user_no_label"],
         "vendor": _vendor_key(t),
     } for t in rows[:limit]]}
 

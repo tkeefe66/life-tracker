@@ -13,6 +13,7 @@ interface DrillRow {
   user_note: string | null;
   user_label: string | null;
   suggested_label: string | null;
+  user_no_label: boolean;
   vendor: string;
 }
 
@@ -198,7 +199,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
         {isOpen && drill[drillKey] && (
           <div className="vendor-drill" id={drillId}>
             {drill[drillKey].map((r) => {
-              const shownLabel = r.user_label ?? r.suggested_label;
+              const shownLabel = r.user_label ?? (r.user_no_label ? null : r.suggested_label);
               return (
                 <div key={r.simplefin_id}>
                   <div className="vendor-drill-row">
@@ -214,7 +215,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
                           className="vendor-label-input"
                           list="vendor-label-vocab"
                           aria-label="Label"
-                          defaultValue={r.user_label ?? r.suggested_label ?? ""}
+                          defaultValue={r.user_label ?? (r.user_no_label ? null : r.suggested_label) ?? ""}
                           autoFocus
                           onBlur={(e) => {
                             if (cancelingRef.current) {
@@ -235,7 +236,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
                         <button
                           type="button"
                           className={
-                            !r.user_label && r.suggested_label
+                            !r.user_label && r.suggested_label && !r.user_no_label
                               ? "vendor-label-btn vendor-label-suggested"
                               : "vendor-label-btn"
                           }
