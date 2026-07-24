@@ -3,7 +3,7 @@ import { apiGet, apiSend } from "../api";
 import { dayRowDate, flowLabel, money, signedMoney, vendorSplit, type VendorLine } from "../lib";
 
 interface LabelLine { label: string | null; count: number; amount: number; suggested?: number }
-interface AccountRow { id: number; name: string; active: boolean }
+interface AccountRow { id: number; name: string; display_name: string; role: string; active: boolean }
 interface DrillRow {
   simplefin_id: string;
   posted: string;
@@ -54,7 +54,10 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
 
   useEffect(() => {
     apiGet<AccountRow[]>("/bank/accounts")
-      .then((rows) => setAccounts(rows.filter((a) => a.active)))
+      // investment-role accounts get no chip: by construction (bank_flows
+      // classify_flow rule 1) their rows are never spending/refund, so the
+      // chip could only ever show an empty result.
+      .then((rows) => setAccounts(rows.filter((a) => a.active && a.role !== "investment")))
       .catch(() => setAccounts([]));
   }, []);
 
@@ -132,10 +135,17 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
       .catch(() => {});
   };
 
-  if (!lines || lines.length === 0) return null;
+  if (!lines) return null;
+  // Hide the whole section only when the UNFILTERED data is empty (no bank
+  // spending at all). A filtered-empty result must keep the chips rendered —
+  // returning null here would unmount them with no way to deselect.
+  if (lines.length === 0 && accountId === null) return null;
 
   const { top, tail, rest } = vendorSplit(lines);
   const shown = showRest ? [...top, ...rest] : top;
+  const viewEmpty = mode === "payee"
+    ? lines.length === 0
+    : (labelLines?.length ?? 0) === 0;
 
   // Generic drill toggle shared by both views: `key` is the vendor name in
   // payee mode or "label:"+label in label mode; `fetchQuery` is the
@@ -206,6 +216,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
                     <span>
                       {dayRowDate(r.posted.slice(0, 10)).monthDay}
                       {r.resolved_flow === "refund" && ` · ${flowLabel("refund")}`}
+                      {mode === "label" && ` · ${r.vendor}`}
                       {" · "}{r.account_name}
                       {r.user_note && <span className="triage-note">{r.user_note}</span>}
                     </span>
@@ -300,12 +311,14 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
               className={accountId === a.id ? "vendor-chip vendor-chip-on" : "vendor-chip"}
               onClick={() => setAccountId((prev) => (prev === a.id ? null : a.id))}
             >
-              {a.name}
+              {a.display_name}
             </button>
           ))}
         </div>
       )}
-      {mode === "payee" ? (
+      {viewEmpty ? (
+        <p className="quiet">No spending in this account over this window.</p>
+      ) : mode === "payee" ? (
         <div className="spend">
           {shown.map((l, i) =>
             renderRow(
