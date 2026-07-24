@@ -98,6 +98,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
         if (label && !vocab.includes(label)) {
           setVocab((v) => [...v, label].sort());
         }
+        setOffer((o) => (o?.simplefin_id === row.simplefin_id ? null : o));
         if (label && resp.siblings > 0) {
           setOffer({
             drillKey,
@@ -143,6 +144,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
       return;
     }
     setExpanded(key);
+    setOffer((o) => (o && o.drillKey !== key ? null : o));
     if (!drill[key]) {
       const acct = accountId !== null ? `&account_id=${accountId}` : "";
       const gen = fetchGen.current;
