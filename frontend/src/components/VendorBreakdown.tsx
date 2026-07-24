@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiGet, apiSend } from "../api";
 import { dayRowDate, flowLabel, money, signedMoney, vendorSplit, type VendorLine } from "../lib";
 
-interface LabelLine { label: string | null; count: number; amount: number }
+interface LabelLine { label: string | null; count: number; amount: number; suggested?: number }
 interface AccountRow { id: number; name: string; active: boolean }
 interface DrillRow {
   simplefin_id: string;
@@ -172,6 +172,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
     count: number,
     amount: number,
     i: number,
+    suggested = 0,
   ) => {
     const drillId = `vendor-drill-${mode}-${i}`;
     const isOpen = expandable && expanded === drillKey;
@@ -184,7 +185,12 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
           aria-controls={expandable ? drillId : undefined}
           onClick={expandable ? () => toggleDrill(drillKey, fetchQuery) : undefined}
         >
-          <span className="spend-service">{displayName}</span>
+          <span className="spend-service">
+            {displayName}
+            {mode === "label" && suggested > 0 && (
+              <span className="suggest-badge">{suggested} suggested</span>
+            )}
+          </span>
           <span className="spend-amount num">
             {count > 0 ? `${count} · ` : ""}{signedMoney(amount)}
           </span>
@@ -330,7 +336,9 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
               const drillKey = "label:" + l.label;
               const expandable = l.label !== null;
               const fetchQuery = expandable ? `label=${encodeURIComponent(l.label as string)}` : "";
-              return renderRow(displayName, drillKey, expandable, fetchQuery, l.count, l.amount, i);
+              return renderRow(
+                displayName, drillKey, expandable, fetchQuery, l.count, l.amount, i, l.suggested,
+              );
             })}
           </div>
         )

@@ -964,3 +964,21 @@ details.money-details .trend-caption { margin-top: 10px; }
   font-weight: 600;
   padding: 2px 0;
 }
+
+/* ── Label audit section (Suggested labels — needs a look) ── */
+.audit-card {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 10px 12px; margin-bottom: 10px;
+}
+.audit-head { display: flex; justify-content: space-between; font-size: 0.9rem; }
+.audit-meta { font-size: 0.78rem; color: var(--muted); margin: 2px 0 8px; }
+.audit-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.audit-btn {
+  font-size: 0.8rem; padding: 4px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: none; color: var(--ink); cursor: pointer;
+}
+.audit-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.suggest-badge {
+  font-size: 0.72rem; padding: 1px 8px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); margin-left: 8px; white-space: nowrap;
+}

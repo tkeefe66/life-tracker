@@ -5,6 +5,7 @@ import {
   TRIAGE_CHOICES, type SpendRow, type WeekSpendPoint,
 } from "../lib";
 import BankSpendChart from "../components/BankSpendChart";
+import LabelAudit from "../components/LabelAudit";
 import SpendChart, { type SpendWeekPoint } from "../components/SpendChart";
 import SpendSubtotals from "../components/SpendSubtotals";
 import TriageQueue, { type TriageRow } from "../components/TriageQueue";
@@ -405,6 +406,8 @@ export default function Money() {
               ))}
             </details>
           )}
+
+          <LabelAudit />
         </>
       )}
 
