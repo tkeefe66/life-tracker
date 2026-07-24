@@ -8,6 +8,7 @@ import BankSpendChart from "../components/BankSpendChart";
 import SpendChart, { type SpendWeekPoint } from "../components/SpendChart";
 import SpendSubtotals from "../components/SpendSubtotals";
 import TriageQueue, { type TriageRow } from "../components/TriageQueue";
+import VendorBreakdown from "../components/VendorBreakdown";
 
 interface BankFlowTotal { count: number; amount: number }
 interface BankSummaryData {
@@ -297,6 +298,8 @@ export default function Money() {
               <p className="footnote">Separated out so they don't count as spending.</p>
             </>
           )}
+
+          <VendorBreakdown weeks={12} />
 
           {summary.totals.income && (
             <>

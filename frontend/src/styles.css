@@ -399,6 +399,29 @@ button.quiet-btn:active { background: var(--accent-soft); }
 .spend-service { color: var(--ink-2); }
 .spend-amount { color: var(--ink); }
 
+/* ─── Vendor breakdown ("Where it went") ───
+   .vendor-chip{,-row,-on} are deliberately distinct from the pre-existing
+   .chip/.chip-accent/.chip-over (WeekDays' non-interactive day tags) — those
+   are fixed-tone info pills, not a toggleable filter group, and redefining
+   .chip here would change their look everywhere they're used. */
+.vendor-chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.vendor-chip {
+  padding: 4px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent;
+  color: var(--muted); font-size: 0.85rem; cursor: pointer;
+}
+.vendor-chip-on { border-color: var(--ink); color: var(--ink); }
+.vendor-row {
+  display: flex; justify-content: space-between; width: 100%;
+  padding: 6px 0; background: none; border: none;
+  color: inherit; font: inherit; cursor: pointer; text-align: left;
+}
+.vendor-drill { padding: 0 0 6px 12px; }
+.vendor-drill-row {
+  display: flex; justify-content: space-between;
+  padding: 2px 0; color: var(--ink-2); font-size: 0.9rem;
+}
+
 .spend-total { font-weight: 600; color: var(--ink); }
 
 /* ─── Settings groups ─── */
