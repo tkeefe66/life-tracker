@@ -604,6 +604,7 @@ def _init_v2_tables():
                 ambiguous {bool_t} NOT NULL DEFAULT FALSE,
                 user_note TEXT,
                 suggested_flow TEXT,
+                user_label TEXT,
                 detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -654,6 +655,16 @@ def _init_v2_tables():
             cols = [r["name"] for r in c.execute("PRAGMA table_info(bank_transactions)").fetchall()]
             if "suggested_flow" not in cols:
                 c.execute("ALTER TABLE bank_transactions ADD COLUMN suggested_flow TEXT")
+
+        # user_label: nullable TEXT on bank_transactions. A user column — the
+        # sync never reads or writes it (Override + Learning rule 3). Labels
+        # double as categories; the vocabulary is SELECT DISTINCT, not a table.
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS user_label TEXT")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(bank_transactions)").fetchall()]
+            if "user_label" not in cols:
+                c.execute("ALTER TABLE bank_transactions ADD COLUMN user_label TEXT")
 
 
 # ── Check-ins ─────────────────────────────────────────────────────────────────
@@ -1228,6 +1239,27 @@ def set_bank_flow_override(simplefin_id, user_flow, note=_NOTE_UNSET):
         return c.rowcount > 0
 
 
+def set_bank_label(simplefin_id, label):
+    """User label on one transaction. None clears. Returns True iff a row was
+    updated, so the route can turn an unknown id into a 404. A user column —
+    the sync never touches it."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE bank_transactions SET user_label = {p} WHERE simplefin_id = {p}",
+                  (label, simplefin_id))
+        return c.rowcount > 0
+
+
+def get_bank_label_vocabulary():
+    """Distinct labels, most-used first then alphabetical — autocomplete
+    order. The vocabulary IS this query: a label with zero rows disappears."""
+    with _cursor() as c:
+        c.execute("""SELECT user_label AS label FROM bank_transactions
+                     WHERE user_label IS NOT NULL
+                     GROUP BY user_label ORDER BY COUNT(*) DESC, user_label""")
+        return [r["label"] for r in c.fetchall()]
+
+
 def get_bank_triage(limit):
     """The triage worklist: rows the classifier flagged as ambiguous, plus
     unexplained deposits, each capped at `limit` and newest-`posted` first
@@ -1377,7 +1409,7 @@ def set_bank_suggestions_bulk(mapping):
 _BANK_TXN_SELECT = """
     SELECT t.id, t.simplefin_id, t.account_id, t.posted, t.transacted_at, t.amount,
            t.description, t.payee, t.memo, t.mcc, t.flow, t.user_flow, t.pair_id,
-           t.ambiguous, t.user_note, t.suggested_flow, a.role AS account_role,
+           t.ambiguous, t.user_note, t.suggested_flow, t.user_label, a.role AS account_role,
            a.name AS account_name,
            COALESCE(t.user_flow, t.flow) AS resolved_flow
     FROM bank_transactions t JOIN bank_accounts a ON a.id = t.account_id

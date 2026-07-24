@@ -2,6 +2,21 @@
 import pytest
 
 
+def _seed_account(db, sfid="acct-1", role=None):
+    """Seed a bank account and return its db id."""
+    db.upsert_bank_account(sfid, "Everyday Checking", "Wells Fargo", "checking")
+    if role:
+        db.set_bank_account_role(sfid, role)
+    return next(a for a in db.get_bank_accounts() if a["simplefin_id"] == sfid)["id"]
+
+
+def _seed_txn(db, simplefin_id, account_id, posted, amount):
+    """Seed a bank transaction."""
+    db.upsert_bank_transaction(simplefin_id, account_id, posted, posted, amount,
+                               f"Description for {simplefin_id}", f"Payee for {simplefin_id}", "", None)
+    db.set_bank_transaction_derived(simplefin_id, "spending", None, False)
+
+
 def _account(db, sfid="acct-1", role=None):
     db.upsert_bank_account(sfid, "Everyday Checking", "Wells Fargo", "checking")
     if role:
@@ -526,3 +541,37 @@ def test_bulk_suggestions_invalid_value_raises_before_any_write(temp_db_path):
     rows = {r["simplefin_id"]: r for r in db.get_bank_transactions_range("2026-06-01", "2026-08-01")}
     assert rows["a"]["suggested_flow"] is None  # nothing written, including the valid entry
     assert rows["b"]["suggested_flow"] is None
+
+
+# ── user_label: set, clear, vocabulary ─────────────────────────────────────────
+
+def test_set_bank_label_roundtrip_and_clear(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    _seed_txn(db, "t1", acct_id, "2026-07-20", -50.0)
+
+    assert db.set_bank_label("t1", "Monthly Rent") is True
+    row = next(t for t in db.get_all_bank_transactions() if t["simplefin_id"] == "t1")
+    assert row["user_label"] == "Monthly Rent"
+
+    assert db.set_bank_label("t1", None) is True
+    row = next(t for t in db.get_all_bank_transactions() if t["simplefin_id"] == "t1")
+    assert row["user_label"] is None
+
+
+def test_set_bank_label_unknown_id_returns_false(temp_db_path):
+    import database as db
+    assert db.set_bank_label("nope", "X") is False
+
+
+def test_label_vocabulary_distinct_most_used_first(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    for i in range(3):
+        _seed_txn(db, f"g{i}", acct_id, "2026-07-20", -10.0)
+        db.set_bank_label(f"g{i}", "Groceries")
+    _seed_txn(db, "r1", acct_id, "2026-07-20", -100.0)
+    db.set_bank_label("r1", "Monthly Rent")
+    _seed_txn(db, "u1", acct_id, "2026-07-20", -5.0)   # unlabeled — not in vocab
+
+    assert db.get_bank_label_vocabulary() == ["Groceries", "Monthly Rent"]
