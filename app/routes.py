@@ -320,6 +320,21 @@ def get_bank_summary(weeks: int = 12):
     return money.summary(weeks)
 
 
+@router.get("/bank/breakdown")
+def get_bank_breakdown(weeks: int = 12, by: str = "payee",
+                       account_id: Optional[int] = None):
+    if by != "payee":
+        raise HTTPException(status_code=400,
+                            detail="by must be 'payee' (labels arrive in a later phase)")
+    return money.breakdown(weeks, account_id=account_id)
+
+
+@router.get("/bank/breakdown/rows")
+def get_bank_breakdown_rows(weeks: int, payee: str,
+                            account_id: Optional[int] = None, limit: int = 100):
+    return money.breakdown_rows(weeks, payee, account_id=account_id, limit=limit)
+
+
 @router.get("/bank/triage")
 def get_bank_triage(limit: int = 50):
     return money.triage(limit)

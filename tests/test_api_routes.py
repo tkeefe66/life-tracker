@@ -986,7 +986,27 @@ PROTECTED_ROUTES = [
     ("post", "/api/bank/transactions/some-id/flow"),
     ("post", "/api/bank/transactions/flow"),
     ("get", "/api/bank/accounts"),
+    ("get", "/api/bank/breakdown"),
+    ("get", "/api/bank/breakdown/rows"),
 ]
+
+
+def test_bank_breakdown_shape_and_bad_by(client, temp_db_path):
+    r = client.get("/api/bank/breakdown?weeks=4")
+    assert r.status_code == 200
+    assert r.json() == {"lines": []}
+
+    r = client.get("/api/bank/breakdown?weeks=4&by=label")
+    assert r.status_code == 400
+
+
+def test_bank_breakdown_rows_requires_payee(client, temp_db_path):
+    r = client.get("/api/bank/breakdown/rows?weeks=4")
+    assert r.status_code == 422
+
+    r = client.get("/api/bank/breakdown/rows?weeks=4&payee=Amazon")
+    assert r.status_code == 200
+    assert r.json() == {"rows": []}
 
 
 @pytest.mark.parametrize("method,path", PROTECTED_ROUTES)
