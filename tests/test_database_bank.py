@@ -722,3 +722,44 @@ def test_label_suggestion_rows_newest_first_and_capped(temp_db_path):
     rows = db.get_bank_label_suggestion_rows(2)
     assert [r["simplefin_id"] for r in rows] == ["s2", "s1"]
     assert db.count_bank_label_suggestions() == 3
+
+
+def test_nickname_resolves_in_accounts_and_transactions(temp_db_path):
+    import database as db
+    db.upsert_bank_account("acct-n1", "EVERYDAY CHECKING ...7395 (7395)", "Wells Fargo", "checking")
+    acct_id = next(a for a in db.get_bank_accounts() if a["simplefin_id"] == "acct-n1")["id"]
+    db.upsert_bank_transaction("txn-n1", acct_id, "2026-07-20", None, -12.5, description="COFFEE")
+
+    assert db.set_bank_account_nickname("acct-n1", "Checking") is True
+    acct = next(a for a in db.get_bank_accounts() if a["simplefin_id"] == "acct-n1")
+    assert acct["nickname"] == "Checking"
+    assert acct["display_name"] == "Checking"
+    # resolution reaches the transactions join too
+    row = db.get_bank_transactions_range("2026-07-20", "2026-07-20")[0]
+    assert row["account_name"] == "Checking"
+
+
+def test_nickname_empty_clears_to_bank_name(temp_db_path):
+    import database as db
+    db.upsert_bank_account("acct-n2", "ROTH IRA (9304)", "Fidelity", "investment")
+    db.set_bank_account_nickname("acct-n2", "Roth")
+    assert db.set_bank_account_nickname("acct-n2", "   ") is True
+    acct = next(a for a in db.get_bank_accounts() if a["simplefin_id"] == "acct-n2")
+    assert acct["nickname"] is None
+    assert acct["display_name"] == "ROTH IRA (9304)"
+
+
+def test_nickname_unknown_account_returns_false(temp_db_path):
+    import database as db
+    assert db.set_bank_account_nickname("nope", "X") is False
+
+
+def test_sync_upsert_preserves_nickname(temp_db_path):
+    import database as db
+    db.upsert_bank_account("acct-n3", "OLD NAME", "Org", "checking")
+    db.set_bank_account_nickname("acct-n3", "Mine")
+    db.upsert_bank_account("acct-n3", "NEW NAME", "Org", "checking")  # a later sync
+    acct = next(a for a in db.get_bank_accounts() if a["simplefin_id"] == "acct-n3")
+    assert acct["nickname"] == "Mine"
+    assert acct["display_name"] == "Mine"
+    assert acct["name"] == "NEW NAME"

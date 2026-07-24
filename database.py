@@ -691,6 +691,17 @@ def _init_v2_tables():
                 c.execute("ALTER TABLE bank_transactions ADD COLUMN "
                           "user_no_label INTEGER NOT NULL DEFAULT 0")
 
+        # nickname: nullable TEXT on bank_accounts. A USER column — the sync's
+        # upsert never touches it (same footing as role/active). Resolved via
+        # COALESCE(NULLIF(nickname, ''), name) in exactly two places:
+        # get_bank_accounts (display_name) and _BANK_TXN_SELECT (account_name).
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS nickname TEXT")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(bank_accounts)").fetchall()]
+            if "nickname" not in cols:
+                c.execute("ALTER TABLE bank_accounts ADD COLUMN nickname TEXT")
+
 
 # ── Check-ins ─────────────────────────────────────────────────────────────────
 
@@ -1144,7 +1155,9 @@ def _bank_account_rows(rows):
 
 def get_bank_accounts():
     with _cursor() as c:
-        c.execute("""SELECT id, simplefin_id, name, org, kind, role, active, last_synced_at
+        c.execute("""SELECT id, simplefin_id, name, org, kind, role, active, last_synced_at,
+                            nickname,
+                            COALESCE(NULLIF(nickname, ''), name) AS display_name
                      FROM bank_accounts ORDER BY id""")
         return _bank_account_rows(c.fetchall())
 
@@ -1157,6 +1170,18 @@ def set_bank_account_role(simplefin_id, role):
     with _cursor(write=True) as c:
         c.execute(f"UPDATE bank_accounts SET role = {p} WHERE simplefin_id = {p}",
                   (role, simplefin_id))
+        return c.rowcount > 0
+
+
+def set_bank_account_nickname(simplefin_id, nickname):
+    """Returns True iff a row was updated (unknown id -> 404 at the route).
+    Empty/whitespace clears to NULL so the bank's own name shows again.
+    A user column — the sync never reads or writes it."""
+    nickname = (nickname or "").strip() or None
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE bank_accounts SET nickname = {p} WHERE simplefin_id = {p}",
+                  (nickname, simplefin_id))
         return c.rowcount > 0
 
 
@@ -1528,7 +1553,8 @@ _BANK_TXN_SELECT = """
            t.description, t.payee, t.memo, t.mcc, t.flow, t.user_flow, t.pair_id,
            t.ambiguous, t.user_note, t.suggested_flow, t.user_label, t.suggested_label,
            t.user_no_label,
-           a.role AS account_role, a.name AS account_name,
+           a.role AS account_role,
+           COALESCE(NULLIF(a.nickname, ''), a.name) AS account_name,
            COALESCE(t.user_flow, t.flow) AS resolved_flow,
            CASE WHEN t.user_no_label THEN NULL
                 ELSE COALESCE(t.user_label, t.suggested_label) END AS resolved_label
