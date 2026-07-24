@@ -129,6 +129,7 @@ export const TRIAGE_CHOICES: { outflow: TriageChoice[]; inflow: TriageChoice[] }
 };
 
 const FLOW_LABELS: Record<string, string> = {
+  spending: "Spent it",
   card_payment: "Paid off cards",
   transfer: "Moved between accounts",
   investment: "Into investments",
@@ -147,9 +148,9 @@ export function flowLabel(flow: string): string {
  * the AI suggested, using `flowLabel`'s plain language verbatim rather than a
  * separate wording. Unlike `flowLabel`, an unrecognized flow — or no
  * suggestion at all (`null`/`undefined`) — degrades to `""` (no hint), never
- * a raw token; `FLOW_LABELS` is deliberately missing `spending` (there is no
- * "looks like: spending" — an unresolved flow is the row's whole reason for
- * being in the queue), so that case falls through the same unknown-flow path. */
+ * a raw token. An AI suggestion of `spending` on an outflow row highlights
+ * the "Spent it" chip: that's the outflow queue's most common true answer,
+ * and making the suggestion visible there prevents wasting the inference. */
 export function suggestionHint(flow: string | null | undefined): string {
   if (flow == null || !(flow in FLOW_LABELS)) return "";
   return `looks like: ${flowLabel(flow)}`;

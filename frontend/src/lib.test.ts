@@ -342,6 +342,7 @@ describe("TRIAGE_CHOICES", () => {
 
 describe("flowLabel", () => {
   it("labels the known flow values", () => {
+    expect(flowLabel("spending")).toBe("Spent it");
     expect(flowLabel("card_payment")).toBe("Paid off cards");
     expect(flowLabel("transfer")).toBe("Moved between accounts");
     expect(flowLabel("investment")).toBe("Into investments");
@@ -350,7 +351,6 @@ describe("flowLabel", () => {
   });
 
   it("returns an unknown value as-is rather than throwing", () => {
-    expect(flowLabel("spending")).toBe("spending");
     expect(flowLabel("something_new")).toBe("something_new");
   });
 });
@@ -359,6 +359,10 @@ describe("suggestionHint", () => {
   it("prefixes the known flow's label", () => {
     expect(suggestionHint("refund")).toBe("looks like: Refunded");
     expect(suggestionHint("transfer")).toBe("looks like: Moved between accounts");
+  });
+
+  it("highlights the spending flow suggestion", () => {
+    expect(suggestionHint("spending")).toBe("looks like: Spent it");
   });
 
   it("returns empty string for an unknown flow rather than a raw token", () => {
