@@ -605,6 +605,7 @@ def _init_v2_tables():
                 user_note TEXT,
                 suggested_flow TEXT,
                 user_label TEXT,
+                suggested_label TEXT,
                 detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
