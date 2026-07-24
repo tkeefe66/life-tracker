@@ -737,7 +737,7 @@ def test_breakdown_rows_returns_vendor_rows_newest_first(temp_db_path):
     assert [r["simplefin_id"] for r in rows] == ["a3", "a2", "a1"]
     assert rows[0]["resolved_flow"] == "refund"
     assert set(rows[0]) == {"simplefin_id", "posted", "amount", "account_name",
-                            "resolved_flow", "user_note"}
+                            "resolved_flow", "user_note", "user_label"}
 
 
 def test_breakdown_rows_respects_account_filter_and_limit_clamp(temp_db_path):
@@ -771,3 +771,79 @@ def test_breakdown_rows_excludes_other_flows_for_same_vendor(temp_db_path):
     _vendor_txn(db, "v1", acct["id"], today, -900.0, "Vanguard", flow="investment")
 
     assert money.breakdown_rows(weeks=1, vendor="Vanguard")["rows"] == []
+
+
+# ── breakdown(by="label") and label-filtered rows ──────────────────────────────
+
+def test_breakdown_by_label_groups_with_unlabeled_bucket_last(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "r1", acct["id"], today, -2000.0, "Check")
+    db.set_bank_label("r1", "Monthly Rent")
+    _vendor_txn(db, "g1", acct["id"], today, -40.0, "Kroger")
+    _vendor_txn(db, "g2", acct["id"], today, -60.0, "Safeway")
+    for sfid in ("g1", "g2"):
+        db.set_bank_label(sfid, "Groceries")
+    _vendor_txn(db, "u1", acct["id"], today, -15.0, "Mystery")   # unlabeled
+
+    result = money.breakdown(weeks=1, by="label")
+    assert result["lines"] == [
+        {"label": "Monthly Rent", "count": 1, "amount": 2000.0},
+        {"label": "Groceries", "count": 2, "amount": 100.0},
+        {"label": None, "count": 1, "amount": 15.0},
+    ]
+    assert result["labels"] == ["Groceries", "Monthly Rent"]
+
+
+def test_breakdown_label_and_vendor_views_sum_identically(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "a1", acct["id"], today, -30.0, "Amazon")
+    db.set_bank_label("a1", "Household")
+    _vendor_txn(db, "a2", acct["id"], today, 10.0, "Amazon", user_flow="refund")
+    _vendor_txn(db, "u1", acct["id"], today, -5.0, "Cafe")
+
+    by_vendor = money.breakdown(weeks=1)["lines"]
+    by_label = money.breakdown(weeks=1, by="label")["lines"]
+    assert sum(l["amount"] for l in by_vendor) == sum(l["amount"] for l in by_label)
+
+
+def test_breakdown_vendor_mode_now_carries_vocabulary(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "a1", acct["id"], today, -30.0, "Amazon")
+    db.set_bank_label("a1", "Household")
+
+    result = money.breakdown(weeks=1)
+    assert result["labels"] == ["Household"]
+    assert result["lines"][0]["vendor"] == "Amazon"
+
+
+def test_breakdown_rows_by_label(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "a1", acct["id"], today, -30.0, "Amazon")
+    _vendor_txn(db, "k1", acct["id"], today, -40.0, "Kroger")
+    for sfid in ("a1", "k1"):
+        db.set_bank_label(sfid, "Household")
+    _vendor_txn(db, "u1", acct["id"], today, -5.0, "Cafe")
+
+    rows = money.breakdown_rows(weeks=1, label="Household")["rows"]
+    assert sorted(r["simplefin_id"] for r in rows) == ["a1", "k1"]
+    assert all(r["user_label"] == "Household" for r in rows)

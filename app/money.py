@@ -180,48 +180,70 @@ def _vendor_key(t: dict) -> str:
     return t["payee"] or t["description"]
 
 
-def breakdown(weeks: int, account_id=None) -> dict:
-    """Spending grouped by vendor (payee, description fallback) over the same
-    window summary() uses. Refund rows net into their vendor's line — a
-    refund-only vendor shows a negative net, which is the true figure. Raw
-    sums per group, rounded once at the end (see _totals's rounding note).
-    `count` is contributing spending rows only; refunds adjust amount, not
-    count."""
+def breakdown(weeks: int, account_id=None, by: str = "payee") -> dict:
+    """Spending grouped by vendor (payee, description fallback) or by label
+    over the same window summary() uses. Refund rows net into their vendor's/
+    label's line — a refund-only vendor shows a negative net, which is the true
+    figure. Raw sums per group, rounded once at the end (see _totals's rounding
+    note). `count` is contributing spending rows only; refunds adjust amount,
+    not count.
+
+    When by="payee" (default), lines use the "vendor" key and are sorted by
+    descending amount then alphabetically. When by="label", lines use the
+    "label" key (with null for unlabeled) and labeled lines sort by descending
+    amount then alphabetically, with the Unlabeled (None) bucket always last.
+
+    Both modes include the "labels" key: the sorted vocabulary of all user-set
+    labels in the database."""
     weeks = _clamp_weeks(weeks)
     start, end = _window(weeks)
     txns = db.get_bank_transactions_range(start, end)
     if account_id is not None:
         txns = [t for t in txns if t["account_id"] == account_id]
 
+    key = _vendor_key if by == "payee" else (lambda t: t["user_label"])
     groups: dict = {}
     for t in txns:
         if t["resolved_flow"] == "spending" and t["amount"] < 0:
-            g = groups.setdefault(_vendor_key(t), {"count": 0, "raw": 0.0})
+            g = groups.setdefault(key(t), {"count": 0, "raw": 0.0})
             g["count"] += 1
             g["raw"] += -t["amount"]
         elif t["resolved_flow"] == "refund" and t["amount"] > 0:
-            g = groups.setdefault(_vendor_key(t), {"count": 0, "raw": 0.0})
+            g = groups.setdefault(key(t), {"count": 0, "raw": 0.0})
             g["raw"] -= t["amount"]
 
-    lines = [
-        {"vendor": vendor, "count": g["count"], "amount": round(g["raw"], 2)}
-        for vendor, g in groups.items()
-    ]
-    lines.sort(key=lambda l: (-l["amount"], l["vendor"]))
-    return {"lines": lines}
+    field = "vendor" if by == "payee" else "label"
+    lines = [{field: k, "count": g["count"], "amount": round(g["raw"], 2)}
+             for k, g in groups.items()]
+    if by == "payee":
+        lines.sort(key=lambda l: (-l["amount"], l["vendor"]))
+    else:
+        # Labeled lines by net desc then name; the Unlabeled bucket (None)
+        # always last — it's the catch-all, not a peer category.
+        labeled = sorted((l for l in lines if l["label"] is not None),
+                         key=lambda l: (-l["amount"], l["label"]))
+        lines = labeled + [l for l in lines if l["label"] is None]
+    return {"lines": lines, "labels": db.get_bank_label_vocabulary()}
 
 
-def breakdown_rows(weeks: int, vendor: str, account_id=None, limit: int = 100) -> dict:
-    """The transactions behind one breakdown line: that vendor's contributing
-    rows (spending negative side + refund positive side) in the same window,
-    newest first, capped at `limit` (clamped 1-200 like triage)."""
+def breakdown_rows(weeks: int, vendor: str = None, label: str = None,
+                   account_id=None, limit: int = 100) -> dict:
+    """The transactions behind one breakdown line: that vendor's or label's
+    contributing rows (spending negative side + refund positive side) in the
+    same window, newest first, capped at `limit` (clamped 1-200 like triage).
+    Exactly one of vendor or label is given by the caller (the route enforces).
+    Rows include the user's label for each transaction."""
     weeks = _clamp_weeks(weeks)
     limit = _clamp_triage_limit(limit)
     start, end = _window(weeks)
     txns = db.get_bank_transactions_range(start, end)
+    if vendor is not None:
+        matches = lambda t: _vendor_key(t) == vendor
+    else:
+        matches = lambda t: t["user_label"] == label
     rows = [
         t for t in txns
-        if _vendor_key(t) == vendor
+        if matches(t)
         and (account_id is None or t["account_id"] == account_id)
         and ((t["resolved_flow"] == "spending" and t["amount"] < 0)
              or (t["resolved_flow"] == "refund" and t["amount"] > 0))
@@ -234,6 +256,7 @@ def breakdown_rows(weeks: int, vendor: str, account_id=None, limit: int = 100) -
         "account_name": t["account_name"],
         "resolved_flow": t["resolved_flow"],
         "user_note": t["user_note"],
+        "user_label": t["user_label"],
     } for t in rows[:limit]]}
 
 
