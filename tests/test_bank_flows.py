@@ -837,3 +837,15 @@ def test_label_suggestions_no_identity_rows_never_inherit():
         _ltxn("e2", "", description=""),
     ]
     assert bank_flows.label_suggestions(txns)["e2"] is None
+
+
+def test_label_suggestions_skips_rejected_rows():
+    import bank_flows
+    txns = [
+        _ltxn("r1", "Check", user_label="Monthly Rent"),
+        {**_ltxn("r2", "Check"), "user_no_label": True},
+        _ltxn("r3", "Check"),
+    ]
+    result = bank_flows.label_suggestions(txns)
+    assert result["r2"] is None
+    assert result["r3"] == "Monthly Rent"

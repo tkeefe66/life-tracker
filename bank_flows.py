@@ -97,14 +97,15 @@ def label_suggestions(txns):
     suggestions whose vendor lost its labels. Rows with no vendor identity
     (both payee and description empty, vendor_key == "") never inherit —
     pooling them would propagate one no-identity row's label to every other
-    unrelated no-identity row."""
+    unrelated no-identity row. Rows carrying the user's no-label verdict
+    never inherit."""
     labels_by_vendor = {}
     for t in txns:
         if t.get("user_label"):
             labels_by_vendor.setdefault(vendor_key(t), set()).add(t["user_label"])
     unanimous = {v: next(iter(ls)) for v, ls in labels_by_vendor.items() if v and len(ls) == 1}
     return {
-        t["simplefin_id"]: (None if t.get("user_label")
+        t["simplefin_id"]: (None if t.get("user_label") or t.get("user_no_label")
                             else unanimous.get(vendor_key(t)))
         for t in txns
     }
