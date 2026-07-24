@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiGet, apiSend } from "../api";
 import { dayRowDate, flowLabel, money, signedMoney, vendorSplit, type VendorLine } from "../lib";
 
+interface LabelLine { label: string | null; count: number; amount: number }
 interface AccountRow { id: number; name: string; active: boolean }
 interface DrillRow {
   simplefin_id: string;
@@ -18,6 +19,8 @@ interface DrillRow {
 // fetch hides the section (lines === null), never the screen.
 export default function VendorBreakdown({ weeks }: { weeks: number }) {
   const [lines, setLines] = useState<VendorLine[] | null>(null);
+  const [mode, setMode] = useState<"payee" | "label">("payee");
+  const [labelLines, setLabelLines] = useState<LabelLine[] | null>(null);
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [accountId, setAccountId] = useState<number | null>(null);
   const [showRest, setShowRest] = useState(false);
@@ -48,17 +51,22 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
     setShowRest(false);
     fetchGen.current += 1;
     const gen = fetchGen.current;
-    apiGet<{ lines: VendorLine[]; labels: string[] }>(`/bank/breakdown?weeks=${weeks}${acct}`)
+    const byParam = mode === "label" ? "&by=label" : "";
+    apiGet<{ lines: (VendorLine | LabelLine)[]; labels: string[] }>(
+      `/bank/breakdown?weeks=${weeks}${byParam}${acct}`,
+    )
       .then((d) => {
         if (fetchGen.current !== gen) return;
-        setLines(d.lines);
         setVocab(d.labels ?? []);
+        if (mode === "label") setLabelLines(d.lines as LabelLine[]);
+        else setLines(d.lines as VendorLine[]);
       })
       .catch(() => {
         if (fetchGen.current !== gen) return;
-        setLines(null);
+        if (mode === "label") setLabelLines(null);
+        else setLines(null);
       });
-  }, [weeks, accountId]);
+  }, [weeks, accountId, mode]);
 
   const saveLabel = (drillKey: string, row: DrillRow, raw: string) => {
     const label = raw.trim() || null;
@@ -85,24 +93,107 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
   const { top, tail, rest } = vendorSplit(lines);
   const shown = showRest ? [...top, ...rest] : top;
 
-  const toggleVendor = (vendor: string) => {
-    if (expanded === vendor) {
+  // Generic drill toggle shared by both views: `key` is the vendor name in
+  // payee mode or "label:"+label in label mode; `fetchQuery` is the
+  // pre-built payee=/label= query fragment for the rows endpoint.
+  const toggleDrill = (key: string, fetchQuery: string) => {
+    if (expanded === key) {
       setExpanded(null);
       return;
     }
-    setExpanded(vendor);
-    if (!drill[vendor]) {
+    setExpanded(key);
+    if (!drill[key]) {
       const acct = accountId !== null ? `&account_id=${accountId}` : "";
       const gen = fetchGen.current;
       apiGet<{ rows: DrillRow[] }>(
-        `/bank/breakdown/rows?weeks=${weeks}&payee=${encodeURIComponent(vendor)}${acct}`,
+        `/bank/breakdown/rows?weeks=${weeks}&${fetchQuery}${acct}`,
       )
         .then((d) => {
           if (fetchGen.current !== gen) return;
-          setDrill((prev) => ({ ...prev, [vendor]: d.rows }));
+          setDrill((prev) => ({ ...prev, [key]: d.rows }));
         })
         .catch(() => {});
     }
+  };
+
+  // Row + drill-down JSX shared by the vendor and label views. `drillKey`
+  // keys `expanded`/`drill` state; `fetchQuery` is only used (and only
+  // needs to be valid) when `expandable` is true.
+  const renderRow = (
+    displayName: string,
+    drillKey: string,
+    expandable: boolean,
+    fetchQuery: string,
+    count: number,
+    amount: number,
+    i: number,
+  ) => {
+    const drillId = `vendor-drill-${mode}-${i}`;
+    const isOpen = expandable && expanded === drillKey;
+    return (
+      <div key={drillKey}>
+        <button
+          type="button"
+          className="vendor-row"
+          aria-expanded={expandable ? isOpen : undefined}
+          aria-controls={expandable ? drillId : undefined}
+          onClick={expandable ? () => toggleDrill(drillKey, fetchQuery) : undefined}
+        >
+          <span className="spend-service">{displayName}</span>
+          <span className="spend-amount num">
+            {count > 0 ? `${count} · ` : ""}{signedMoney(amount)}
+          </span>
+        </button>
+        {isOpen && drill[drillKey] && (
+          <div className="vendor-drill" id={drillId}>
+            {drill[drillKey].map((r) => (
+              <div className="vendor-drill-row" key={r.simplefin_id}>
+                <span>
+                  {dayRowDate(r.posted.slice(0, 10)).monthDay}
+                  {r.resolved_flow === "refund" && ` · ${flowLabel("refund")}`}
+                  {" · "}{r.account_name}
+                  {r.user_note && <span className="triage-note">{r.user_note}</span>}
+                </span>
+                <span className="vendor-drill-right">
+                  {editing === r.simplefin_id ? (
+                    <input
+                      className="vendor-label-input"
+                      list="vendor-label-vocab"
+                      aria-label="Label"
+                      defaultValue={r.user_label ?? ""}
+                      autoFocus
+                      onBlur={(e) => {
+                        if (cancelingRef.current) {
+                          cancelingRef.current = false;
+                          return;
+                        }
+                        saveLabel(drillKey, r, e.currentTarget.value);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                        if (e.key === "Escape") {
+                          cancelingRef.current = true;
+                          setEditing(null);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="vendor-label-btn"
+                      onClick={() => setEditing(r.simplefin_id)}
+                    >
+                      {r.user_label ?? "＋ label"}
+                    </button>
+                  )}
+                  <span className="num">{money(Math.abs(r.amount))}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -111,6 +202,22 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
       <datalist id="vendor-label-vocab">
         {vocab.map((l) => <option key={l} value={l} />)}
       </datalist>
+      <div className="vendor-chip-row">
+        <button
+          type="button"
+          className={mode === "payee" ? "vendor-chip vendor-chip-on" : "vendor-chip"}
+          onClick={() => setMode("payee")}
+        >
+          Vendors
+        </button>
+        <button
+          type="button"
+          className={mode === "label" ? "vendor-chip vendor-chip-on" : "vendor-chip"}
+          onClick={() => setMode("label")}
+        >
+          Labels
+        </button>
+      </div>
       {accounts.length > 1 && (
         <div className="vendor-chip-row">
           <button
@@ -132,86 +239,44 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
           ))}
         </div>
       )}
-      <div className="spend">
-        {shown.map((l, i) => {
-          const drillId = `vendor-drill-${i}`;
-          return (
-            <div key={l.vendor}>
-              <button
-                type="button"
-                className="vendor-row"
-                aria-expanded={expanded === l.vendor}
-                aria-controls={drillId}
-                onClick={() => toggleVendor(l.vendor)}
-              >
-                <span className="spend-service">{l.vendor}</span>
-                <span className="spend-amount num">
-                  {l.count > 0 ? `${l.count} · ` : ""}{signedMoney(l.amount)}
-                </span>
-              </button>
-              {expanded === l.vendor && drill[l.vendor] && (
-                <div className="vendor-drill" id={drillId}>
-                  {drill[l.vendor].map((r) => (
-                    <div className="vendor-drill-row" key={r.simplefin_id}>
-                      <span>
-                        {dayRowDate(r.posted.slice(0, 10)).monthDay}
-                        {r.resolved_flow === "refund" && ` · ${flowLabel("refund")}`}
-                        {" · "}{r.account_name}
-                        {r.user_note && <span className="triage-note">{r.user_note}</span>}
-                      </span>
-                      <span className="vendor-drill-right">
-                        {editing === r.simplefin_id ? (
-                          <input
-                            className="vendor-label-input"
-                            list="vendor-label-vocab"
-                            aria-label="Label"
-                            defaultValue={r.user_label ?? ""}
-                            autoFocus
-                            onBlur={(e) => {
-                              if (cancelingRef.current) {
-                                cancelingRef.current = false;
-                                return;
-                              }
-                              saveLabel(l.vendor, r, e.currentTarget.value);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") e.currentTarget.blur();
-                              if (e.key === "Escape") {
-                                cancelingRef.current = true;
-                                setEditing(null);
-                              }
-                            }}
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            className="vendor-label-btn"
-                            onClick={() => setEditing(r.simplefin_id)}
-                          >
-                            {r.user_label ?? "＋ label"}
-                          </button>
-                        )}
-                        <span className="num">{money(Math.abs(r.amount))}</span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {tail && !showRest && (
-          <button
-            type="button"
-            className="vendor-row"
-            aria-expanded={showRest}
-            onClick={() => setShowRest(true)}
-          >
-            <span className="spend-service">Everything else ({tail.vendors} vendors)</span>
-            <span className="spend-amount num">{tail.count} · {signedMoney(tail.amount)}</span>
-          </button>
-        )}
-      </div>
+      {mode === "payee" ? (
+        <div className="spend">
+          {shown.map((l, i) =>
+            renderRow(
+              l.vendor,
+              l.vendor,
+              true,
+              `payee=${encodeURIComponent(l.vendor)}`,
+              l.count,
+              l.amount,
+              i,
+            ),
+          )}
+          {tail && !showRest && (
+            <button
+              type="button"
+              className="vendor-row"
+              aria-expanded={showRest}
+              onClick={() => setShowRest(true)}
+            >
+              <span className="spend-service">Everything else ({tail.vendors} vendors)</span>
+              <span className="spend-amount num">{tail.count} · {signedMoney(tail.amount)}</span>
+            </button>
+          )}
+        </div>
+      ) : (
+        labelLines && (
+          <div className="spend">
+            {labelLines.map((l, i) => {
+              const displayName = l.label ?? "Unlabeled";
+              const drillKey = "label:" + l.label;
+              const expandable = l.label !== null;
+              const fetchQuery = expandable ? `label=${encodeURIComponent(l.label as string)}` : "";
+              return renderRow(displayName, drillKey, expandable, fetchQuery, l.count, l.amount, i);
+            })}
+          </div>
+        )
+      )}
     </>
   );
 }
