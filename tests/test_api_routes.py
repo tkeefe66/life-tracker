@@ -988,25 +988,57 @@ PROTECTED_ROUTES = [
     ("get", "/api/bank/accounts"),
     ("get", "/api/bank/breakdown"),
     ("get", "/api/bank/breakdown/rows"),
+    ("post", "/api/bank/label"),
 ]
 
 
 def test_bank_breakdown_shape_and_bad_by(client, temp_db_path):
     r = client.get("/api/bank/breakdown?weeks=4")
     assert r.status_code == 200
-    assert r.json() == {"lines": []}
+    assert r.json() == {"lines": [], "labels": []}
 
     r = client.get("/api/bank/breakdown?weeks=4&by=label")
+    assert r.status_code == 200
+    assert r.json() == {"lines": [], "labels": []}
+
+    r = client.get("/api/bank/breakdown?weeks=4&by=vibes")
     assert r.status_code == 400
 
 
-def test_bank_breakdown_rows_requires_payee(client, temp_db_path):
+def test_bank_breakdown_rows_requires_exactly_one_of_payee_or_label(client, temp_db_path):
     r = client.get("/api/bank/breakdown/rows?weeks=4")
-    assert r.status_code == 422
+    assert r.status_code == 400
+
+    r = client.get("/api/bank/breakdown/rows?weeks=4&payee=Amazon&label=Rent")
+    assert r.status_code == 400
 
     r = client.get("/api/bank/breakdown/rows?weeks=4&payee=Amazon")
     assert r.status_code == 200
     assert r.json() == {"rows": []}
+
+    r = client.get("/api/bank/breakdown/rows?weeks=4&label=Rent")
+    assert r.status_code == 200
+    assert r.json() == {"rows": []}
+
+
+def test_bank_label_set_trim_clear_and_404(client, temp_db_path):
+    import database as db
+    db.upsert_bank_account("acct-1", "Checking", "WF", "checking")
+    acct = next(a for a in db.get_bank_accounts() if a["simplefin_id"] == "acct-1")
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-20", "2026-07-20",
+                               -50.0, "DESC", "Kroger", "", None)
+    db.set_bank_transaction_derived("t1", "spending", None, False)
+
+    r = client.post("/api/bank/label", json={"simplefin_id": "t1", "label": "  Groceries  "})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "label": "Groceries"}
+
+    r = client.post("/api/bank/label", json={"simplefin_id": "t1", "label": "   "})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "label": None}
+
+    r = client.post("/api/bank/label", json={"simplefin_id": "nope", "label": "X"})
+    assert r.status_code == 404
 
 
 @pytest.mark.parametrize("method,path", PROTECTED_ROUTES)

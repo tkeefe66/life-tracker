@@ -323,16 +323,20 @@ def get_bank_summary(weeks: int = 12):
 @router.get("/bank/breakdown")
 def get_bank_breakdown(weeks: int = 12, by: str = "payee",
                        account_id: Optional[int] = None):
-    if by != "payee":
-        raise HTTPException(status_code=400,
-                            detail="by must be 'payee' (labels arrive in a later phase)")
-    return money.breakdown(weeks, account_id=account_id)
+    if by not in ("payee", "label"):
+        raise HTTPException(status_code=400, detail="by must be 'payee' or 'label'")
+    return money.breakdown(weeks, account_id=account_id, by=by)
 
 
 @router.get("/bank/breakdown/rows")
-def get_bank_breakdown_rows(weeks: int, payee: str,
+def get_bank_breakdown_rows(weeks: int, payee: Optional[str] = None,
+                            label: Optional[str] = None,
                             account_id: Optional[int] = None, limit: int = 100):
-    return money.breakdown_rows(weeks, payee, account_id=account_id, limit=limit)
+    if (payee is None) == (label is None):
+        raise HTTPException(status_code=400,
+                            detail="pass exactly one of payee or label")
+    return money.breakdown_rows(weeks, vendor=payee, label=label,
+                                account_id=account_id, limit=limit)
 
 
 @router.get("/bank/triage")
@@ -356,6 +360,11 @@ class FlowPatch(BaseModel):
     # ({flow: null}) preserve a note: the note explains the transaction,
     # not the answer.
     note: Optional[str] = None
+
+
+class LabelPatch(BaseModel):
+    simplefin_id: str
+    label: Optional[str] = None
 
 
 class BulkFlowPatch(BaseModel):
@@ -391,6 +400,14 @@ def set_bank_transactions_flow_bulk(body: BulkFlowPatch):
     except ValueError:
         raise HTTPException(status_code=400, detail="unknown flow")
     return {"updated": updated}
+
+
+@router.post("/bank/label")
+def set_bank_label(body: LabelPatch):
+    label = (body.label or "").strip() or None
+    if not db.set_bank_label(body.simplefin_id, label):
+        raise HTTPException(status_code=404, detail="unknown transaction")
+    return {"ok": True, "label": label}
 
 
 @router.get("/bank/accounts")
