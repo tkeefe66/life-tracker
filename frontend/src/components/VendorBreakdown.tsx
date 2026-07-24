@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { apiGet } from "../api";
-import { dayRowDate, flowLabel, money, vendorSplit, type VendorLine } from "../lib";
+import { dayRowDate, flowLabel, money, signedMoney, vendorSplit, type VendorLine } from "../lib";
 
 interface AccountRow { id: number; name: string; active: boolean }
 interface DrillRow {
@@ -115,7 +115,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
               >
                 <span className="spend-service">{l.vendor}</span>
                 <span className="spend-amount num">
-                  {l.count > 0 ? `${l.count} · ` : ""}{money(l.amount)}
+                  {l.count > 0 ? `${l.count} · ` : ""}{signedMoney(l.amount)}
                 </span>
               </button>
               {expanded === l.vendor && drill[l.vendor] && (
@@ -144,7 +144,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
             onClick={() => setShowRest(true)}
           >
             <span className="spend-service">Everything else ({tail.vendors} vendors)</span>
-            <span className="spend-amount num">{tail.count} · {money(tail.amount)}</span>
+            <span className="spend-amount num">{tail.count} · {signedMoney(tail.amount)}</span>
           </button>
         )}
       </div>

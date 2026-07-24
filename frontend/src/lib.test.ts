@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   dayChips, dayLabel, dayRowDate, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel, type Day,
   TRIAGE_CHOICES, flowLabel, suggestionHint, coverageNote, weekCaption, trackedShareSentence,
+  signedMoney, vendorSplit, type VendorLine,
 } from "./lib";
 
 describe("weekLabel", () => {
@@ -413,6 +414,20 @@ describe("weekCaption", () => {
   });
 });
 
+describe("signedMoney", () => {
+  it("formats a positive amount like money()", () => {
+    expect(signedMoney(12.5)).toBe("$12.50");
+  });
+
+  it("renders a real zero, not an empty string", () => {
+    expect(signedMoney(0)).toBe("$0");
+  });
+
+  it("formats a negative amount with a U+2212 minus before the $, not money()'s $-", () => {
+    expect(signedMoney(-12.5)).toBe("−$12.50");
+  });
+});
+
 describe("trackedShareSentence", () => {
   it("states the tracked share of total bank spending", () => {
     expect(trackedShareSentence(120, 3400)).toBe(
@@ -430,8 +445,6 @@ describe("trackedShareSentence", () => {
     expect(trackedShareSentence(0, 0)).toBe("");
   });
 });
-
-import { vendorSplit, type VendorLine } from "./lib";
 
 const line = (vendor: string, amount: number): VendorLine =>
   ({ vendor, count: 1, amount });

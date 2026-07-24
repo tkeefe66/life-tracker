@@ -104,6 +104,13 @@ export function money(amount: number): string {
   return `$${amount.toFixed(2).replace(/\.00$/, "")}`;
 }
 
+/** A negative bank net renders as `−$12.50` (U+2212 minus before the `$`),
+ * never `money()`'s own `$-12.50` — same convention `weekCaption` uses for
+ * negative weeks. */
+export function signedMoney(amount: number): string {
+  return amount < 0 ? `−${money(Math.abs(amount))}` : money(amount);
+}
+
 /**
  * Button -> `user_flow` mapping for the triage worklist (spec §6.1). The user
  * never sees the word "flow" or any of its six values — these are the plain-
@@ -174,8 +181,7 @@ export interface WeekSpendPoint { week_start: string; spending: number; partial:
  * minus before the `$`, rather than `money()`'s own `$-12.50`. */
 export function weekCaption(week: WeekSpendPoint): string {
   const suffix = week.partial ? " · partial week" : "";
-  const amount = week.spending < 0 ? `−${money(Math.abs(week.spending))}` : money(week.spending);
-  return `${weekRangeLabel(week.week_start)} · ${amount}${suffix}`;
+  return `${weekRangeLabel(week.week_start)} · ${signedMoney(week.spending)}${suffix}`;
 }
 
 /**
