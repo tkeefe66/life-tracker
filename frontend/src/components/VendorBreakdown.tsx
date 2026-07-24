@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiGet } from "../api";
 import { dayRowDate, flowLabel, money, vendorSplit, type VendorLine } from "../lib";
 
@@ -22,6 +22,11 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
   const [showRest, setShowRest] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [drill, setDrill] = useState<Record<string, DrillRow[]>>({});
+  // Bumped on every accountId/weeks change; fetch closures capture the value
+  // at call time and discard their response if it no longer matches, so a
+  // stale in-flight lines or drill fetch can never repopulate state after a
+  // newer request has superseded it.
+  const fetchGen = useRef(0);
 
   useEffect(() => {
     apiGet<AccountRow[]>("/bank/accounts")
@@ -34,9 +39,17 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
     setExpanded(null);
     setDrill({});
     setShowRest(false);
+    fetchGen.current += 1;
+    const gen = fetchGen.current;
     apiGet<{ lines: VendorLine[] }>(`/bank/breakdown?weeks=${weeks}${acct}`)
-      .then((d) => setLines(d.lines))
-      .catch(() => setLines(null));
+      .then((d) => {
+        if (fetchGen.current !== gen) return;
+        setLines(d.lines);
+      })
+      .catch(() => {
+        if (fetchGen.current !== gen) return;
+        setLines(null);
+      });
   }, [weeks, accountId]);
 
   if (!lines || lines.length === 0) return null;
@@ -52,10 +65,14 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
     setExpanded(vendor);
     if (!drill[vendor]) {
       const acct = accountId !== null ? `&account_id=${accountId}` : "";
+      const gen = fetchGen.current;
       apiGet<{ rows: DrillRow[] }>(
         `/bank/breakdown/rows?weeks=${weeks}&payee=${encodeURIComponent(vendor)}${acct}`,
       )
-        .then((d) => setDrill((prev) => ({ ...prev, [vendor]: d.rows })))
+        .then((d) => {
+          if (fetchGen.current !== gen) return;
+          setDrill((prev) => ({ ...prev, [vendor]: d.rows }));
+        })
         .catch(() => {});
     }
   };
@@ -85,33 +102,47 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
         </div>
       )}
       <div className="spend">
-        {shown.map((l) => (
-          <div key={l.vendor}>
-            <button type="button" className="vendor-row" onClick={() => toggleVendor(l.vendor)}>
-              <span className="spend-service">{l.vendor}</span>
-              <span className="spend-amount num">
-                {l.count > 0 ? `${l.count} · ` : ""}{money(l.amount)}
-              </span>
-            </button>
-            {expanded === l.vendor && drill[l.vendor] && (
-              <div className="vendor-drill">
-                {drill[l.vendor].map((r) => (
-                  <div className="vendor-drill-row" key={r.simplefin_id}>
-                    <span>
-                      {dayRowDate(r.posted.slice(0, 10)).monthDay}
-                      {r.resolved_flow === "refund" && ` · ${flowLabel("refund")}`}
-                      {" · "}{r.account_name}
-                      {r.user_note && <span className="triage-note">{r.user_note}</span>}
-                    </span>
-                    <span className="num">{money(Math.abs(r.amount))}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+        {shown.map((l, i) => {
+          const drillId = `vendor-drill-${i}`;
+          return (
+            <div key={l.vendor}>
+              <button
+                type="button"
+                className="vendor-row"
+                aria-expanded={expanded === l.vendor}
+                aria-controls={drillId}
+                onClick={() => toggleVendor(l.vendor)}
+              >
+                <span className="spend-service">{l.vendor}</span>
+                <span className="spend-amount num">
+                  {l.count > 0 ? `${l.count} · ` : ""}{money(l.amount)}
+                </span>
+              </button>
+              {expanded === l.vendor && drill[l.vendor] && (
+                <div className="vendor-drill" id={drillId}>
+                  {drill[l.vendor].map((r) => (
+                    <div className="vendor-drill-row" key={r.simplefin_id}>
+                      <span>
+                        {dayRowDate(r.posted.slice(0, 10)).monthDay}
+                        {r.resolved_flow === "refund" && ` · ${flowLabel("refund")}`}
+                        {" · "}{r.account_name}
+                        {r.user_note && <span className="triage-note">{r.user_note}</span>}
+                      </span>
+                      <span className="num">{money(Math.abs(r.amount))}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
         {tail && !showRest && (
-          <button type="button" className="vendor-row" onClick={() => setShowRest(true)}>
+          <button
+            type="button"
+            className="vendor-row"
+            aria-expanded={showRest}
+            onClick={() => setShowRest(true)}
+          >
             <span className="spend-service">Everything else ({tail.vendors} vendors)</span>
             <span className="spend-amount num">{tail.count} · {money(tail.amount)}</span>
           </button>
