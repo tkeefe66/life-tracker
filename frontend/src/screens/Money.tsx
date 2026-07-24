@@ -394,7 +394,7 @@ export default function Money() {
               {recentRows.map((r) => (
                 <div className="recent-row" key={r.simplefin_id}>
                   <span>
-                    {r.label} — {r.resolved_flow === "spending" ? "Spent it" : flowLabel(r.resolved_flow)}
+                    {r.label} — {flowLabel(r.resolved_flow)}
                     {r.user_note && <span className="triage-note">{r.user_note}</span>}
                   </span>
                   <button type="button" onClick={() => handlePutBack(r)}>Put it back</button>
