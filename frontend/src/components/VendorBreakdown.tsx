@@ -12,6 +12,18 @@ interface DrillRow {
   resolved_flow: string;
   user_note: string | null;
   user_label: string | null;
+  suggested_label: string | null;
+  vendor: string;
+}
+
+interface LabelSaveResponse { ok: boolean; label: string | null; siblings: number; vendor: string }
+
+interface BulkOffer {
+  drillKey: string;
+  simplefin_id: string;
+  vendor: string;
+  label: string;
+  siblings: number;
 }
 
 // "Where it went" — bank spending grouped by vendor, filterable by account,
@@ -28,6 +40,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
   const [drill, setDrill] = useState<Record<string, DrillRow[]>>({});
   const [vocab, setVocab] = useState<string[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
+  const [offer, setOffer] = useState<BulkOffer | null>(null);
   // Set right before the Escape-triggered setEditing(null) so the input's
   // onBlur (fired by React unmounting the now-unfocused input) can tell a
   // deliberate cancel apart from a normal blur-to-save and skip saveLabel.
@@ -49,6 +62,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
     setExpanded(null);
     setDrill({});
     setShowRest(false);
+    setOffer(null);
     fetchGen.current += 1;
     const gen = fetchGen.current;
     const byParam = mode === "label" ? "&by=label" : "";
@@ -73,8 +87,8 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
     setEditing(null);
     if (label === row.user_label) return;
     const gen = fetchGen.current;
-    apiSend("POST", "/bank/label", { simplefin_id: row.simplefin_id, label })
-      .then(() => {
+    apiSend<LabelSaveResponse>("POST", "/bank/label", { simplefin_id: row.simplefin_id, label })
+      .then((resp) => {
         if (fetchGen.current !== gen) return;
         setDrill((prev) => ({
           ...prev,
@@ -84,6 +98,32 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
         if (label && !vocab.includes(label)) {
           setVocab((v) => [...v, label].sort());
         }
+        if (label && resp.siblings > 0) {
+          setOffer({
+            drillKey,
+            simplefin_id: row.simplefin_id,
+            vendor: resp.vendor,
+            label,
+            siblings: resp.siblings,
+          });
+        }
+      })
+      .catch(() => {});
+  };
+
+  const applyBulk = () => {
+    if (!offer) return;
+    const { drillKey, vendor, label } = offer;
+    setOffer(null);
+    const gen = fetchGen.current;
+    apiSend("POST", "/bank/label", { payee: vendor, label })
+      .then(() => {
+        if (fetchGen.current !== gen) return;
+        setDrill((prev) => ({
+          ...prev,
+          [drillKey]: (prev[drillKey] ?? []).map((r) =>
+            r.vendor === vendor && !r.user_label ? { ...r, user_label: label } : r),
+        }));
       })
       .catch(() => {});
   };
@@ -99,6 +139,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
   const toggleDrill = (key: string, fetchQuery: string) => {
     if (expanded === key) {
       setExpanded(null);
+      setOffer(null);
       return;
     }
     setExpanded(key);
@@ -146,50 +187,64 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
         </button>
         {isOpen && drill[drillKey] && (
           <div className="vendor-drill" id={drillId}>
-            {drill[drillKey].map((r) => (
-              <div className="vendor-drill-row" key={r.simplefin_id}>
-                <span>
-                  {dayRowDate(r.posted.slice(0, 10)).monthDay}
-                  {r.resolved_flow === "refund" && ` · ${flowLabel("refund")}`}
-                  {" · "}{r.account_name}
-                  {r.user_note && <span className="triage-note">{r.user_note}</span>}
-                </span>
-                <span className="vendor-drill-right">
-                  {editing === r.simplefin_id ? (
-                    <input
-                      className="vendor-label-input"
-                      list="vendor-label-vocab"
-                      aria-label="Label"
-                      defaultValue={r.user_label ?? ""}
-                      autoFocus
-                      onBlur={(e) => {
-                        if (cancelingRef.current) {
-                          cancelingRef.current = false;
-                          return;
-                        }
-                        saveLabel(drillKey, r, e.currentTarget.value);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") e.currentTarget.blur();
-                        if (e.key === "Escape") {
-                          cancelingRef.current = true;
-                          setEditing(null);
-                        }
-                      }}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      className="vendor-label-btn"
-                      onClick={() => setEditing(r.simplefin_id)}
-                    >
-                      {r.user_label ?? "＋ label"}
+            {drill[drillKey].map((r) => {
+              const shownLabel = r.user_label ?? r.suggested_label;
+              return (
+                <div key={r.simplefin_id}>
+                  <div className="vendor-drill-row">
+                    <span>
+                      {dayRowDate(r.posted.slice(0, 10)).monthDay}
+                      {r.resolved_flow === "refund" && ` · ${flowLabel("refund")}`}
+                      {" · "}{r.account_name}
+                      {r.user_note && <span className="triage-note">{r.user_note}</span>}
+                    </span>
+                    <span className="vendor-drill-right">
+                      {editing === r.simplefin_id ? (
+                        <input
+                          className="vendor-label-input"
+                          list="vendor-label-vocab"
+                          aria-label="Label"
+                          defaultValue={r.user_label ?? r.suggested_label ?? ""}
+                          autoFocus
+                          onBlur={(e) => {
+                            if (cancelingRef.current) {
+                              cancelingRef.current = false;
+                              return;
+                            }
+                            saveLabel(drillKey, r, e.currentTarget.value);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") {
+                              cancelingRef.current = true;
+                              setEditing(null);
+                            }
+                          }}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className={
+                            !r.user_label && r.suggested_label
+                              ? "vendor-label-btn vendor-label-suggested"
+                              : "vendor-label-btn"
+                          }
+                          onClick={() => setEditing(r.simplefin_id)}
+                        >
+                          {shownLabel ?? "＋ label"}
+                        </button>
+                      )}
+                      <span className="num">{money(Math.abs(r.amount))}</span>
+                    </span>
+                  </div>
+                  {offer && offer.drillKey === drillKey && offer.simplefin_id === r.simplefin_id && (
+                    <button type="button" className="vendor-bulk-offer" onClick={() => applyBulk()}>
+                      Apply "{offer.label}" to {offer.siblings} more {offer.vendor} row{offer.siblings === 1 ? "" : "s"}
                     </button>
                   )}
-                  <span className="num">{money(Math.abs(r.amount))}</span>
-                </span>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

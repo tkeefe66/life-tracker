@@ -431,6 +431,12 @@ button.quiet-btn:active { background: var(--accent-soft); }
   background: none; border: 1px solid var(--line); border-radius: 6px;
   padding: 1px 6px; max-width: 10rem;
 }
+.vendor-label-suggested { font-style: italic; color: var(--muted); }
+.vendor-bulk-offer {
+  display: block; margin: 2px 0 6px 12px; padding: 3px 10px;
+  border: 1px solid var(--line); border-radius: 999px; background: none;
+  color: var(--ink); font-size: 0.8rem; cursor: pointer;
+}
 
 .spend-total { font-weight: 600; color: var(--ink); }
 
