@@ -12,10 +12,19 @@ interface SuggestionRow {
   description: string;
 }
 
+interface LabelAuditProps {
+  // Lets the parent (Money) fold this count into the collapsed decision-zone
+  // summary ("N things to sort out") without a second fetch — fired once
+  // after the initial load and again on every local total change (confirm/
+  // reject/restore). A failed initial fetch reports 0 so a broken audit
+  // fetch can't hold the zone open by itself.
+  onTotal?: (n: number) => void;
+}
+
 // "Suggested labels — needs a look": every unconfirmed suggestion, one tap
 // to confirm / change / reject. Rejection is durable (no_label verdict).
 // Secondary surface: failed fetch hides the section; renders null when empty.
-export default function LabelAudit() {
+export default function LabelAudit({ onTotal }: LabelAuditProps = {}) {
   const [rows, setRows] = useState<SuggestionRow[] | null>(null);
   const [total, setTotal] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
@@ -30,8 +39,22 @@ export default function LabelAudit() {
         setRows(d.rows);
         setTotal(d.total);
       })
-      .catch(() => setRows(null));
+      .catch(() => {
+        setRows(null);
+        onTotal?.(0);
+      });
+    // Only the mount matters here — onTotal is a stable setState from the
+    // parent, and re-running this fetch on every render would defeat the
+    // "lift the count up without a second fetch" point entirely.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Every local total change (initial fetch success included) rides out to
+  // the parent here, in one place, rather than at each call site.
+  useEffect(() => {
+    onTotal?.(total);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [total]);
 
   if (!rows || rows.length === 0) return null;
 

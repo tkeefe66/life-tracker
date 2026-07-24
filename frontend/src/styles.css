@@ -998,6 +998,21 @@ details.money-details .spend-chart,
 details.money-details .legend,
 details.money-details .trend-caption { margin-top: 10px; }
 
+/* zone-break variant for a details/summary disclosure rather than a plain
+   h2 (the decision zone now collapses behind one summary line, so the
+   hairline that used to sit above "Needs a decision" moves to sit above the
+   card itself). Only the top edge is overridden — background/border-radius/
+   right/bottom/left padding and the rest of the border still come from
+   details.money-details above, in both the closed and open state, so
+   nothing doubles when the user expands it. Higher specificity than the
+   plain rule (two classes vs one) wins without needing rule order or
+   !important. */
+.zone-break.money-details {
+  margin-top: 56px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
 .recent-row {
   display: flex;
   align-items: baseline;
