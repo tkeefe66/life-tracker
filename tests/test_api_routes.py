@@ -1157,3 +1157,20 @@ def test_bank_label_no_label_form(client, temp_db_path):
     assert r.status_code == 400
     r = client.post("/api/bank/label", json={"simplefin_id": "ghost", "no_label": True})
     assert r.status_code == 404
+
+
+def test_bank_investments_not_configured_and_error_paths(temp_db_path, monkeypatch):
+    from services import simplefin_service
+    from services.simplefin_service import SimpleFinError
+    client = _client(temp_db_path)
+
+    monkeypatch.setattr(simplefin_service, "is_configured", lambda: False)
+    r = client.get("/api/bank/investments")
+    assert r.status_code == 200 and r.json() == {"total": None, "accounts": []}
+
+    monkeypatch.setattr(simplefin_service, "is_configured", lambda: True)
+    def boom(days=None):
+        raise SimpleFinError("error: unreachable")
+    monkeypatch.setattr(simplefin_service, "fetch_accounts", boom)
+    r = client.get("/api/bank/investments")
+    assert r.status_code == 503 and r.json()["detail"] == "error: unreachable"
