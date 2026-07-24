@@ -125,6 +125,10 @@ as a scored line.
   lets the sync reclassify the whole table), keeps `ambiguous` meaning "the
   text looks transfer-ish" rather than "the user hasn't looked at this", and
   needs no new column.
+- **Balances are never stored, and investments extend that rule.**
+  `GET /bank/investments` fetches SimpleFIN holdings on demand, computes
+  gains vs. cost basis, and discards — no DB row, no `app_settings`, no
+  logging of payload contents.
 
 ---
 
@@ -167,7 +171,8 @@ signal:
 │   ├── routes.py              # Protected API routes (checkins, scorecard, insights,
 │   │                        #   reflection, deliveries, rides, social, spend, targets,
 │   │                        #   settings, bank debug/role/summary/triage/
-│   │                        #   accounts/flow-override/breakdown/breakdown-rows/label)
+│   │                        #   accounts/flow-override/breakdown/breakdown-rows/label/
+│   │                        #   nickname/investments)
 │   ├── scorecard.py            # DB → domain wiring: weekly cards, spend, insights, history
 │   └── money.py               # DB → domain wiring for the Money screen: summary(weeks) +
 │                            #   triage(limit) + breakdown/breakdown_rows (per-vendor
@@ -191,7 +196,7 @@ signal:
 │   └── src/
 │       ├── screens/          # Today, Scorecard (Week), Money, Insights, Settings
 │       ├── components/        # DayNav, WeekNav, TrendChart, WeekdayHeatmap, SpendSubtotals,
-│       │                    #   BankSpendChart, TriageQueue…
+│       │                    #   BankSpendChart, TriageQueue, Investments…
 │       ├── lib.ts             # Pure helpers (dates, labels, money, chart scales) — unit-tested
 │       └── styles.css          # The whole design system: OKLCH tokens, both themes
 ├── scripts/
@@ -272,7 +277,7 @@ rule has been widened again — fix the rule rather than working around it.
 | `rides` | unique `gmail_message_id` | `ride_key` = parsed trip time; `ai_is_work` / `user_is_work`; `ride_at` immutable after insert |
 | `calendar_events` | unique `gcal_event_id` | `user_title` / `user_is_social` overrides, `source` (`gcal`\|`manual`), `amount`. Manual events use id `manual:<uuid4>` |
 | `weekly_reflections` | unique `week_start` | Cached AI paragraph — at most one Claude call per week |
-| `bank_accounts` | unique `simplefin_id` | `role` (spending/bills/savings/investment/credit_card/unknown) and `active` are user-set; the sync overwrites `name`/`org`/`kind` but never those two |
+| `bank_accounts` | unique `simplefin_id` | `role` (spending/bills/savings/investment/credit_card/unknown) and `active` are user-set; the sync overwrites `name`/`org`/`kind` but never those two. `nickname` is a fourth user-set nullable TEXT column on the same footing — `upsert_bank_account` never touches it — resolved as `COALESCE(NULLIF(nickname,''), name)`, exposed as `display_name` from `get_bank_accounts()` and as `account_name` in `_BANK_TXN_SELECT`, so every transaction surface shows it |
 | `bank_transactions` | unique `simplefin_id` | `flow` (derived) / `user_flow` (override) resolved via `COALESCE(user_flow, flow)`, same Override + Learning pattern as social events and rides; `pair_id` links the two halves of a matched transfer/card-payment, set by `bank_flows.match_pairs`; `user_note` and `user_label` are nullable, user-set TEXT columns (the sync never touches either) alongside `user_flow` — `user_label` doubles as the category system: the label vocabulary is `SELECT DISTINCT user_label`, not a table, and the Money screen's Labels view groups by it with an Unlabeled bucket. `refund` is a seventh `BANK_FLOWS` value that only `user_flow` can hold — `classify_flow` never emits it — and nets out of spending (positive side only) in aggregates. `suggested_flow` is a derived, advisory, nullable TEXT column — written only by the sync's post-reclassify suggestion pass (`ai_metrics.suggest_bank_flows`), never by a route; computed once per row and never recomputed once set; distinct from `user_flow` and ignored by every aggregate (`app/money.py` never reads it) — it only pre-highlights a triage chip until the user taps a real answer. `suggested_label` is the label counterpart with the OPPOSITE recompute rule: derived and sync-owned, but recomputed for the WHOLE table every sync by the rule-based label pass (`bank_flows.label_suggestions` — unanimous same-vendor inheritance, no AI), so retired/changed user labels self-heal; resolved via `resolved_label`, which ONLY the Labels view reads. `user_no_label` is the third label column: the user's durable "this row gets no label" verdict (boolean, user-set, sync never touches it) — mutually exclusive with `user_label` (each writer clears the other), excluded from the suggestion pass, bulk apply, and the audit queue, and folded into resolution: `resolved_label = CASE WHEN user_no_label THEN NULL ELSE COALESCE(user_label, suggested_label) END`. Without it a rejected suggestion would return on the next full recompute |
 | `targets` | metric PK | per-metric direction + value |
 | `app_settings` | key PK | Telegram toggle, `gmail_last_run` / `_status` / `_result`, calendar equivalents |
