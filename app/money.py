@@ -211,6 +211,32 @@ def breakdown(weeks: int, account_id=None) -> dict:
     return {"lines": lines}
 
 
+def breakdown_rows(weeks: int, vendor: str, account_id=None, limit: int = 100) -> dict:
+    """The transactions behind one breakdown line: that vendor's contributing
+    rows (spending negative side + refund positive side) in the same window,
+    newest first, capped at `limit` (clamped 1-200 like triage)."""
+    weeks = _clamp_weeks(weeks)
+    limit = _clamp_triage_limit(limit)
+    start, end = _window(weeks)
+    txns = db.get_bank_transactions_range(start, end)
+    rows = [
+        t for t in txns
+        if _vendor_key(t) == vendor
+        and (account_id is None or t["account_id"] == account_id)
+        and ((t["resolved_flow"] == "spending" and t["amount"] < 0)
+             or (t["resolved_flow"] == "refund" and t["amount"] > 0))
+    ]
+    rows.sort(key=lambda t: (t["posted"], t["simplefin_id"]), reverse=True)
+    return {"rows": [{
+        "simplefin_id": t["simplefin_id"],
+        "posted": t["posted"],
+        "amount": t["amount"],
+        "account_name": t["account_name"],
+        "resolved_flow": t["resolved_flow"],
+        "user_note": t["user_note"],
+    } for t in rows[:limit]]}
+
+
 def _decorate_bucket(rows: list) -> list:
     """Attach `label` and the signature-grouping fields to one bucket's rows.
 

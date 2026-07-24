@@ -716,3 +716,58 @@ def test_breakdown_rounds_once_per_group(temp_db_path):
 
     lines = money.breakdown(weeks=1)["lines"]
     assert lines == [{"vendor": "Cafe", "count": 3, "amount": 10.0}]
+
+
+# ── breakdown_rows(): per-vendor drill-down ────────────────────────────────────
+
+def test_breakdown_rows_returns_vendor_rows_newest_first(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today()
+    d0, d1 = today.isoformat(), (today - timedelta(days=1)).isoformat()
+    _vendor_txn(db, "a1", acct["id"], d1, -30.0, "Amazon")
+    _vendor_txn(db, "a2", acct["id"], d0, -20.0, "Amazon")
+    _vendor_txn(db, "a3", acct["id"], d0, 5.0, "Amazon", user_flow="refund")
+    _vendor_txn(db, "u1", acct["id"], d0, -40.0, "Uber")
+
+    rows = money.breakdown_rows(weeks=1, vendor="Amazon")["rows"]
+    assert [r["simplefin_id"] for r in rows] == ["a3", "a2", "a1"]
+    assert rows[0]["resolved_flow"] == "refund"
+    assert set(rows[0]) == {"simplefin_id", "posted", "amount", "account_name",
+                            "resolved_flow", "user_note"}
+
+
+def test_breakdown_rows_respects_account_filter_and_limit_clamp(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct_a = _account(db, "acct-a")
+    acct_b = _account(db, "acct-b")
+    today = scorecard._local_today().isoformat()
+    for i in range(3):
+        _vendor_txn(db, f"a{i}", acct_a["id"], today, -10.0, "Amazon")
+    _vendor_txn(db, "b1", acct_b["id"], today, -10.0, "Amazon")
+
+    rows = money.breakdown_rows(weeks=1, vendor="Amazon",
+                                account_id=acct_a["id"])["rows"]
+    assert len(rows) == 3
+
+    # limit clamps low to 1 (the same 1-200 clamp triage uses)
+    rows = money.breakdown_rows(weeks=1, vendor="Amazon", limit=0)["rows"]
+    assert len(rows) == 1
+
+
+def test_breakdown_rows_excludes_other_flows_for_same_vendor(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "v1", acct["id"], today, -900.0, "Vanguard", flow="investment")
+
+    assert money.breakdown_rows(weeks=1, vendor="Vanguard")["rows"] == []
