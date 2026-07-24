@@ -167,10 +167,11 @@ signal:
 │   ├── routes.py              # Protected API routes (checkins, scorecard, insights,
 │   │                        #   reflection, deliveries, rides, social, spend, targets,
 │   │                        #   settings, bank debug/role/summary/triage/
-│   │                        #   accounts/flow-override)
+│   │                        #   accounts/flow-override/breakdown/breakdown-rows)
 │   ├── scorecard.py            # DB → domain wiring: weekly cards, spend, insights, history
 │   └── money.py               # DB → domain wiring for the Money screen: summary(weeks) +
-│                            #   triage(limit) — the bank equivalent of scorecard.py
+│                            #   triage(limit) + breakdown/breakdown_rows (per-vendor
+│                            #   spend, payee-keyed) — the bank equivalent of scorecard.py
 ├── jobs/
 │   ├── scan_gmail.py          # Every GMAIL_SCAN_INTERVAL_HOURS + once at startup:
 │   │                        #   three-way route — delivery order / ride / neither
