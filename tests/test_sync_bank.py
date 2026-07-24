@@ -10,6 +10,14 @@ import time
 _POSTED = int(time.time()) - 5 * 86400
 
 
+def _seed_account(db, sfid="acct-1"):
+    """Seed a bank account directly (no SimpleFIN payload) and return its db
+    id, for label-pass tests that don't need a full run(). Mirrors
+    tests/test_database_bank.py's _seed_account convention."""
+    db.upsert_bank_account(sfid, "Everyday Checking", "Wells Fargo", "checking")
+    return next(a for a in db.get_bank_accounts() if a["simplefin_id"] == sfid)["id"]
+
+
 def _payload():
     return {
         "accounts": [
@@ -396,3 +404,47 @@ def test_zero_unsuggested_rows_makes_zero_ai_calls(temp_db_path, monkeypatch):
     _configure(monkeypatch)
 
     assert calls == []
+
+
+# ── Label-suggestion pass: same-vendor inheritance, full recompute ─────────────
+
+def test_label_pass_propagates_and_retires(temp_db_path):
+    import database as db
+    from jobs import sync_bank
+    acct_id = _seed_account(db)
+    db.upsert_bank_transaction("r1", acct_id, "2026-07-01", "2026-07-01",
+                               -900.0, "RAW", "Check", "", None)
+    db.set_bank_transaction_derived("r1", "spending", None, False)
+    db.upsert_bank_transaction("r2", acct_id, "2026-07-02", "2026-07-02",
+                               -900.0, "RAW", "Check", "", None)
+    db.set_bank_transaction_derived("r2", "spending", None, False)
+    db.upsert_bank_transaction("x1", acct_id, "2026-07-03", "2026-07-03",
+                               -12.0, "RAW", "Cafe", "", None)
+    db.set_bank_transaction_derived("x1", "spending", None, False)
+    db.set_bank_label("r1", "Monthly Rent")
+
+    sync_bank._suggest_labels()
+    rows = {t["simplefin_id"]: t for t in db.get_all_bank_transactions()}
+    assert rows["r2"]["suggested_label"] == "Monthly Rent"
+    assert rows["x1"]["suggested_label"] is None
+
+    # user clears the label -> next pass retires the suggestion
+    db.set_bank_label("r1", None)
+    sync_bank._suggest_labels()
+    rows = {t["simplefin_id"]: t for t in db.get_all_bank_transactions()}
+    assert rows["r2"]["suggested_label"] is None
+
+
+def test_label_pass_conflict_stays_silent(temp_db_path):
+    import database as db
+    from jobs import sync_bank
+    acct_id = _seed_account(db)
+    for sfid in ("a1", "a2", "a3"):
+        db.upsert_bank_transaction(sfid, acct_id, "2026-07-20", "2026-07-20",
+                                   -10.0, "RAW", "Amazon", "", None)
+        db.set_bank_transaction_derived(sfid, "spending", None, False)
+    db.set_bank_label("a1", "Household")
+    db.set_bank_label("a2", "Gifts")
+    sync_bank._suggest_labels()
+    rows = {t["simplefin_id"]: t for t in db.get_all_bank_transactions()}
+    assert rows["a3"]["suggested_label"] is None

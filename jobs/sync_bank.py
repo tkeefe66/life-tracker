@@ -55,6 +55,18 @@ def _suggest_triage_flows():
             break
 
 
+def _suggest_labels():
+    """Post-reclassify label pass: same-vendor inheritance, recomputed for
+    the WHOLE table every run (pure + deterministic, like the flow
+    reclassify — a retired or changed user label self-heals here). No AI,
+    no network; see bank_flows.label_suggestions for the unanimity rule."""
+    txns = db.get_all_bank_transactions()
+    if not txns:
+        return
+    written = db.set_bank_label_suggestions_bulk(bank_flows.label_suggestions(txns))
+    logger.info("Label suggestion pass: %d rows updated", written)
+
+
 def run(payload=None):
     """Sync from SimpleFIN, or from an already-fetched `payload` (snapshot replay).
 
@@ -151,6 +163,7 @@ def run(payload=None):
         # a genuine sync failure).
         try:
             _suggest_triage_flows()
+            _suggest_labels()
         except Exception:
             logger.exception("Bank suggestion pass failed")
     except SimpleFinError as e:
