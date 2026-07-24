@@ -270,7 +270,7 @@ export default function Money() {
         <>
           <p className="money-hero">{money(summary.spent)}</p>
           <p className="money-hero-sub">spent · last 12 weeks</p>
-          {summary.totals.refund?.amount > 0 && (
+          {(summary.totals.refund?.amount ?? 0) > 0 && (
             <p className="money-hero-sub">after {money(summary.totals.refund.amount)} refunded</p>
           )}
 

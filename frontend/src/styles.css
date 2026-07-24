@@ -30,6 +30,19 @@
   --r: 12px;
   --dur: 160ms;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* One pill primitive for every interactive pill on the Money screen
+     (vendor-chip, vendor-label-btn, vendor-bulk-offer, audit-btn, the
+     triage choice chips, suggest-badge) — same radius, type size, and
+     border weight everywhere. --pill-pad-compact is the one deliberate
+     size exception: pills that sit inline next to text (a label
+     placeholder, an inline suggestion count) rather than standing alone
+     as a tap target. Distinctions that matter (selected vs unselected,
+     primary vs quiet, suggested vs confirmed) are carried by color only. */
+  --pill-pad: 4px 12px;
+  --pill-pad-compact: 1px 8px;
+  --pill-radius: 999px;
+  --pill-fs: 0.8rem;
+  --pill-border: 1px solid var(--line);
   color-scheme: light dark;
 }
 
@@ -429,12 +442,13 @@ button.quiet-btn:active { background: var(--accent-soft); }
    .vendor-chip{,-row,-on} are deliberately distinct from the pre-existing
    .chip/.chip-accent/.chip-over (WeekDays' non-interactive day tags) — those
    are fixed-tone info pills, not a toggleable filter group, and redefining
-   .chip here would change their look everywhere they're used. */
+   .chip here would change their look everywhere they're used. Every pill
+   below draws its shape from the --pill-* primitive (see :root). */
 .vendor-chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
 .vendor-chip {
-  padding: 4px 12px; border-radius: 999px;
-  border: 1px solid var(--line); background: transparent;
-  color: var(--muted); font-size: 0.85rem; cursor: pointer;
+  padding: var(--pill-pad); border-radius: var(--pill-radius);
+  border: var(--pill-border); background: transparent;
+  color: var(--muted); font-size: var(--pill-fs); cursor: pointer;
 }
 .vendor-chip-on { border-color: var(--ink); color: var(--ink); }
 .vendor-row {
@@ -448,20 +462,25 @@ button.quiet-btn:active { background: var(--accent-soft); }
   padding: 2px 0; color: var(--ink-2); font-size: 0.9rem;
 }
 .vendor-drill-right { display: flex; align-items: center; gap: 6px; }
+/* Compact padding (inline, next to a date/note in a dense row) but the same
+   radius, type size, and dashed-border "not yet confirmed" cue throughout. */
 .vendor-label-btn {
-  padding: 1px 8px; border-radius: 999px; border: 1px dashed var(--line);
-  background: none; color: var(--muted); font-size: 0.8rem; cursor: pointer;
+  padding: var(--pill-pad-compact); border-radius: var(--pill-radius); border: 1px dashed var(--line);
+  background: none; color: var(--muted); font-size: var(--pill-fs); cursor: pointer;
 }
 .vendor-label-input {
   font: inherit; font-size: 0.8rem; color: var(--ink);
   background: none; border: 1px solid var(--line); border-radius: 6px;
   padding: 1px 6px; max-width: 10rem;
 }
-.vendor-label-suggested { font-style: italic; color: var(--muted); }
+/* Suggested-label signature: the same accent-soft fill + accent text every
+   "suggested" affordance on Money uses (suggest-badge below, triage's
+   chip-suggested) — no italic, no separate muted treatment, one encoding. */
+.vendor-label-suggested { background: var(--accent-soft); color: var(--accent); }
 .vendor-bulk-offer {
-  display: block; margin: 2px 0 6px 12px; padding: 3px 10px;
-  border: 1px solid var(--line); border-radius: 999px; background: none;
-  color: var(--ink); font-size: 0.8rem; cursor: pointer;
+  display: block; margin: 2px 0 6px 12px; padding: var(--pill-pad);
+  border: var(--pill-border); border-radius: var(--pill-radius); background: none;
+  color: var(--ink); font-size: var(--pill-fs); cursor: pointer;
 }
 
 .spend-total { font-weight: 600; color: var(--ink); }
@@ -939,16 +958,24 @@ details.orders .quiet { margin: 10px 0 0; }
 }
 
 /* The choice buttons reuse .chips button's colors and interaction states —
-   only sizing changes, since that treatment was built for single-digit
-   alcohol-level chips and these carry multi-word labels. */
+   sizing and shape move onto the shared --pill-* primitive, since that base
+   treatment was built for single-digit alcohol-level chips (square, 10px
+   radius) and these carry multi-word labels and need a real pill shape to
+   match every other tappable pill on this screen. The larger padding stays:
+   these are the primary decision affordance in the queue, not a filter
+   toggle, and deserve the bigger touch target. */
 .triage-queue .chips { flex-wrap: wrap; }
-.triage-queue .chips button { width: auto; height: auto; padding: 8px 12px; white-space: nowrap; }
+.triage-queue .chips button {
+  width: auto; height: auto; padding: 8px 12px;
+  border-radius: var(--pill-radius); font-size: var(--pill-fs); white-space: nowrap;
+}
 
-/* The AI-suggested chip (spec §5) — same accent-soft family as .item.done's
-   completion tint, never green/red: this is a hint, not a verdict. */
+/* The AI-suggested chip (spec §5) — same accent-soft + accent-text signature
+   as .suggest-badge and .vendor-label-suggested, never green/red: this is a
+   hint, not a verdict. */
 .triage-queue .chips button.chip-suggested {
   background: var(--accent-soft);
-  border-color: color-mix(in oklch, var(--accent) 35%, var(--line));
+  color: var(--accent);
 }
 
 /* Same settle pulse the Today check-ins use (spec §6.2) — the row itself is
@@ -991,20 +1018,23 @@ details.money-details .trend-caption { margin-top: 10px; }
   padding: 2px 0;
 }
 
-/* ── Label audit section (Suggested labels — needs a look) ── */
+/* ── Label audit section (Suggested labels — needs a look) ──
+   Ground matches .triage-queue's --surface (it was the first of Money's two
+   decision-zone worklists) rather than the --surface-2 this used to sit on —
+   one card ground for both worklists. */
 .audit-card {
-  background: var(--surface-2); border: 1px solid var(--line);
+  background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r); padding: 10px 12px; margin-bottom: 10px;
 }
 .audit-head { display: flex; justify-content: space-between; font-size: 0.9rem; }
 .audit-meta { font-size: 0.78rem; color: var(--muted); margin: 2px 0 8px; }
 .audit-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 .audit-btn {
-  font-size: 0.8rem; padding: 4px 12px; border-radius: 999px;
-  border: 1px solid var(--line); background: none; color: var(--ink); cursor: pointer;
+  font-size: var(--pill-fs); padding: var(--pill-pad); border-radius: var(--pill-radius);
+  border: var(--pill-border); background: none; color: var(--ink); cursor: pointer;
 }
 .audit-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .suggest-badge {
-  font-size: 0.72rem; padding: 1px 8px; border-radius: 999px;
+  font-size: var(--pill-fs); padding: var(--pill-pad-compact); border-radius: var(--pill-radius);
   background: var(--accent-soft); color: var(--accent); margin-left: 8px; white-space: nowrap;
 }
