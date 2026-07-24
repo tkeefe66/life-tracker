@@ -411,6 +411,8 @@ def set_bank_label(body: LabelPatch):
     label = (body.label or "").strip() or None
     if body.payee is not None:
         # Bulk mode: the user tapped an explicit "apply to N more" offer.
+        if not body.payee.strip():
+            raise HTTPException(status_code=400, detail="payee must be non-empty")
         if label is None:
             raise HTTPException(status_code=400, detail="bulk apply needs a label")
         applied = db.set_bank_labels_by_vendor(body.payee, label)

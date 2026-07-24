@@ -161,11 +161,22 @@ def run(payload=None):
         # here must never overwrite the status the sync itself already earned
         # (see the except Exception branch below, which does exactly that for
         # a genuine sync failure).
+        #
+        # The AI triage pass and the deterministic label pass get separate
+        # try/excepts, not one shared block: the triage pass calls out over
+        # the network to Claude and can fail on transient AI/network trouble,
+        # but the label pass is pure local computation with no such failure
+        # mode. Sharing one try/except meant a triage-pass exception would
+        # skip the label pass too, coupling a deterministic pass's success to
+        # the AI pass's network luck for no reason.
         try:
             _suggest_triage_flows()
-            _suggest_labels()
         except Exception:
             logger.exception("Bank suggestion pass failed")
+        try:
+            _suggest_labels()
+        except Exception:
+            logger.exception("Label suggestion pass failed")
     except SimpleFinError as e:
         # Already logged server-side inside the service. `e.status` carries no
         # message text, but `SimpleFinError.__init__` accepts any string — the

@@ -1079,6 +1079,9 @@ def test_bank_label_bulk_applies_to_unlabeled_only(client, temp_db_path):
                     json={"simplefin_id": "a1", "payee": "Amazon", "label": "X"})
     assert r.status_code == 400
 
+    r = client.post("/api/bank/label", json={"payee": "  ", "label": "X"})
+    assert r.status_code == 400
+
 
 @pytest.mark.parametrize("method,path", PROTECTED_ROUTES)
 def test_bank_routes_require_auth(temp_db_path, method, path):

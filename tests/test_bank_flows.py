@@ -829,3 +829,11 @@ def test_label_suggestions_uses_vendor_key_fallback():
         _ltxn("c2", "", description="CHECK 1042"),
     ]
     assert bank_flows.label_suggestions(txns)["c2"] == "Monthly Rent"
+
+
+def test_label_suggestions_no_identity_rows_never_inherit():
+    txns = [
+        _ltxn("e1", "", user_label="Misc", description=""),
+        _ltxn("e2", "", description=""),
+    ]
+    assert bank_flows.label_suggestions(txns)["e2"] is None

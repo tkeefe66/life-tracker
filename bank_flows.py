@@ -94,12 +94,15 @@ def label_suggestions(txns):
     rows inherit its user label only when every user label on that vendor
     agrees — any conflict and the vendor stays silent. Returns a suggestion
     (or None) for EVERY row, so writing the result also retires stale
-    suggestions whose vendor lost its labels."""
+    suggestions whose vendor lost its labels. Rows with no vendor identity
+    (both payee and description empty, vendor_key == "") never inherit —
+    pooling them would propagate one no-identity row's label to every other
+    unrelated no-identity row."""
     labels_by_vendor = {}
     for t in txns:
         if t.get("user_label"):
             labels_by_vendor.setdefault(vendor_key(t), set()).add(t["user_label"])
-    unanimous = {v: next(iter(ls)) for v, ls in labels_by_vendor.items() if len(ls) == 1}
+    unanimous = {v: next(iter(ls)) for v, ls in labels_by_vendor.items() if v and len(ls) == 1}
     return {
         t["simplefin_id"]: (None if t.get("user_label")
                             else unanimous.get(vendor_key(t)))
