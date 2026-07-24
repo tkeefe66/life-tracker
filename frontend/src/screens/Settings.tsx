@@ -29,6 +29,8 @@ interface BankAccount {
   role: string;
   active: boolean;
   last_synced_at: string | null;
+  nickname: string | null;
+  display_name: string;
 }
 
 const BANK_ROLES = ["spending", "bills", "savings", "investment", "credit_card", "unknown"] as const;
@@ -106,6 +108,25 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
     );
     try {
       await apiSend("POST", `/bank/accounts/${simplefinId}/role`, { role });
+    } catch (e) {
+      setBankAccounts(prev);
+      setSaveError((e as Error).message);
+    }
+  };
+
+  const updateNickname = async (simplefinId: string, raw: string) => {
+    setSaveError("");
+    const nickname = raw.trim();
+    const prev = bankAccounts;
+    const current = prev?.find((a) => a.simplefin_id === simplefinId);
+    if (!current || (current.nickname ?? "") === nickname) return;
+    setBankAccounts((accts) =>
+      accts ? accts.map((a) => (a.simplefin_id === simplefinId
+        ? { ...a, nickname: nickname || null, display_name: nickname || a.name }
+        : a)) : accts
+    );
+    try {
+      await apiSend("POST", `/bank/accounts/${simplefinId}/nickname`, { nickname });
     } catch (e) {
       setBankAccounts(prev);
       setSaveError((e as Error).message);
@@ -236,6 +257,15 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
             {bankAccounts.map((a) => (
               <label className="row" key={a.simplefin_id}>
                 <span className="grow">{a.org} — {a.name}</span>
+                <input
+                  type="text"
+                  className="nickname-input"
+                  aria-label="Nickname"
+                  placeholder="Nickname"
+                  defaultValue={a.nickname ?? ""}
+                  onBlur={(e) => updateNickname(a.simplefin_id, e.currentTarget.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                />
                 <select
                   value={a.role}
                   onChange={(e) => updateRole(a.simplefin_id, e.target.value)}

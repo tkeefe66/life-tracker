@@ -474,6 +474,8 @@ button.quiet-btn:active { background: var(--accent-soft); }
   border-radius: 8px;
 }
 
+.nickname-input { max-width: 9rem; }
+
 .row select {
   font: inherit;
   font-size: 0.85rem;
