@@ -25,6 +25,10 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
   const [drill, setDrill] = useState<Record<string, DrillRow[]>>({});
   const [vocab, setVocab] = useState<string[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
+  // Set right before the Escape-triggered setEditing(null) so the input's
+  // onBlur (fired by React unmounting the now-unfocused input) can tell a
+  // deliberate cancel apart from a normal blur-to-save and skip saveLabel.
+  const cancelingRef = useRef(false);
   // Bumped on every accountId/weeks change; fetch closures capture the value
   // at call time and discard their response if it no longer matches, so a
   // stale in-flight lines or drill fetch can never repopulate state after a
@@ -60,8 +64,10 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
     const label = raw.trim() || null;
     setEditing(null);
     if (label === row.user_label) return;
+    const gen = fetchGen.current;
     apiSend("POST", "/bank/label", { simplefin_id: row.simplefin_id, label })
       .then(() => {
+        if (fetchGen.current !== gen) return;
         setDrill((prev) => ({
           ...prev,
           [drillKey]: (prev[drillKey] ?? []).map((r) =>
@@ -153,17 +159,27 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
                         {" · "}{r.account_name}
                         {r.user_note && <span className="triage-note">{r.user_note}</span>}
                       </span>
-                      <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span className="vendor-drill-right">
                         {editing === r.simplefin_id ? (
                           <input
                             className="vendor-label-input"
                             list="vendor-label-vocab"
+                            aria-label="Label"
                             defaultValue={r.user_label ?? ""}
                             autoFocus
-                            onBlur={(e) => saveLabel(l.vendor, r, e.currentTarget.value)}
+                            onBlur={(e) => {
+                              if (cancelingRef.current) {
+                                cancelingRef.current = false;
+                                return;
+                              }
+                              saveLabel(l.vendor, r, e.currentTarget.value);
+                            }}
                             onKeyDown={(e) => {
                               if (e.key === "Enter") e.currentTarget.blur();
-                              if (e.key === "Escape") setEditing(null);
+                              if (e.key === "Escape") {
+                                cancelingRef.current = true;
+                                setEditing(null);
+                              }
                             }}
                           />
                         ) : (

@@ -421,6 +421,7 @@ button.quiet-btn:active { background: var(--accent-soft); }
   display: flex; justify-content: space-between;
   padding: 2px 0; color: var(--ink-2); font-size: 0.9rem;
 }
+.vendor-drill-right { display: flex; align-items: center; gap: 6px; }
 .vendor-label-btn {
   padding: 1px 8px; border-radius: 999px; border: 1px dashed var(--line);
   background: none; color: var(--muted); font-size: 0.8rem; cursor: pointer;
