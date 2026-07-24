@@ -256,3 +256,37 @@ def test_http_client_logging_cannot_publish_the_access_url(logger_name):
         f"{logger_name} has no explicit level above INFO; it will log full "
         "request URLs, including the SimpleFIN credential"
     )
+
+
+def test_normalize_holdings_extracts_and_coerces():
+    from services.simplefin_service import normalize_holdings
+    payload = {"accounts": [
+        {"id": "a1", "name": "ROTH IRA", "org": {"name": "Fidelity"},
+         "balance": "9999.99",
+         "holdings": [
+             {"symbol": "VOO", "description": "Vanguard 500", "shares": "1.5",
+              "cost_basis": "500.00", "market_value": "600.25"},
+             {"symbol": "JUNK", "market_value": "nan"},          # non-finite -> dropped
+             {"symbol": "NOMV", "cost_basis": "10"},              # no market_value -> dropped
+             "not-a-dict",
+         ]},
+        {"id": "a2", "name": "CHECKING", "org": "Wells Fargo", "holdings": []},
+        {"id": "a3", "name": "NOHOLD"},
+    ]}
+    out = normalize_holdings(payload)
+    assert [a["simplefin_id"] for a in out] == ["a1"]      # empty/missing holdings omitted
+    a1 = out[0]
+    assert a1["org"] == "Fidelity"
+    assert a1["holdings"] == [{"symbol": "VOO", "description": "Vanguard 500",
+                               "shares": 1.5, "cost_basis": 500.0, "market_value": 600.25}]
+    assert "balance" not in a1
+
+
+def test_normalize_holdings_tolerates_garbage_payloads():
+    from services.simplefin_service import normalize_holdings
+    assert normalize_holdings(None) == []
+    assert normalize_holdings({"accounts": None}) == []
+    assert normalize_holdings({"accounts": [{"holdings": [{}]}]}) == []  # no account id
+    assert normalize_holdings({"accounts": 5}) == []
+    assert normalize_holdings({"accounts": [{"id": "a1", "holdings": 5}]}) == []
+    assert normalize_holdings({"accounts": [{"id": "a1", "holdings": {"x": 1}}]}) == []

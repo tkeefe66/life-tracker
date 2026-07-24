@@ -730,6 +730,26 @@ def test_set_account_role_404s_for_an_unknown_account(client, temp_db_path):
     assert r.status_code == 404
 
 
+def test_bank_account_nickname_set_clear_and_404(temp_db_path):
+    import database as db
+    client = _client(temp_db_path)
+    db.upsert_bank_account("acct-r1", "EVERYDAY CHECKING ...7395 (7395)", "Wells Fargo", "checking")
+
+    r = client.post("/api/bank/accounts/acct-r1/nickname", json={"nickname": "Checking"})
+    assert r.status_code == 200 and r.json()["nickname"] == "Checking"
+    acct = next(a for a in client.get("/api/bank/accounts").json()
+                if a["simplefin_id"] == "acct-r1")
+    assert acct["display_name"] == "Checking"
+
+    r = client.post("/api/bank/accounts/acct-r1/nickname", json={"nickname": ""})
+    assert r.status_code == 200 and r.json()["nickname"] is None
+
+    assert client.post("/api/bank/accounts/nope/nickname",
+                       json={"nickname": "X"}).status_code == 404
+    assert client.post("/api/bank/accounts/acct-r1/nickname",
+                       json={"nickname": 7}).status_code == 400
+
+
 # ── Bank: summary, triage, flow overrides, accounts (Task 5) ──────────────────
 
 def _bank_account(db, sfid="acct-1", role="spending"):
@@ -990,6 +1010,9 @@ PROTECTED_ROUTES = [
     ("get", "/api/bank/breakdown/rows"),
     ("post", "/api/bank/label"),
     ("get", "/api/bank/label-suggestions"),
+    ("post", "/api/bank/accounts/some-id/role"),
+    ("post", "/api/bank/accounts/some-id/nickname"),
+    ("get", "/api/bank/investments"),
 ]
 
 
@@ -1137,3 +1160,20 @@ def test_bank_label_no_label_form(client, temp_db_path):
     assert r.status_code == 400
     r = client.post("/api/bank/label", json={"simplefin_id": "ghost", "no_label": True})
     assert r.status_code == 404
+
+
+def test_bank_investments_not_configured_and_error_paths(temp_db_path, monkeypatch):
+    from services import simplefin_service
+    from services.simplefin_service import SimpleFinError
+    client = _client(temp_db_path)
+
+    monkeypatch.setattr(simplefin_service, "is_configured", lambda: False)
+    r = client.get("/api/bank/investments")
+    assert r.status_code == 200 and r.json() == {"total": None, "accounts": []}
+
+    monkeypatch.setattr(simplefin_service, "is_configured", lambda: True)
+    def boom(days=None):
+        raise SimpleFinError("error: unreachable")
+    monkeypatch.setattr(simplefin_service, "fetch_accounts", boom)
+    r = client.get("/api/bank/investments")
+    assert r.status_code == 503 and r.json()["detail"] == "error: unreachable"

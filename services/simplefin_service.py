@@ -176,3 +176,63 @@ def normalize(payload):
                 "mcc": str(t.get("mcc")) if t.get("mcc") else None,
             })
     return accounts, txns
+
+
+def _to_float(value):
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def normalize_holdings(payload):
+    """Per-account holdings from a SimpleFIN payload — the live-only
+    investments view's input. Same defensive posture as normalize(): floats
+    coerced (bridges send numerics as strings), non-finite dropped, absent
+    fields tolerated. A holding with no market_value cannot be displayed and
+    is dropped; accounts with no holdings are omitted (every checking/credit
+    account has an empty array). Balances still never cross this boundary."""
+    out = []
+    if not isinstance(payload, dict):
+        return out
+    accounts = payload.get("accounts")
+    if not isinstance(accounts, list):
+        return out
+    for acct in accounts:
+        if not isinstance(acct, dict):
+            continue
+        sfid = acct.get("id")
+        if not sfid:
+            continue
+        holdings_raw = acct.get("holdings")
+        if not isinstance(holdings_raw, list):
+            continue
+        holdings = []
+        for h in holdings_raw:
+            if not isinstance(h, dict):
+                continue
+            mv = _to_float(h.get("market_value"))
+            if mv is None:
+                continue
+            holdings.append({
+                "symbol": h.get("symbol") or "?",
+                "description": h.get("description") or "",
+                "shares": _to_float(h.get("shares")),
+                "cost_basis": _to_float(h.get("cost_basis")),
+                "market_value": mv,
+            })
+        if not holdings:
+            continue
+        org = acct.get("org") or {}
+        if isinstance(org, str):
+            org = {"name": org}
+        elif not isinstance(org, dict):
+            org = {}
+        out.append({
+            "simplefin_id": str(sfid),
+            "name": acct.get("name") or "?",
+            "org": org.get("name") or org.get("domain") or "",
+            "holdings": holdings,
+        })
+    return out

@@ -3,7 +3,7 @@ import { apiGet, apiSend } from "../api";
 import { dayRowDate, flowLabel, money, signedMoney, vendorSplit, type VendorLine } from "../lib";
 
 interface LabelLine { label: string | null; count: number; amount: number; suggested?: number }
-interface AccountRow { id: number; name: string; active: boolean }
+interface AccountRow { id: number; name: string; display_name: string; role: string; active: boolean }
 interface DrillRow {
   simplefin_id: string;
   posted: string;
@@ -28,12 +28,20 @@ interface BulkOffer {
 }
 
 // "Where it went" — bank spending grouped by vendor, filterable by account,
-// with a per-vendor transaction drill-down. Secondary surface: any failed
-// fetch hides the section (lines === null), never the screen.
+// with a per-vendor transaction drill-down. Secondary surface: the section
+// is absent only before the first unfiltered fetch resolves, or when that
+// fetch shows genuinely no bank spending. Once spending data is known to exist,
+// a failed or in-flight per-view (payee/label) fetch keeps the mode/account chips
+// mounted and simply shows nothing where the list would be — it never unmounts
+// the whole section and never falsely claims the window is empty.
 export default function VendorBreakdown({ weeks }: { weeks: number }) {
   const [lines, setLines] = useState<VendorLine[] | null>(null);
   const [mode, setMode] = useState<"payee" | "label">("payee");
   const [labelLines, setLabelLines] = useState<LabelLine[] | null>(null);
+  // Whether the last unfiltered (All accounts) fetch came back empty — the
+  // ONLY signal allowed to hide the whole section. A filtered or per-mode
+  // empty result must keep the chips rendered (there'd be no way to deselect).
+  const [unfilteredEmpty, setUnfilteredEmpty] = useState<boolean | null>(null);
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [accountId, setAccountId] = useState<number | null>(null);
   const [showRest, setShowRest] = useState(false);
@@ -54,7 +62,10 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
 
   useEffect(() => {
     apiGet<AccountRow[]>("/bank/accounts")
-      .then((rows) => setAccounts(rows.filter((a) => a.active)))
+      // investment-role accounts get no chip: by construction (bank_flows
+      // classify_flow rule 1) their rows are never spending/refund, so the
+      // chip could only ever show an empty result.
+      .then((rows) => setAccounts(rows.filter((a) => a.active && a.role !== "investment")))
       .catch(() => setAccounts([]));
   }, []);
 
@@ -73,11 +84,16 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
       .then((d) => {
         if (fetchGen.current !== gen) return;
         setVocab(d.labels ?? []);
+        if (accountId === null) setUnfilteredEmpty(d.lines.length === 0);
         if (mode === "label") setLabelLines(d.lines as LabelLine[]);
         else setLines(d.lines as VendorLine[]);
       })
       .catch(() => {
         if (fetchGen.current !== gen) return;
+        // A failed unfiltered refetch demotes confirmed-empty to unknown —
+        // never the reverse (false must survive, or an established section
+        // would vanish on a transient failure).
+        if (accountId === null) setUnfilteredEmpty((v) => (v === true ? null : v));
         if (mode === "label") setLabelLines(null);
         else setLines(null);
       });
@@ -132,10 +148,18 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
       .catch(() => {});
   };
 
-  if (!lines || lines.length === 0) return null;
+  const view = mode === "payee" ? lines : labelLines;
+  // Nothing known yet (first load in flight, or the initial fetch failed):
+  // no section at all — the original secondary-surface behavior.
+  if (unfilteredEmpty === null && view === null) return null;
+  // Genuinely no bank spending in the window: no section.
+  if (unfilteredEmpty) return null;
 
-  const { top, tail, rest } = vendorSplit(lines);
+  const { top, tail, rest } = vendorSplit(lines ?? []);
   const shown = showRest ? [...top, ...rest] : top;
+  // Current view's data state: null = loading or failed (render the chips,
+  // no list, and NO false empty-state line), [] = a real empty result.
+  const viewEmpty = view !== null && view.length === 0;
 
   // Generic drill toggle shared by both views: `key` is the vendor name in
   // payee mode or "label:"+label in label mode; `fetchQuery` is the
@@ -206,6 +230,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
                     <span>
                       {dayRowDate(r.posted.slice(0, 10)).monthDay}
                       {r.resolved_flow === "refund" && ` · ${flowLabel("refund")}`}
+                      {mode === "label" && ` · ${r.vendor}`}
                       {" · "}{r.account_name}
                       {r.user_note && <span className="triage-note">{r.user_note}</span>}
                     </span>
@@ -300,12 +325,14 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
               className={accountId === a.id ? "vendor-chip vendor-chip-on" : "vendor-chip"}
               onClick={() => setAccountId((prev) => (prev === a.id ? null : a.id))}
             >
-              {a.name}
+              {a.display_name}
             </button>
           ))}
         </div>
       )}
-      {mode === "payee" ? (
+      {view === null ? null : viewEmpty ? (
+        <p className="quiet">No spending in this account over this window.</p>
+      ) : mode === "payee" ? (
         <div className="spend">
           {shown.map((l, i) =>
             renderRow(
@@ -330,19 +357,17 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
           )}
         </div>
       ) : (
-        labelLines && (
-          <div className="spend">
-            {labelLines.map((l, i) => {
-              const displayName = l.label ?? "Unlabeled";
-              const drillKey = "label:" + l.label;
-              const expandable = l.label !== null;
-              const fetchQuery = expandable ? `label=${encodeURIComponent(l.label as string)}` : "";
-              return renderRow(
-                displayName, drillKey, expandable, fetchQuery, l.count, l.amount, i, l.suggested,
-              );
-            })}
-          </div>
-        )
+        <div className="spend">
+          {(labelLines ?? []).map((l, i) => {
+            const displayName = l.label ?? "Unlabeled";
+            const drillKey = "label:" + l.label;
+            const expandable = l.label !== null;
+            const fetchQuery = expandable ? `label=${encodeURIComponent(l.label as string)}` : "";
+            return renderRow(
+              displayName, drillKey, expandable, fetchQuery, l.count, l.amount, i, l.suggested,
+            );
+          })}
+        </div>
       )}
     </>
   );

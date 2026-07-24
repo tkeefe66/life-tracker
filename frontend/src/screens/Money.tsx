@@ -5,6 +5,7 @@ import {
   TRIAGE_CHOICES, type SpendRow, type WeekSpendPoint,
 } from "../lib";
 import BankSpendChart from "../components/BankSpendChart";
+import Investments from "../components/Investments";
 import LabelAudit from "../components/LabelAudit";
 import SpendChart, { type SpendWeekPoint } from "../components/SpendChart";
 import SpendSubtotals from "../components/SpendSubtotals";
@@ -461,6 +462,8 @@ export default function Money() {
           <LabelAudit onTotal={setLabelAuditTotal} />
         </details>
       )}
+
+      {bankSectionsVisible && <Investments />}
 
       {coverage && <p className="footnote">{coverage}</p>}
     </div>

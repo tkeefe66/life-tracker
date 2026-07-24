@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   dayChips, dayLabel, dayRowDate, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel, type Day,
   TRIAGE_CHOICES, flowLabel, suggestionHint, coverageNote, weekCaption, trackedShareSentence,
-  signedMoney, vendorSplit, type VendorLine,
+  signedMoney, signedPct, vendorSplit, type VendorLine,
 } from "./lib";
 
 describe("weekLabel", () => {
@@ -425,6 +425,15 @@ describe("signedMoney", () => {
 
   it("formats a negative amount with a U+2212 minus before the $, not money()'s $-", () => {
     expect(signedMoney(-12.5)).toBe("−$12.50");
+  });
+});
+
+describe("signedPct", () => {
+  it("formats gains with + and losses with U+2212", () => {
+    expect(signedPct(25)).toBe("+25%");
+    expect(signedPct(3.6)).toBe("+3.6%");
+    expect(signedPct(-5)).toBe("−5%");
+    expect(signedPct(0)).toBe("+0%");
   });
 });
 

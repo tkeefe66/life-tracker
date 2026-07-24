@@ -111,6 +111,14 @@ export function signedMoney(amount: number): string {
   return amount < 0 ? `−${money(Math.abs(amount))}` : money(amount);
 }
 
+/** Signed percent for investment gains: `+3.6%`, `−5%` — U+2212 for losses
+ * (matching signedMoney), one decimal with a trailing `.0` trimmed. Callers
+ * null-check first: a missing cost basis shows nothing, never `+0%`. */
+export function signedPct(pct: number): string {
+  const s = Math.abs(pct).toFixed(1).replace(/\.0$/, "");
+  return pct < 0 ? `−${s}%` : `+${s}%`;
+}
+
 /**
  * Button -> `user_flow` mapping for the triage worklist (spec §6.1). The user
  * never sees the word "flow" or any of its six values — these are the plain-

@@ -13,6 +13,7 @@ from app import money
 from app.auth import COOKIE_NAME, logout as auth_logout, require_auth
 from app.scorecard import _local_today, history, insights, scorecard_for_week, spend, today_snapshot, week_days
 from services import google_auth
+from services.simplefin_service import SimpleFinError
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
@@ -315,6 +316,20 @@ def set_bank_account_role(simplefin_id: str, body: dict):
     return {"ok": True, "simplefin_id": simplefin_id, "role": role}
 
 
+@router.post("/bank/accounts/{simplefin_id}/nickname")
+def set_bank_account_nickname(simplefin_id: str, body: dict):
+    """Set or clear an account's display nickname. Empty string clears back to
+    the bank's own name. Unlike roles, takes effect immediately — resolution
+    is COALESCE in SQL, no sync involved."""
+    nickname = (body or {}).get("nickname")
+    if nickname is not None and not isinstance(nickname, str):
+        raise HTTPException(status_code=400, detail="nickname must be a string")
+    if not db.set_bank_account_nickname(simplefin_id, nickname):
+        raise HTTPException(status_code=404, detail="unknown account")
+    return {"ok": True, "simplefin_id": simplefin_id,
+            "nickname": (nickname or "").strip() or None}
+
+
 @router.get("/bank/summary")
 def get_bank_summary(weeks: int = 12):
     return money.summary(weeks)
@@ -347,6 +362,17 @@ def get_bank_triage(limit: int = 50):
 @router.get("/bank/label-suggestions")
 def get_bank_label_suggestions(limit: int = 50):
     return money.label_suggestions(limit)
+
+
+@router.get("/bank/investments")
+def get_bank_investments():
+    """Live holdings — never persisted. The 503 detail is the closed-set
+    status string and nothing else (redaction boundary: no exception text
+    crosses; the service already logged the real detail server-side)."""
+    try:
+        return money.investments()
+    except SimpleFinError as e:
+        raise HTTPException(status_code=503, detail=e.status)
 
 
 MAX_BULK_FLOW_IDS = 200
