@@ -287,3 +287,6 @@ def test_normalize_holdings_tolerates_garbage_payloads():
     assert normalize_holdings(None) == []
     assert normalize_holdings({"accounts": None}) == []
     assert normalize_holdings({"accounts": [{"holdings": [{}]}]}) == []  # no account id
+    assert normalize_holdings({"accounts": 5}) == []
+    assert normalize_holdings({"accounts": [{"id": "a1", "holdings": 5}]}) == []
+    assert normalize_holdings({"accounts": [{"id": "a1", "holdings": {"x": 1}}]}) == []

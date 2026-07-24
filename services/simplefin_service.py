@@ -196,14 +196,20 @@ def normalize_holdings(payload):
     out = []
     if not isinstance(payload, dict):
         return out
-    for acct in payload.get("accounts", []) or []:
+    accounts = payload.get("accounts")
+    if not isinstance(accounts, list):
+        return out
+    for acct in accounts:
         if not isinstance(acct, dict):
             continue
         sfid = acct.get("id")
         if not sfid:
             continue
+        holdings_raw = acct.get("holdings")
+        if not isinstance(holdings_raw, list):
+            continue
         holdings = []
-        for h in acct.get("holdings", []) or []:
+        for h in holdings_raw:
             if not isinstance(h, dict):
                 continue
             mv = _to_float(h.get("market_value"))
