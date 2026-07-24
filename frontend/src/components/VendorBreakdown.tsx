@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { apiGet } from "../api";
+import { apiGet, apiSend } from "../api";
 import { dayRowDate, flowLabel, money, signedMoney, vendorSplit, type VendorLine } from "../lib";
 
 interface AccountRow { id: number; name: string; active: boolean }
@@ -10,6 +10,7 @@ interface DrillRow {
   account_name: string;
   resolved_flow: string;
   user_note: string | null;
+  user_label: string | null;
 }
 
 // "Where it went" — bank spending grouped by vendor, filterable by account,
@@ -22,6 +23,8 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
   const [showRest, setShowRest] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [drill, setDrill] = useState<Record<string, DrillRow[]>>({});
+  const [vocab, setVocab] = useState<string[]>([]);
+  const [editing, setEditing] = useState<string | null>(null);
   // Bumped on every accountId/weeks change; fetch closures capture the value
   // at call time and discard their response if it no longer matches, so a
   // stale in-flight lines or drill fetch can never repopulate state after a
@@ -41,16 +44,35 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
     setShowRest(false);
     fetchGen.current += 1;
     const gen = fetchGen.current;
-    apiGet<{ lines: VendorLine[] }>(`/bank/breakdown?weeks=${weeks}${acct}`)
+    apiGet<{ lines: VendorLine[]; labels: string[] }>(`/bank/breakdown?weeks=${weeks}${acct}`)
       .then((d) => {
         if (fetchGen.current !== gen) return;
         setLines(d.lines);
+        setVocab(d.labels ?? []);
       })
       .catch(() => {
         if (fetchGen.current !== gen) return;
         setLines(null);
       });
   }, [weeks, accountId]);
+
+  const saveLabel = (drillKey: string, row: DrillRow, raw: string) => {
+    const label = raw.trim() || null;
+    setEditing(null);
+    if (label === row.user_label) return;
+    apiSend("POST", "/bank/label", { simplefin_id: row.simplefin_id, label })
+      .then(() => {
+        setDrill((prev) => ({
+          ...prev,
+          [drillKey]: (prev[drillKey] ?? []).map((r) =>
+            r.simplefin_id === row.simplefin_id ? { ...r, user_label: label } : r),
+        }));
+        if (label && !vocab.includes(label)) {
+          setVocab((v) => [...v, label].sort());
+        }
+      })
+      .catch(() => {});
+  };
 
   if (!lines || lines.length === 0) return null;
 
@@ -80,6 +102,9 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
   return (
     <>
       <p className="section-label">Where it went</p>
+      <datalist id="vendor-label-vocab">
+        {vocab.map((l) => <option key={l} value={l} />)}
+      </datalist>
       {accounts.length > 1 && (
         <div className="vendor-chip-row">
           <button
@@ -128,7 +153,30 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
                         {" · "}{r.account_name}
                         {r.user_note && <span className="triage-note">{r.user_note}</span>}
                       </span>
-                      <span className="num">{money(Math.abs(r.amount))}</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        {editing === r.simplefin_id ? (
+                          <input
+                            className="vendor-label-input"
+                            list="vendor-label-vocab"
+                            defaultValue={r.user_label ?? ""}
+                            autoFocus
+                            onBlur={(e) => saveLabel(l.vendor, r, e.currentTarget.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                              if (e.key === "Escape") setEditing(null);
+                            }}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            className="vendor-label-btn"
+                            onClick={() => setEditing(r.simplefin_id)}
+                          >
+                            {r.user_label ?? "＋ label"}
+                          </button>
+                        )}
+                        <span className="num">{money(Math.abs(r.amount))}</span>
+                      </span>
                     </div>
                   ))}
                 </div>

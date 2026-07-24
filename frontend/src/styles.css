@@ -421,6 +421,15 @@ button.quiet-btn:active { background: var(--accent-soft); }
   display: flex; justify-content: space-between;
   padding: 2px 0; color: var(--ink-2); font-size: 0.9rem;
 }
+.vendor-label-btn {
+  padding: 1px 8px; border-radius: 999px; border: 1px dashed var(--line);
+  background: none; color: var(--muted); font-size: 0.8rem; cursor: pointer;
+}
+.vendor-label-input {
+  font: inherit; font-size: 0.8rem; color: var(--ink);
+  background: none; border: 1px solid var(--line); border-radius: 6px;
+  padding: 1px 6px; max-width: 10rem;
+}
 
 .spend-total { font-weight: 600; color: var(--ink); }
 
