@@ -209,13 +209,20 @@ def breakdown(weeks: int, account_id=None, by: str = "payee") -> dict:
             g = groups.setdefault(key(t), {"count": 0, "raw": 0.0})
             g["count"] += 1
             g["raw"] += -t["amount"]
+            if by == "label" and t["user_label"] is None and t["resolved_label"] is not None:
+                g["suggested"] = g.get("suggested", 0) + 1
         elif t["resolved_flow"] == "refund" and t["amount"] > 0:
             g = groups.setdefault(key(t), {"count": 0, "raw": 0.0})
             g["raw"] -= t["amount"]
 
     field = "vendor" if by == "payee" else "label"
-    lines = [{field: k, "count": g["count"], "amount": round(g["raw"], 2)}
-             for k, g in groups.items()]
+    if by == "payee":
+        lines = [{field: k, "count": g["count"], "amount": round(g["raw"], 2)}
+                 for k, g in groups.items()]
+    else:
+        lines = [{field: k, "count": g["count"], "amount": round(g["raw"], 2),
+                  "suggested": g.get("suggested", 0)}
+                 for k, g in groups.items()]
     if by == "payee":
         lines.sort(key=lambda l: (-l["amount"], l["vendor"]))
     else:
@@ -225,6 +232,26 @@ def breakdown(weeks: int, account_id=None, by: str = "payee") -> dict:
                          key=lambda l: (-l["amount"], l["label"]))
         lines = labeled + [l for l in lines if l["label"] is None]
     return {"lines": lines, "labels": db.get_bank_label_vocabulary()}
+
+
+def label_suggestions(limit: int = 50) -> dict:
+    """The audit list: rows carrying an unconfirmed suggestion (no user
+    verdict either way), newest first, capped like triage. `total` is
+    table-wide so the UI can say "N more"."""
+    limit = _clamp_triage_limit(limit)
+    rows = db.get_bank_label_suggestion_rows(limit)
+    return {
+        "rows": [{
+            "simplefin_id": t["simplefin_id"],
+            "posted": t["posted"],
+            "amount": t["amount"],
+            "vendor": _vendor_key(t),
+            "account_name": t["account_name"],
+            "suggested_label": t["suggested_label"],
+            "description": t["description"],
+        } for t in rows],
+        "total": db.count_bank_label_suggestions(),
+    }
 
 
 def breakdown_rows(weeks: int, vendor: str = None, label: str = None,

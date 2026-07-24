@@ -793,9 +793,9 @@ def test_breakdown_by_label_groups_with_unlabeled_bucket_last(temp_db_path):
 
     result = money.breakdown(weeks=1, by="label")
     assert result["lines"] == [
-        {"label": "Monthly Rent", "count": 1, "amount": 2000.0},
-        {"label": "Groceries", "count": 2, "amount": 100.0},
-        {"label": None, "count": 1, "amount": 15.0},
+        {"label": "Monthly Rent", "count": 1, "amount": 2000.0, "suggested": 0},
+        {"label": "Groceries", "count": 2, "amount": 100.0, "suggested": 0},
+        {"label": None, "count": 1, "amount": 15.0, "suggested": 0},
     ]
     assert result["labels"] == ["Groceries", "Monthly Rent"]
 
@@ -865,7 +865,7 @@ def test_breakdown_by_label_includes_suggestions_via_resolved(temp_db_path):
     db.set_bank_label_suggestions_bulk({"r2": "Monthly Rent"})
 
     lines = money.breakdown(weeks=1, by="label")["lines"]
-    assert lines[0] == {"label": "Monthly Rent", "count": 2, "amount": 4000.0}
+    assert lines[0] == {"label": "Monthly Rent", "count": 2, "amount": 4000.0, "suggested": 1}
 
 
 def test_breakdown_rows_label_filter_matches_resolved_and_carries_vendor(temp_db_path):
@@ -883,3 +883,49 @@ def test_breakdown_rows_label_filter_matches_resolved_and_carries_vendor(temp_db
     assert rows[0]["suggested_label"] == "Monthly Rent"
     assert rows[0]["user_label"] is None
     assert rows[0]["vendor"] == "Check"
+
+
+# ── Label audit list + suggested badges ────────────────────────────────────────
+
+def test_label_suggestions_list_shape_and_total(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "r1", acct["id"], today, -25.0, "Amex")
+    db.set_bank_label_suggestions_bulk({"r1": "Amex Benefit"})
+
+    result = money.label_suggestions(limit=10)
+    assert result["total"] == 1
+    row = result["rows"][0]
+    assert row == {
+        "simplefin_id": "r1", "posted": today, "amount": -25.0,
+        "vendor": "Amex", "account_name": row["account_name"],
+        "suggested_label": "Amex Benefit", "description": "RAW DESC",
+    }
+
+
+def test_breakdown_label_lines_carry_suggested_counts(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "u1", acct["id"], today, -10.0, "Check")
+    db.set_bank_label("u1", "Rent")
+    _vendor_txn(db, "u2", acct["id"], today, -10.0, "Check")
+    db.set_bank_label_suggestions_bulk({"u2": "Rent"})
+    _vendor_txn(db, "x1", acct["id"], today, -5.0, "Cafe")
+
+    lines = money.breakdown(weeks=1, by="label")["lines"]
+    rent = next(l for l in lines if l["label"] == "Rent")
+    unlabeled = next(l for l in lines if l["label"] is None)
+    assert rent["count"] == 2 and rent["suggested"] == 1
+    assert unlabeled["suggested"] == 0
+
+    # vendor mode: no `suggested` key at all
+    vlines = money.breakdown(weeks=1)["lines"]
+    assert all("suggested" not in l for l in vlines)
