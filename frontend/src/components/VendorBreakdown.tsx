@@ -30,10 +30,10 @@ interface BulkOffer {
 // "Where it went" — bank spending grouped by vendor, filterable by account,
 // with a per-vendor transaction drill-down. Secondary surface: the section
 // is absent only before the first unfiltered fetch resolves, or when that
-// fetch shows genuinely no bank spending. A failed or in-flight per-view
-// (payee/label) fetch keeps the mode/account chips mounted and simply shows
-// nothing where the list would be — it never unmounts the whole section and
-// never falsely claims the window is empty.
+// fetch shows genuinely no bank spending. Once spending data is known to exist,
+// a failed or in-flight per-view (payee/label) fetch keeps the mode/account chips
+// mounted and simply shows nothing where the list would be — it never unmounts
+// the whole section and never falsely claims the window is empty.
 export default function VendorBreakdown({ weeks }: { weeks: number }) {
   const [lines, setLines] = useState<VendorLine[] | null>(null);
   const [mode, setMode] = useState<"payee" | "label">("payee");
@@ -90,6 +90,10 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
       })
       .catch(() => {
         if (fetchGen.current !== gen) return;
+        // A failed unfiltered refetch demotes confirmed-empty to unknown —
+        // never the reverse (false must survive, or an established section
+        // would vanish on a transient failure).
+        if (accountId === null) setUnfilteredEmpty((v) => (v === true ? null : v));
         if (mode === "label") setLabelLines(null);
         else setLines(null);
       });
