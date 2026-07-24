@@ -192,6 +192,7 @@ def breakdown(weeks: int, account_id=None, by: str = "payee") -> dict:
     descending amount then alphabetically. When by="label", lines use the
     "label" key (with null for unlabeled) and labeled lines sort by descending
     amount then alphabetically, with the Unlabeled (None) bucket always last.
+    Label mode resolves suggested labels (COALESCE: user label wins via SQL).
 
     Both modes include the "labels" key: the sorted vocabulary of all user-set
     labels in the database."""
@@ -201,7 +202,7 @@ def breakdown(weeks: int, account_id=None, by: str = "payee") -> dict:
     if account_id is not None:
         txns = [t for t in txns if t["account_id"] == account_id]
 
-    key = _vendor_key if by == "payee" else (lambda t: t["user_label"])
+    key = _vendor_key if by == "payee" else (lambda t: t["resolved_label"])
     groups: dict = {}
     for t in txns:
         if t["resolved_flow"] == "spending" and t["amount"] < 0:
@@ -232,7 +233,8 @@ def breakdown_rows(weeks: int, vendor: str = None, label: str = None,
     contributing rows (spending negative side + refund positive side) in the
     same window, newest first, capped at `limit` (clamped 1-200 like triage).
     Exactly one of vendor or label is given by the caller (the route enforces).
-    Rows include the user's label for each transaction."""
+    Rows include the user's label for each transaction, plus suggested_label
+    and vendor key for all transactions."""
     weeks = _clamp_weeks(weeks)
     limit = _clamp_triage_limit(limit)
     start, end = _window(weeks)
@@ -240,7 +242,7 @@ def breakdown_rows(weeks: int, vendor: str = None, label: str = None,
     if vendor is not None:
         matches = lambda t: _vendor_key(t) == vendor
     else:
-        matches = lambda t: t["user_label"] == label
+        matches = lambda t: t["resolved_label"] == label
     rows = [
         t for t in txns
         if matches(t)
@@ -257,6 +259,8 @@ def breakdown_rows(weeks: int, vendor: str = None, label: str = None,
         "resolved_flow": t["resolved_flow"],
         "user_note": t["user_note"],
         "user_label": t["user_label"],
+        "suggested_label": t["suggested_label"],
+        "vendor": _vendor_key(t),
     } for t in rows[:limit]]}
 
 

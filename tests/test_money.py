@@ -737,7 +737,8 @@ def test_breakdown_rows_returns_vendor_rows_newest_first(temp_db_path):
     assert [r["simplefin_id"] for r in rows] == ["a3", "a2", "a1"]
     assert rows[0]["resolved_flow"] == "refund"
     assert set(rows[0]) == {"simplefin_id", "posted", "amount", "account_name",
-                            "resolved_flow", "user_note", "user_label"}
+                            "resolved_flow", "user_note", "user_label",
+                            "suggested_label", "vendor"}
 
 
 def test_breakdown_rows_respects_account_filter_and_limit_clamp(temp_db_path):
@@ -847,3 +848,38 @@ def test_breakdown_rows_by_label(temp_db_path):
     rows = money.breakdown_rows(weeks=1, label="Household")["rows"]
     assert sorted(r["simplefin_id"] for r in rows) == ["a1", "k1"]
     assert all(r["user_label"] == "Household" for r in rows)
+
+
+# ── Phase 3: suggestions resolve into the label view, user label wins ──────────
+
+def test_breakdown_by_label_includes_suggestions_via_resolved(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "r1", acct["id"], today, -2000.0, "Check")
+    _vendor_txn(db, "r2", acct["id"], today, -2000.0, "Check")
+    db.set_bank_label("r1", "Monthly Rent")
+    db.set_bank_label_suggestions_bulk({"r2": "Monthly Rent"})
+
+    lines = money.breakdown(weeks=1, by="label")["lines"]
+    assert lines[0] == {"label": "Monthly Rent", "count": 2, "amount": 4000.0}
+
+
+def test_breakdown_rows_label_filter_matches_resolved_and_carries_vendor(temp_db_path):
+    import database as db
+    from app import scorecard
+    import app.money as money
+
+    acct = _account(db)
+    today = scorecard._local_today().isoformat()
+    _vendor_txn(db, "r2", acct["id"], today, -2000.0, "Check")
+    db.set_bank_label_suggestions_bulk({"r2": "Monthly Rent"})
+
+    rows = money.breakdown_rows(weeks=1, label="Monthly Rent")["rows"]
+    assert [r["simplefin_id"] for r in rows] == ["r2"]
+    assert rows[0]["suggested_label"] == "Monthly Rent"
+    assert rows[0]["user_label"] is None
+    assert rows[0]["vendor"] == "Check"
