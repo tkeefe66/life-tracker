@@ -606,6 +606,7 @@ def _init_v2_tables():
                 suggested_flow TEXT,
                 user_label TEXT,
                 suggested_label TEXT,
+                user_no_label {bool_t} NOT NULL DEFAULT FALSE,
                 detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -677,6 +678,18 @@ def _init_v2_tables():
             cols = [r["name"] for r in c.execute("PRAGMA table_info(bank_transactions)").fetchall()]
             if "suggested_label" not in cols:
                 c.execute("ALTER TABLE bank_transactions ADD COLUMN suggested_label TEXT")
+
+        # user_no_label: the user's durable "this row gets no label" verdict.
+        # A USER column — the sync and suggestion pass never write it; without
+        # it a rejected suggestion would come back on the next full recompute.
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS "
+                      "user_no_label BOOLEAN NOT NULL DEFAULT FALSE")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(bank_transactions)").fetchall()]
+            if "user_no_label" not in cols:
+                c.execute("ALTER TABLE bank_transactions ADD COLUMN "
+                          "user_no_label INTEGER NOT NULL DEFAULT 0")
 
 
 # ── Check-ins ─────────────────────────────────────────────────────────────────
@@ -1252,13 +1265,27 @@ def set_bank_flow_override(simplefin_id, user_flow, note=_NOTE_UNSET):
 
 
 def set_bank_label(simplefin_id, label):
-    """User label on one transaction. None clears. Returns True iff a row was
-    updated, so the route can turn an unknown id into a 404. A user column —
-    the sync never touches it."""
+    """User label on one transaction. None clears. Always resets
+    user_no_label — a label verdict and a no-label verdict are mutually
+    exclusive answers to the same question. Returns True iff a row updated."""
     p = _p()
     with _cursor(write=True) as c:
-        c.execute(f"UPDATE bank_transactions SET user_label = {p} WHERE simplefin_id = {p}",
-                  (label, simplefin_id))
+        c.execute(f"UPDATE bank_transactions SET user_label = {p}, user_no_label = {p} "
+                  f"WHERE simplefin_id = {p}",
+                  (label, False, simplefin_id))
+        return c.rowcount > 0
+
+
+def set_bank_no_label(simplefin_id):
+    """The user's durable rejection: this row gets no label. Clears any
+    user_label (mutual exclusivity) and survives the sync's full suggestion
+    recompute — bank_flows.label_suggestions returns None for flagged rows.
+    Returns True iff a row updated."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE bank_transactions SET user_no_label = {p}, user_label = NULL "
+                  f"WHERE simplefin_id = {p}",
+                  (True, simplefin_id))
         return c.rowcount > 0
 
 
@@ -1304,7 +1331,7 @@ def set_bank_labels_by_vendor(vendor, label):
     p = _p()
     with _cursor(write=True) as c:
         c.execute(f"UPDATE bank_transactions SET user_label = {p} "
-                  f"WHERE {_VENDOR_KEY_SQL} = {p} AND user_label IS NULL",
+                  f"WHERE {_VENDOR_KEY_SQL} = {p} AND user_label IS NULL AND NOT user_no_label",
                   (label, vendor))
         return c.rowcount
 
@@ -1313,7 +1340,7 @@ def count_bank_unlabeled_by_vendor(vendor):
     p = _p()
     with _cursor() as c:
         c.execute(f"SELECT COUNT(*) AS n FROM bank_transactions "
-                  f"WHERE {_VENDOR_KEY_SQL} = {p} AND user_label IS NULL",
+                  f"WHERE {_VENDOR_KEY_SQL} = {p} AND user_label IS NULL AND NOT user_no_label",
                   (vendor,))
         return c.fetchone()["n"]
 
@@ -1474,23 +1501,45 @@ def set_bank_suggestions_bulk(mapping):
     return updated
 
 
+_LABEL_SUGGESTION_WHERE = ("t.suggested_label IS NOT NULL AND t.user_label IS NULL "
+                           "AND NOT t.user_no_label")
+
+
+def get_bank_label_suggestion_rows(limit):
+    p = _p()
+    with _cursor() as c:
+        c.execute(f"{_BANK_TXN_SELECT} WHERE {_LABEL_SUGGESTION_WHERE} "
+                  f"ORDER BY t.posted DESC, t.simplefin_id DESC LIMIT {p}", (limit,))
+        return _bank_txn_rows(c.fetchall())
+
+
+def count_bank_label_suggestions():
+    with _cursor() as c:
+        c.execute("SELECT COUNT(*) AS n FROM bank_transactions t "
+                  f"WHERE {_LABEL_SUGGESTION_WHERE}")
+        return c.fetchone()["n"]
+
+
 _BANK_TXN_SELECT = """
     SELECT t.id, t.simplefin_id, t.account_id, t.posted, t.transacted_at, t.amount,
            t.description, t.payee, t.memo, t.mcc, t.flow, t.user_flow, t.pair_id,
            t.ambiguous, t.user_note, t.suggested_flow, t.user_label, t.suggested_label,
+           t.user_no_label,
            a.role AS account_role, a.name AS account_name,
            COALESCE(t.user_flow, t.flow) AS resolved_flow,
-           COALESCE(t.user_label, t.suggested_label) AS resolved_label
+           CASE WHEN t.user_no_label THEN NULL
+                ELSE COALESCE(t.user_label, t.suggested_label) END AS resolved_label
     FROM bank_transactions t JOIN bank_accounts a ON a.id = t.account_id
 """
 
 
 def _bank_txn_rows(rows):
-    """Cast `ambiguous` to a real bool — SQLite returns 0/1 ints, which would
-    otherwise leak into the API as non-bool JSON (same reason as _ride_bool_rows)."""
+    """Cast `ambiguous` and `user_no_label` to real bools — SQLite returns 0/1 ints,
+    which would otherwise leak into the API as non-bool JSON (same reason as _ride_bool_rows)."""
     out = [dict(r) for r in rows]
     for r in out:
         r["ambiguous"] = bool(r["ambiguous"])
+        r["user_no_label"] = bool(r["user_no_label"])
     return out
 
 

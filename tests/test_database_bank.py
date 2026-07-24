@@ -659,3 +659,66 @@ def test_get_bank_transaction_vendor(temp_db_path):
     _seed_txn(db, "t1", acct_id, "2026-07-20", -50.0)   # payee "" → description
     assert db.get_bank_transaction_vendor("t1") is not None
     assert db.get_bank_transaction_vendor("ghost") is None
+
+
+# ── user_no_label: durable rejection ───────────────────────────────────────────
+
+def test_no_label_nulls_resolution_and_excludes_from_audit(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    _seed_txn(db, "t1", acct_id, "2026-07-20", -50.0)
+    db.set_bank_label_suggestions_bulk({"t1": "Groceries"})
+
+    row = next(t for t in db.get_all_bank_transactions() if t["simplefin_id"] == "t1")
+    assert row["resolved_label"] == "Groceries"
+    assert db.count_bank_label_suggestions() == 1
+
+    assert db.set_bank_no_label("t1") is True
+    row = next(t for t in db.get_all_bank_transactions() if t["simplefin_id"] == "t1")
+    assert row["user_no_label"] is True
+    assert row["resolved_label"] is None          # instantly Unlabeled, even
+    assert row["suggested_label"] == "Groceries"  # though the suggestion lingers
+    assert db.count_bank_label_suggestions() == 0
+    assert db.get_bank_label_suggestion_rows(10) == []
+
+    assert db.set_bank_no_label("ghost") is False
+
+
+def test_setting_a_label_clears_no_label_flag(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    _seed_txn(db, "t1", acct_id, "2026-07-20", -50.0)
+    db.set_bank_no_label("t1")
+
+    db.set_bank_label("t1", "Household")
+    row = next(t for t in db.get_all_bank_transactions() if t["simplefin_id"] == "t1")
+    assert row["user_no_label"] is False
+    assert row["resolved_label"] == "Household"
+
+
+def test_vendor_bulk_and_count_skip_rejected_rows(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    for sfid in ("a1", "a2", "a3"):
+        db.upsert_bank_transaction(sfid, acct_id, "2026-07-20", "2026-07-20",
+                                   -10.0, "RAW", "Amazon", "", None)
+        db.set_bank_transaction_derived(sfid, "spending", None, False)
+    db.set_bank_no_label("a1")
+
+    assert db.count_bank_unlabeled_by_vendor("Amazon") == 2
+    assert db.set_bank_labels_by_vendor("Amazon", "Household") == 2
+    rows = {t["simplefin_id"]: t for t in db.get_all_bank_transactions()}
+    assert rows["a1"]["user_label"] is None
+    assert rows["a1"]["user_no_label"] is True
+
+
+def test_label_suggestion_rows_newest_first_and_capped(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    for i, day in enumerate(("2026-07-18", "2026-07-19", "2026-07-20")):
+        _seed_txn(db, f"s{i}", acct_id, day, -10.0)
+    db.set_bank_label_suggestions_bulk({"s0": "X", "s1": "X", "s2": "X"})
+
+    rows = db.get_bank_label_suggestion_rows(2)
+    assert [r["simplefin_id"] for r in rows] == ["s2", "s1"]
+    assert db.count_bank_label_suggestions() == 3
