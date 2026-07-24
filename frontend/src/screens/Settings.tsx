@@ -257,12 +257,14 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
             {bankAccounts.map((a) => (
               <label className="row" key={a.simplefin_id}>
                 <span className="grow">{a.org} — {a.name}</span>
+                {/* keyed to the saved value: a failed save's rollback must remount the input, or it shows stale text and re-POSTs on next blur */}
                 <input
                   type="text"
                   className="nickname-input"
                   aria-label="Nickname"
                   placeholder="Nickname"
                   defaultValue={a.nickname ?? ""}
+                  key={`${a.simplefin_id}:${a.nickname ?? ""}`}
                   onBlur={(e) => updateNickname(a.simplefin_id, e.currentTarget.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                 />
