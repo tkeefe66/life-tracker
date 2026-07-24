@@ -291,7 +291,7 @@ def _decorate_bucket(rows: list) -> list:
             "amount": t["amount"],
             "payee": t["payee"],
             "description": t["description"],
-            "label": t["payee"] or t["description"],
+            "label": bank_flows.vendor_key(t),
             "account_name": t["account_name"],
             "resolved_flow": t["resolved_flow"],
             "user_flow": t["user_flow"],

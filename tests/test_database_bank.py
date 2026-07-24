@@ -577,6 +577,19 @@ def test_label_vocabulary_distinct_most_used_first(temp_db_path):
     assert db.get_bank_label_vocabulary() == ["Groceries", "Monthly Rent"]
 
 
+def test_label_vocabulary_tiebreak_is_case_insensitive(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    _seed_txn(db, "a1", acct_id, "2026-07-20", -10.0)
+    db.set_bank_label("a1", "apple")
+    _seed_txn(db, "b1", acct_id, "2026-07-20", -10.0)
+    db.set_bank_label("b1", "Banana")
+
+    # same count (1 each) — tiebreak must be case-insensitive alphabetical,
+    # not "apple" < "Banana" < ... by raw byte order
+    assert db.get_bank_label_vocabulary() == ["apple", "Banana"]
+
+
 # ── suggested_label: derived write, resolution, vendor bulk ────────────────────
 
 def test_label_suggestions_bulk_write_and_resolved_label(temp_db_path):
@@ -586,8 +599,10 @@ def test_label_suggestions_bulk_write_and_resolved_label(temp_db_path):
     _seed_txn(db, "t2", acct_id, "2026-07-20", -60.0)
     db.set_bank_label("t2", "Groceries")
 
+    # t1's suggested_label starts NULL -> "Groceries" is a real change.
+    # t2's suggested_label is already NULL -> writing None again is a no-op.
     written = db.set_bank_label_suggestions_bulk({"t1": "Groceries", "t2": None, "ghost": "X"})
-    assert written == 2                     # unknown id skipped, not an error
+    assert written == 1                     # unknown id skipped; t2 unchanged, not rewritten
 
     rows = {t["simplefin_id"]: t for t in db.get_all_bank_transactions()}
     assert rows["t1"]["suggested_label"] == "Groceries"
@@ -595,6 +610,10 @@ def test_label_suggestions_bulk_write_and_resolved_label(temp_db_path):
     assert rows["t1"]["resolved_label"] == "Groceries"     # suggestion shows
     assert rows["t2"]["resolved_label"] == "Groceries"     # user label wins
     assert rows["t2"]["suggested_label"] is None
+
+    # repeat identical bulk write -> nothing actually changed, 0 rows touched
+    written_again = db.set_bank_label_suggestions_bulk({"t1": "Groceries", "t2": None, "ghost": "X"})
+    assert written_again == 0
 
 
 def test_user_label_beats_suggested_in_resolved(temp_db_path):

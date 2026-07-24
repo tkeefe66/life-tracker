@@ -1263,12 +1263,13 @@ def set_bank_label(simplefin_id, label):
 
 
 def get_bank_label_vocabulary():
-    """Distinct labels, most-used first then alphabetical — autocomplete
-    order. The vocabulary IS this query: a label with zero rows disappears."""
+    """Distinct labels, most-used first then alphabetical (case-insensitive)
+    tiebreak — autocomplete order. The vocabulary IS this query: a label with
+    zero rows disappears."""
     with _cursor() as c:
         c.execute("""SELECT user_label AS label FROM bank_transactions
                      WHERE user_label IS NOT NULL
-                     GROUP BY user_label ORDER BY COUNT(*) DESC, user_label""")
+                     GROUP BY user_label ORDER BY COUNT(*) DESC, LOWER(user_label)""")
         return [r["label"] for r in c.fetchall()]
 
 
@@ -1277,13 +1278,17 @@ def set_bank_label_suggestions_bulk(mapping):
     only the sync's label pass calls this (jobs/sync_bank.py), with values
     that are the user's own labels propagated by bank_flows.label_suggestions;
     never touches user_label. None retires a stale suggestion. Unknown ids
-    skipped. Returns rows actually updated."""
+    skipped. Rows whose suggested_label already matches the new value are left
+    unwritten (avoids dead-tuple churn on Postgres from rewriting unchanged
+    rows every sync). Returns rows actually CHANGED."""
     p = _p()
+    diff = "IS DISTINCT FROM" if USE_POSTGRES else "IS NOT"
     updated = 0
     with _cursor(write=True) as c:
         for simplefin_id, label in mapping.items():
-            c.execute(f"UPDATE bank_transactions SET suggested_label = {p} WHERE simplefin_id = {p}",
-                      (label, simplefin_id))
+            c.execute(f"UPDATE bank_transactions SET suggested_label = {p} "
+                      f"WHERE simplefin_id = {p} AND suggested_label {diff} {p}",
+                      (label, simplefin_id, label))
             updated += c.rowcount
     return updated
 

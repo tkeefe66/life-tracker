@@ -98,7 +98,9 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
         if (label && !vocab.includes(label)) {
           setVocab((v) => [...v, label].sort());
         }
-        setOffer((o) => (o?.simplefin_id === row.simplefin_id ? null : o));
+        setOffer((o) =>
+          o && (o.simplefin_id === row.simplefin_id || o.vendor === resp.vendor) ? null : o,
+        );
         if (label && resp.siblings > 0) {
           setOffer({
             drillKey,
@@ -313,7 +315,6 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
             <button
               type="button"
               className="vendor-row"
-              aria-expanded={showRest}
               onClick={() => setShowRest(true)}
             >
               <span className="spend-service">Everything else ({tail.vendors} vendors)</span>
