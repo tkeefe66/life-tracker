@@ -951,3 +951,58 @@ def test_breakdown_label_lines_carry_suggested_counts(temp_db_path):
     # vendor mode: no `suggested` key at all
     vlines = money.breakdown(weeks=1)["lines"]
     assert all("suggested" not in l for l in vlines)
+
+
+def _fake_holdings_payload():
+    return {"accounts": [
+        {"id": "inv-1", "name": "ROTH IRA (9304)", "org": {"name": "Fidelity"},
+         "holdings": [
+             {"symbol": "VOO", "description": "Vanguard 500", "shares": "2",
+              "cost_basis": "800.00", "market_value": "1000.00"},
+             {"symbol": "GIFT", "description": "No basis", "shares": "1",
+              "market_value": "50.00"},                         # null basis
+         ]},
+        {"id": "inv-2", "name": "401K (4542)", "org": {"name": "Fidelity"},
+         "holdings": [
+             {"symbol": "TDF", "description": "Target date", "shares": "10",
+              "cost_basis": "2000.00", "market_value": "1900.00"},
+         ]},
+    ]}
+
+
+def test_investments_math_null_basis_and_sorting(temp_db_path, monkeypatch):
+    import database as db
+    from app import money
+    from services import simplefin_service
+    db.upsert_bank_account("inv-1", "ROTH IRA (9304)", "Fidelity", "investment")
+    db.set_bank_account_nickname("inv-1", "Roth")
+    monkeypatch.setattr(simplefin_service, "is_configured", lambda: True)
+    monkeypatch.setattr(simplefin_service, "fetch_accounts",
+                        lambda days=None: _fake_holdings_payload())
+
+    out = money.investments()
+    # accounts sorted by market value desc: 401k (1900) before Roth (1050)
+    assert [a["simplefin_id"] for a in out["accounts"]] == ["inv-2", "inv-1"]
+    roth = out["accounts"][1]
+    assert roth["name"] == "Roth"                       # nickname resolution
+    assert roth["market_value"] == 1050.0               # null-basis mv still counts
+    assert roth["cost_basis"] == 800.0                  # null-basis excluded
+    assert roth["gain"] == 200.0 and roth["gain_pct"] == 25.0
+    voo = roth["holdings"][0]                           # holdings sorted mv desc
+    assert voo["symbol"] == "VOO" and voo["gain"] == 200.0 and voo["gain_pct"] == 25.0
+    gift = roth["holdings"][1]
+    assert gift["gain"] is None and gift["gain_pct"] is None and gift["cost_basis"] is None
+    tdf = out["accounts"][0]["holdings"][0]
+    assert tdf["gain"] == -100.0 and tdf["gain_pct"] == -5.0
+    total = out["total"]
+    assert total["market_value"] == 2950.0
+    assert total["cost_basis"] == 2800.0
+    assert total["gain"] == 100.0
+    assert total["gain_pct"] == 3.6                     # round((2900-2800)/2800*100, 1)
+
+
+def test_investments_not_configured_returns_empty(temp_db_path, monkeypatch):
+    from app import money
+    from services import simplefin_service
+    monkeypatch.setattr(simplefin_service, "is_configured", lambda: False)
+    assert money.investments() == {"total": None, "accounts": []}

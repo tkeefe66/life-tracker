@@ -9,6 +9,7 @@ import database as db
 import metrics
 from app.scorecard import _local_today
 from app.scorecard import spend as _tracked_spend
+from services import simplefin_service
 
 # transfer / card_payment / investment are matched pairs: the same movement posts
 # once as an outflow on one account and once as an inflow on the other. Summing
@@ -343,4 +344,57 @@ def triage(limit: int) -> dict:
         "ambiguous": _decorate_bucket(queue["ambiguous"]),
         "inflow_unknown": _decorate_bucket(queue["inflow_unknown"]),
         "recent": _decorate_bucket(recent),
+    }
+
+
+def investments() -> dict:
+    """Live holdings vs. cost basis — fetched from SimpleFIN on demand,
+    computed, returned, and deliberately never persisted (no DB row, no
+    app_settings, no log line): the companion of the bank spec's
+    balances-are-never-stored rule. Gains are vs. cost basis only; a
+    missing/zero basis yields null gain rather than an error, and its
+    market value still counts toward totals while staying out of
+    cost_basis/gain_pct. Raw sums, rounded once at the end (see _totals'
+    rounding note). Raises SimpleFinError upward — the route maps it to 503."""
+    if not simplefin_service.is_configured():
+        return {"total": None, "accounts": []}
+    payload = simplefin_service.fetch_accounts(days=1)
+    names = {a["simplefin_id"]: a["display_name"] for a in db.get_bank_accounts()}
+
+    def gain_fields(mv, cb):
+        """cb is the basis-valid sum (None/0/negative -> no gain figures)."""
+        if not cb or cb <= 0:
+            return {"cost_basis": round(cb, 2) if cb else None, "gain": None, "gain_pct": None}
+        return {"cost_basis": round(cb, 2), "gain": round(mv - cb, 2),
+                "gain_pct": round((mv - cb) / cb * 100, 1)}
+
+    accounts = []
+    t_mv = t_cb = t_mv_basis = 0.0
+    for a in simplefin_service.normalize_holdings(payload):
+        holdings = sorted(a["holdings"], key=lambda h: -h["market_value"])
+        mv = sum(h["market_value"] for h in holdings)
+        basis = [(h["market_value"], h["cost_basis"]) for h in holdings
+                 if h["cost_basis"] is not None and h["cost_basis"] > 0]
+        cb = sum(c for _, c in basis)
+        mv_basis = sum(m for m, _ in basis)
+        accounts.append({
+            "simplefin_id": a["simplefin_id"],
+            "name": names.get(a["simplefin_id"], a["name"]),
+            "market_value": round(mv, 2),
+            **gain_fields(mv_basis, cb),
+            "holdings": [{
+                "symbol": h["symbol"],
+                "description": h["description"],
+                "shares": h["shares"],
+                "market_value": round(h["market_value"], 2),
+                **gain_fields(h["market_value"], h["cost_basis"]),
+            } for h in holdings],
+        })
+        t_mv += mv
+        t_cb += cb
+        t_mv_basis += mv_basis
+    accounts.sort(key=lambda a: -a["market_value"])
+    return {
+        "total": {"market_value": round(t_mv, 2), **gain_fields(t_mv_basis, t_cb)},
+        "accounts": accounts,
     }
