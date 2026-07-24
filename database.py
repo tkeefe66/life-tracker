@@ -1313,6 +1313,16 @@ def count_bank_unlabeled_by_vendor(vendor):
         return c.fetchone()["n"]
 
 
+def get_bank_transaction_vendor(simplefin_id):
+    """The vendor key of one row, or None if the id is unknown."""
+    p = _p()
+    with _cursor() as c:
+        c.execute(f"SELECT {_VENDOR_KEY_SQL} AS vendor FROM bank_transactions "
+                  f"WHERE simplefin_id = {p}", (simplefin_id,))
+        row = c.fetchone()
+        return row["vendor"] if row else None
+
+
 def get_bank_triage(limit):
     """The triage worklist: rows the classifier flagged as ambiguous, plus
     unexplained deposits, each capped at `limit` and newest-`posted` first

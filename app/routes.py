@@ -363,7 +363,8 @@ class FlowPatch(BaseModel):
 
 
 class LabelPatch(BaseModel):
-    simplefin_id: str
+    simplefin_id: Optional[str] = None
+    payee: Optional[str] = None
     label: Optional[str] = None
 
 
@@ -404,10 +405,21 @@ def set_bank_transactions_flow_bulk(body: BulkFlowPatch):
 
 @router.post("/bank/label")
 def set_bank_label(body: LabelPatch):
+    if (body.simplefin_id is None) == (body.payee is None):
+        raise HTTPException(status_code=400,
+                            detail="pass exactly one of simplefin_id or payee")
     label = (body.label or "").strip() or None
-    if not db.set_bank_label(body.simplefin_id, label):
+    if body.payee is not None:
+        # Bulk mode: the user tapped an explicit "apply to N more" offer.
+        if label is None:
+            raise HTTPException(status_code=400, detail="bulk apply needs a label")
+        applied = db.set_bank_labels_by_vendor(body.payee, label)
+        return {"ok": True, "label": label, "applied": applied}
+    row_vendor = db.get_bank_transaction_vendor(body.simplefin_id)
+    if row_vendor is None or not db.set_bank_label(body.simplefin_id, label):
         raise HTTPException(status_code=404, detail="unknown transaction")
-    return {"ok": True, "label": label}
+    siblings = db.count_bank_unlabeled_by_vendor(row_vendor) if label else 0
+    return {"ok": True, "label": label, "siblings": siblings, "vendor": row_vendor}
 
 
 @router.get("/bank/accounts")

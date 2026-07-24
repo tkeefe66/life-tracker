@@ -632,3 +632,11 @@ def test_vendor_bulk_uses_description_fallback_for_empty_payee(temp_db_path):
 
     assert db.count_bank_unlabeled_by_vendor("CHECK 1042") == 1
     assert db.set_bank_labels_by_vendor("CHECK 1042", "Monthly Rent") == 1
+
+
+def test_get_bank_transaction_vendor(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    _seed_txn(db, "t1", acct_id, "2026-07-20", -50.0)   # payee "" → description
+    assert db.get_bank_transaction_vendor("t1") is not None
+    assert db.get_bank_transaction_vendor("ghost") is None
