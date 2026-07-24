@@ -66,8 +66,8 @@ export default function Investments() {
                 <span>{a.name} · {money(a.market_value)}</span>
                 <Gain gain={a.gain} pct={a.gain_pct} />
               </div>
-              {a.holdings.map((h) => (
-                <div className="inv-row" key={h.symbol + h.description}>
+              {a.holdings.map((h, i) => (
+                <div className="inv-row" key={`${h.symbol}:${h.description}:${i}`}>
                   <span className="inv-name">
                     <strong>{h.symbol}</strong>
                     {h.description && <span className="quiet"> {h.description}</span>}

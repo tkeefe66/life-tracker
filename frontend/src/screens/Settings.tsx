@@ -269,6 +269,7 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
                   onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                 />
                 <select
+                  aria-label="Account role"
                   value={a.role}
                   onChange={(e) => updateRole(a.simplefin_id, e.target.value)}
                 >

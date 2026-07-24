@@ -1010,6 +1010,9 @@ PROTECTED_ROUTES = [
     ("get", "/api/bank/breakdown/rows"),
     ("post", "/api/bank/label"),
     ("get", "/api/bank/label-suggestions"),
+    ("post", "/api/bank/accounts/some-id/role"),
+    ("post", "/api/bank/accounts/some-id/nickname"),
+    ("get", "/api/bank/investments"),
 ]
 
 
