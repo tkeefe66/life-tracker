@@ -984,3 +984,14 @@ details.money-details .trend-caption { margin-top: 10px; }
   font-size: 0.72rem; padding: 1px 8px; border-radius: 999px;
   background: var(--accent-soft); color: var(--accent); margin-left: 8px; white-space: nowrap;
 }
+
+/* Investments — gain/loss reuse validated theme-aware tokens (no new hues:
+   --chart-social up, --danger down; both were contrast-checked per theme). */
+.inv-total { display: flex; justify-content: space-between; gap: 8px; margin: 8px 0 4px; font-weight: 600; }
+.inv-acct { margin-top: 10px; }
+.inv-acct-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 500; }
+.inv-row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0 2px 10px; }
+.inv-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-nums, .inv-gain, .inv-loss { white-space: nowrap; }
+.inv-gain { color: var(--chart-social); }
+.inv-loss { color: var(--danger); }
