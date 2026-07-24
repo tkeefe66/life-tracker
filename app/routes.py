@@ -344,6 +344,11 @@ def get_bank_triage(limit: int = 50):
     return money.triage(limit)
 
 
+@router.get("/bank/label-suggestions")
+def get_bank_label_suggestions(limit: int = 50):
+    return money.label_suggestions(limit)
+
+
 MAX_BULK_FLOW_IDS = 200
 
 
@@ -366,6 +371,7 @@ class LabelPatch(BaseModel):
     simplefin_id: Optional[str] = None
     payee: Optional[str] = None
     label: Optional[str] = None
+    no_label: Optional[bool] = None
 
 
 class BulkFlowPatch(BaseModel):
@@ -408,6 +414,14 @@ def set_bank_label(body: LabelPatch):
     if (body.simplefin_id is None) == (body.payee is None):
         raise HTTPException(status_code=400,
                             detail="pass exactly one of simplefin_id or payee")
+    if body.no_label:
+        if body.payee is not None or (body.label or "").strip():
+            raise HTTPException(status_code=400,
+                                detail="no_label is a single-row verdict and takes no label")
+        row_vendor = db.get_bank_transaction_vendor(body.simplefin_id)
+        if row_vendor is None or not db.set_bank_no_label(body.simplefin_id):
+            raise HTTPException(status_code=404, detail="unknown transaction")
+        return {"ok": True, "label": None, "siblings": 0, "vendor": row_vendor}
     label = (body.label or "").strip() or None
     if body.payee is not None:
         # Bulk mode: the user tapped an explicit "apply to N more" offer.

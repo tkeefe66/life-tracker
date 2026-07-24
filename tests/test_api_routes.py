@@ -989,6 +989,7 @@ PROTECTED_ROUTES = [
     ("get", "/api/bank/breakdown"),
     ("get", "/api/bank/breakdown/rows"),
     ("post", "/api/bank/label"),
+    ("get", "/api/bank/label-suggestions"),
 ]
 
 
@@ -1092,3 +1093,47 @@ def test_bank_routes_require_auth(temp_db_path, method, path):
     else:
         resp = client.get(path)
     assert resp.status_code == 401
+
+
+def test_bank_label_suggestions_endpoint(client, temp_db_path):
+    import database as db
+    r = client.get("/api/bank/label-suggestions")
+    assert r.status_code == 200
+    assert r.json() == {"rows": [], "total": 0}
+
+    db.upsert_bank_account("acct-1", "Checking", "WF", "checking")
+    acct = next(a for a in db.get_bank_accounts() if a["simplefin_id"] == "acct-1")
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-20", "2026-07-20",
+                               -25.0, "RAW", "Amex", "", None)
+    db.set_bank_transaction_derived("t1", "spending", None, False)
+    db.set_bank_label_suggestions_bulk({"t1": "Amex Benefit"})
+
+    r = client.get("/api/bank/label-suggestions?limit=10")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1
+    assert body["rows"][0]["suggested_label"] == "Amex Benefit"
+
+
+def test_bank_label_no_label_form(client, temp_db_path):
+    import database as db
+    db.upsert_bank_account("acct-1", "Checking", "WF", "checking")
+    acct = next(a for a in db.get_bank_accounts() if a["simplefin_id"] == "acct-1")
+    db.upsert_bank_transaction("t1", acct["id"], "2026-07-20", "2026-07-20",
+                               -25.0, "RAW", "Amex", "", None)
+    db.set_bank_transaction_derived("t1", "spending", None, False)
+    db.set_bank_label_suggestions_bulk({"t1": "Amex Benefit"})
+
+    r = client.post("/api/bank/label", json={"simplefin_id": "t1", "no_label": True})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "label": None, "siblings": 0, "vendor": "Amex"}
+    assert client.get("/api/bank/label-suggestions").json()["total"] == 0
+
+    r = client.post("/api/bank/label", json={"simplefin_id": "t1", "no_label": True,
+                                             "label": "X"})
+    assert r.status_code == 400
+    r = client.post("/api/bank/label", json={"payee": "Amex", "no_label": True,
+                                             "label": "X"})
+    assert r.status_code == 400
+    r = client.post("/api/bank/label", json={"simplefin_id": "ghost", "no_label": True})
+    assert r.status_code == 404
