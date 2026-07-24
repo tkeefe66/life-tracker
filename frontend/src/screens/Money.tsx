@@ -69,6 +69,14 @@ export default function Money() {
   const [ambiguousRows, setAmbiguousRows] = useState<TriageRow[] | null>(null);
   const [inflowRows, setInflowRows] = useState<TriageRow[] | null>(null);
   const [recentRows, setRecentRows] = useState<TriageRow[] | null>(null);
+  // Lifted from LabelAudit via its onTotal callback — no second fetch, see
+  // that component's doc comment.
+  const [labelAuditTotal, setLabelAuditTotal] = useState(0);
+  // Controlled <details> open state for the decision zone, tracked so the
+  // zone can stay visible when the user answers its last item while it's
+  // open (see decisionZoneVisible below) rather than yanking it away
+  // mid-interaction.
+  const [decisionZoneOpen, setDecisionZoneOpen] = useState(false);
 
   const [selectedBankWeek, setSelectedBankWeek] = useState<number | null>(null);
   const [selectedTrackedWeek, setSelectedTrackedWeek] = useState<number | null>(null);
@@ -247,6 +255,18 @@ export default function Money() {
     ? Math.max(0, summary!.triage_counts.inflow_unknown - inflowRows.length)
     : 0;
 
+  // n = everything the decision zone's collapsed summary counts: the two
+  // triage buckets (known as soon as /bank/summary loads) plus whatever
+  // LabelAudit has reported of itself so far (0 until its own fetch
+  // resolves — see the mounting note below).
+  const decisionZoneCount = bankSectionsVisible && summary
+    ? summary.triage_counts.ambiguous + summary.triage_counts.inflow_unknown + labelAuditTotal
+    : 0;
+  // The zone stays visible once opened even if n drops to 0 mid-interaction
+  // (spec: don't yank the section away while the user is still in it) — it
+  // only goes quiet again on the next collapse or the next visit.
+  const decisionZoneVisible = decisionZoneCount > 0 || decisionZoneOpen;
+
   const coverage = summary ? coverageNote(summary.covered_from) : "";
 
   const trackedTotal = summary ? summary.tracked.reduce((sum, r) => sum + r.amount, 0) : 0;
@@ -254,6 +274,7 @@ export default function Money() {
 
   return (
     <div>
+      <h1 className="visually-hidden">Money</h1>
       {notConfigured && <p className="quiet empty">Bank sync isn't set up.</p>}
 
       {awaitingFirstSync && (
@@ -269,7 +290,7 @@ export default function Money() {
         <>
           <p className="money-hero">{money(summary.spent)}</p>
           <p className="money-hero-sub">spent · last 12 weeks</p>
-          {summary.totals.refund?.amount > 0 && (
+          {(summary.totals.refund?.amount ?? 0) > 0 && (
             <p className="money-hero-sub">after {money(summary.totals.refund.amount)} refunded</p>
           )}
 
@@ -281,9 +302,11 @@ export default function Money() {
             <p className="trend-caption">{weekCaption(selectedBankPoint)}</p>
           )}
 
+          <VendorBreakdown weeks={12} />
+
           {MOVEMENT_FLOWS.some((m) => summary.totals[m.flow]) && (
             <>
-              <p className="section-label">Where the rest went</p>
+              <h2 className="section-label">Where the rest went</h2>
               <div className="spend">
                 {MOVEMENT_FLOWS.map(({ flow }) => {
                   const t = summary.totals[flow];
@@ -300,11 +323,9 @@ export default function Money() {
             </>
           )}
 
-          <VendorBreakdown weeks={12} />
-
           {summary.totals.income && (
             <>
-              <p className="section-label">Money in</p>
+              <h2 className="section-label">Money in</h2>
               <div className="spend">
                 <div className="spend-row">
                   <span className="spend-service">at least</span>
@@ -330,9 +351,12 @@ export default function Money() {
           <SpendSubtotals
             rows={summary.tracked}
             // The containment framing ("Of that...") only makes sense once the bank
-            // hero/total above it is actually on screen — without it, fall back to
-            // the neutral heading this block had on the old Insights money view.
-            title={bankSectionsVisible ? "Of that, the things you're tracking" : "By service · last 12 weeks"}
+            // hero/total above it is actually on screen — and even then, the
+            // tracked-share sentence just above already restates both figures, so
+            // "Of that" would be a third restatement of the same relationship.
+            // Fall back to the neutral heading this block had on the old Insights
+            // money view when bank sections aren't visible at all.
+            title={bankSectionsVisible ? "The things you're tracking" : "By service · last 12 weeks"}
           />
 
           {trackedSpend && trackedSpend.weeks.length > 0 && (
@@ -364,8 +388,35 @@ export default function Money() {
       )}
 
       {bankSectionsVisible && (
-        <>
-          <p className="section-label">Needs a decision</p>
+        // zone-break: separates the decision zone from the record zone above
+        // it — one hairline, one extra margin, no new color or card (see
+        // .zone-break.money-details in styles.css). The whole zone collapses
+        // behind its <summary> ("N things to sort out") so the screen
+        // defaults to being a record, not a worklist.
+        //
+        // This <details> stays mounted whenever bank sections are visible —
+        // even when decisionZoneVisible is false — and uses the `hidden`
+        // attribute rather than an unmounting `{visible && ...}` guard. That's
+        // deliberate: LabelAudit's own count only becomes known after ITS
+        // internal fetch resolves, and that fetch only runs while it's
+        // mounted. Unmounting the wrapper whenever the (initially-zero)
+        // count says "nothing to show" would mean it could never mount in
+        // the first place if the only pending items are label suggestions —
+        // a real deadlock, not just a cosmetic flash. `hidden` keeps
+        // TriageQueue/LabelAudit mounted and fetching throughout, and simply
+        // removes the wrapper from rendering (and the accessibility tree,
+        // matching "quiet stays quiet") until decisionZoneVisible flips true.
+        <details
+          className="money-details zone-break"
+          hidden={!decisionZoneVisible}
+          open={decisionZoneOpen}
+          onToggle={(e) => setDecisionZoneOpen(e.currentTarget.open)}
+        >
+          <summary>
+            {decisionZoneCount} thing{decisionZoneCount === 1 ? "" : "s"} to sort out
+          </summary>
+
+          <h2 className="section-label">Needs a decision</h2>
           <TriageQueue
             title="Spent it, or moved it?"
             prompt="These read like transfers but were counted as spending."
@@ -407,8 +458,8 @@ export default function Money() {
             </details>
           )}
 
-          <LabelAudit />
-        </>
+          <LabelAudit onTotal={setLabelAuditTotal} />
+        </details>
       )}
 
       {coverage && <p className="footnote">{coverage}</p>}

@@ -264,7 +264,7 @@ export default function VendorBreakdown({ weeks }: { weeks: number }) {
 
   return (
     <>
-      <p className="section-label">Where it went</p>
+      <h2 className="section-label">Where it went</h2>
       <datalist id="vendor-label-vocab">
         {vocab.map((l) => <option key={l} value={l} />)}
       </datalist>
