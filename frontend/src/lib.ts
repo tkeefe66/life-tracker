@@ -143,6 +143,18 @@ export function flowLabel(flow: string): string {
   return FLOW_LABELS[flow] ?? flow;
 }
 
+/** Triage-row suggestion hint (spec §5): `"looks like: {label}"` for a flow
+ * the AI suggested, using `flowLabel`'s plain language verbatim rather than a
+ * separate wording. Unlike `flowLabel`, an unrecognized flow — or no
+ * suggestion at all (`null`/`undefined`) — degrades to `""` (no hint), never
+ * a raw token; `FLOW_LABELS` is deliberately missing `spending` (there is no
+ * "looks like: spending" — an unresolved flow is the row's whole reason for
+ * being in the queue), so that case falls through the same unknown-flow path. */
+export function suggestionHint(flow: string | null | undefined): string {
+  if (flow == null || !(flow in FLOW_LABELS)) return "";
+  return `looks like: ${flowLabel(flow)}`;
+}
+
 /** The permanent coverage footnote (spec §5.6 / §4): explains why data
  * before `covered_from` doesn't exist, rather than looking like a gap. No
  * coverage yet (`null`, e.g. before the first sync) renders nothing. */

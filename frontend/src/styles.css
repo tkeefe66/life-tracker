@@ -843,6 +843,7 @@ details.orders .quiet { margin: 10px 0 0; }
 .triage-label { display: block; font-size: 0.9rem; }
 .triage-note { display: block; font-size: 0.78rem; color: var(--muted); }
 .triage-meta { display: block; font-size: 0.78rem; }
+.triage-hint { display: block; font-size: 0.78rem; color: var(--muted); }
 .triage-amount { color: var(--ink); white-space: nowrap; }
 
 /* "Add note" toggle — quiet-btn's coloring/interaction at inline, meta-line
@@ -877,6 +878,13 @@ details.orders .quiet { margin: 10px 0 0; }
    alcohol-level chips and these carry multi-word labels. */
 .triage-queue .chips { flex-wrap: wrap; }
 .triage-queue .chips button { width: auto; height: auto; padding: 8px 12px; white-space: nowrap; }
+
+/* The AI-suggested chip (spec §5) — same accent-soft family as .item.done's
+   completion tint, never green/red: this is a hint, not a verdict. */
+.triage-queue .chips button.chip-suggested {
+  background: var(--accent-soft);
+  border-color: color-mix(in oklch, var(--accent) 35%, var(--line));
+}
 
 /* Same settle pulse the Today check-ins use (spec §6.2) — the row itself is
    removed by the parent, this just gives the tap a moment of feedback first. */

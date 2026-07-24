@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   dayChips, dayLabel, dayRowDate, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel, type Day,
-  TRIAGE_CHOICES, flowLabel, coverageNote, weekCaption, trackedShareSentence,
+  TRIAGE_CHOICES, flowLabel, suggestionHint, coverageNote, weekCaption, trackedShareSentence,
 } from "./lib";
 
 describe("weekLabel", () => {
@@ -352,6 +352,22 @@ describe("flowLabel", () => {
   it("returns an unknown value as-is rather than throwing", () => {
     expect(flowLabel("spending")).toBe("spending");
     expect(flowLabel("something_new")).toBe("something_new");
+  });
+});
+
+describe("suggestionHint", () => {
+  it("prefixes the known flow's label", () => {
+    expect(suggestionHint("refund")).toBe("looks like: Refunded");
+    expect(suggestionHint("transfer")).toBe("looks like: Moved between accounts");
+  });
+
+  it("returns empty string for an unknown flow rather than a raw token", () => {
+    expect(suggestionHint("something_new")).toBe("");
+  });
+
+  it("returns empty string for null/undefined", () => {
+    expect(suggestionHint(null)).toBe("");
+    expect(suggestionHint(undefined)).toBe("");
   });
 });
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { dayRowDate, money, type TriageChoice } from "../lib";
+import { dayRowDate, money, suggestionHint, type TriageChoice } from "../lib";
 
 /** One row of the triage worklist (spec §6.2) — the shape `app/money.py`'s
  * `_decorate_bucket` returns for both the `ambiguous` and `inflow_unknown`
@@ -21,6 +21,7 @@ export interface TriageRow {
   signature_count: number;
   signature_amount: number;
   user_note: string | null;
+  suggested_flow?: string | null;
 }
 
 interface Props {
@@ -114,6 +115,13 @@ export default function TriageQueue({ title, prompt, rows, choices, onAnswer, on
           const answeredWith = justAnswered?.id === row.simplefin_id ? justAnswered : null;
           const { monthDay } = dayRowDate(row.posted);
           const noteOpen = !!openNotes[row.simplefin_id];
+          // Suggestion only surfaces on an unanswered row, and only when a
+          // chip in THIS queue's choices actually matches (spec §5) — the
+          // two queues have disjoint flow sets, so a mismatch is defensive
+          // rather than expected, and should render nothing rather than a
+          // hint with no highlighted chip to match it.
+          const hint = answeredWith ? "" : suggestionHint(row.suggested_flow);
+          const showHint = hint !== "" && choices.some((c) => c.flow === row.suggested_flow);
 
           return (
             <li key={row.simplefin_id} className={`triage-row${answeredWith ? " settle" : ""}`}>
@@ -131,6 +139,7 @@ export default function TriageQueue({ title, prompt, rows, choices, onAnswer, on
                       Add note
                     </button>
                   </span>
+                  {showHint && <span className="triage-hint">{hint}</span>}
                 </span>
                 <span className="triage-amount num">{money(Math.abs(row.amount))}</span>
               </div>
@@ -148,7 +157,11 @@ export default function TriageQueue({ title, prompt, rows, choices, onAnswer, on
 
               <div className="chips">
                 {choices.map((c) => (
-                  <button key={c.flow} onClick={() => handleAnswer(row, c.flow)}>
+                  <button
+                    key={c.flow}
+                    className={showHint && c.flow === row.suggested_flow ? "chip-suggested" : undefined}
+                    onClick={() => handleAnswer(row, c.flow)}
+                  >
                     {c.label}
                   </button>
                 ))}
