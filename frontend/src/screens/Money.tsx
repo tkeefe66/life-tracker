@@ -254,6 +254,7 @@ export default function Money() {
 
   return (
     <div>
+      <h1 className="visually-hidden">Money</h1>
       {notConfigured && <p className="quiet empty">Bank sync isn't set up.</p>}
 
       {awaitingFirstSync && (
@@ -281,9 +282,11 @@ export default function Money() {
             <p className="trend-caption">{weekCaption(selectedBankPoint)}</p>
           )}
 
+          <VendorBreakdown weeks={12} />
+
           {MOVEMENT_FLOWS.some((m) => summary.totals[m.flow]) && (
             <>
-              <p className="section-label">Where the rest went</p>
+              <h2 className="section-label">Where the rest went</h2>
               <div className="spend">
                 {MOVEMENT_FLOWS.map(({ flow }) => {
                   const t = summary.totals[flow];
@@ -300,11 +303,9 @@ export default function Money() {
             </>
           )}
 
-          <VendorBreakdown weeks={12} />
-
           {summary.totals.income && (
             <>
-              <p className="section-label">Money in</p>
+              <h2 className="section-label">Money in</h2>
               <div className="spend">
                 <div className="spend-row">
                   <span className="spend-service">at least</span>
@@ -330,9 +331,12 @@ export default function Money() {
           <SpendSubtotals
             rows={summary.tracked}
             // The containment framing ("Of that...") only makes sense once the bank
-            // hero/total above it is actually on screen — without it, fall back to
-            // the neutral heading this block had on the old Insights money view.
-            title={bankSectionsVisible ? "Of that, the things you're tracking" : "By service · last 12 weeks"}
+            // hero/total above it is actually on screen — and even then, the
+            // tracked-share sentence just above already restates both figures, so
+            // "Of that" would be a third restatement of the same relationship.
+            // Fall back to the neutral heading this block had on the old Insights
+            // money view when bank sections aren't visible at all.
+            title={bankSectionsVisible ? "The things you're tracking" : "By service · last 12 weeks"}
           />
 
           {trackedSpend && trackedSpend.weeks.length > 0 && (
@@ -365,7 +369,10 @@ export default function Money() {
 
       {bankSectionsVisible && (
         <>
-          <p className="section-label">Needs a decision</p>
+          {/* zone-break: separates the decision zone (this queue + the label
+              audit below) from the record zone above it — one hairline, one
+              extra margin, no new color or card. */}
+          <h2 className="section-label zone-break">Needs a decision</h2>
           <TriageQueue
             title="Spent it, or moved it?"
             prompt="These read like transfers but were counted as spending."

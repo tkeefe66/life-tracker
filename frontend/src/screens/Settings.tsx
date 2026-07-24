@@ -137,7 +137,7 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
         </div>
       )}
 
-      <p className="section-label">Weekly targets</p>
+      <h2 className="section-label">Weekly targets</h2>
       <div className="group">
         {Object.keys(LABELS).map((key) => (
           <label className="row" key={key}>
@@ -157,7 +157,7 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
         ))}
       </div>
 
-      <p className="section-label">Weekly summary</p>
+      <h2 className="section-label">Weekly summary</h2>
       <div className="group">
         {settings.telegram_configured ? (
           <label className="row">
@@ -185,7 +185,7 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
         )}
       </div>
 
-      <p className="section-label">Sync</p>
+      <h2 className="section-label">Sync</h2>
       <div className="group">
         <div className="row">
           <span className="grow">
@@ -231,7 +231,7 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
 
       {bankAccounts && bankAccounts.length > 0 && (
         <>
-          <p className="section-label">Bank accounts</p>
+          <h2 className="section-label">Bank accounts</h2>
           <div className="group">
             {bankAccounts.map((a) => (
               <label className="row" key={a.simplefin_id}>
@@ -255,7 +255,7 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
 
       {deliveries && (
         <>
-          <p className="section-label">Detected orders</p>
+          <h2 className="section-label">Detected orders</h2>
           <details className="orders">
             <summary>
               {deliveries.length === 0
@@ -275,7 +275,7 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
         </>
       )}
 
-      <p className="section-label">Account</p>
+      <h2 className="section-label">Account</h2>
       <div className="group">
         <div className="row">
           <span className="grow">Sign out</span>

@@ -43,7 +43,7 @@ export default function Insights() {
     <div>
       {card && insights && hasAnyData(insights) && (
         <>
-          <p className="section-label">Trends · last 12 weeks</p>
+          <h2 className="section-label">Trends · last 12 weeks</h2>
           <div className="trends">
             {ORDER.map((key) => {
               const m = card.metrics[key];
@@ -85,7 +85,7 @@ export default function Insights() {
             })}
           </div>
 
-          <p className="section-label">Patterns · by weekday, last 8 weeks</p>
+          <h2 className="section-label">Patterns · by weekday, last 8 weeks</h2>
           <WeekdayHeatmap
             rows={ORDER.map((key) => ({
               label: card.metrics[key].label,
@@ -120,7 +120,7 @@ export default function Insights() {
 
           {insights.noticings.length > 0 && (
             <>
-              <p className="section-label">Noticings</p>
+              <h2 className="section-label">Noticings</h2>
               {insights.noticings.map((n) => (
                 <p className="quiet" key={n}><span>{n}</span></p>
               ))}
@@ -134,7 +134,7 @@ export default function Insights() {
 
       {reflection && (
         <>
-          <p className="section-label">Last week</p>
+          <h2 className="section-label">Last week</h2>
           <p className="reflection">{reflection.text}</p>
         </>
       )}

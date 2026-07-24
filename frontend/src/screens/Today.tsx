@@ -277,7 +277,7 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
         )}
       </div>
 
-      <p className="section-label">Noticed quietly</p>
+      <h2 className="section-label">Noticed quietly</h2>
       {detections === 0 && <p className="quiet empty">Nothing this day.</p>}
       {data.deliveries.map((d) => (
         <p className="quiet" key={d.ordered_at}>
@@ -380,7 +380,7 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
 
       {week && (
         <>
-          <p className="section-label">This week</p>
+          <h2 className="section-label">This week</h2>
           <div className="week-strip">
             {STRIP_ORDER.map((key) => {
               const m = week.metrics[key];

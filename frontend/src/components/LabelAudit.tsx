@@ -52,7 +52,7 @@ export default function LabelAudit() {
 
   return (
     <>
-      <p className="section-label">Suggested labels — needs a look</p>
+      <h2 className="section-label">Suggested labels — needs a look</h2>
       <p className="footnote">
         {total} transaction{total === 1 ? "" : "s"} inherited a label you haven't confirmed.
       </p>

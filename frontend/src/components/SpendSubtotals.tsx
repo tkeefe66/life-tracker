@@ -13,7 +13,7 @@ export default function SpendSubtotals({ rows, title }: Props) {
 
   return (
     <>
-      {title && <p className="section-label">{title}</p>}
+      {title && <h2 className="section-label">{title}</h2>}
       <div className="spend">
         {rows.map((r) => (
           <div className="spend-row" key={`${r.kind}:${r.service}`}>

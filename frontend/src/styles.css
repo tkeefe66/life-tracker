@@ -107,7 +107,33 @@ main {
   margin: 20px 4px 8px;
 }
 
+/* Marks the start of a distinct zone within a screen: extra separation plus
+   a hairline, so a coherent group of sections reads as its own rank below
+   whatever came before it. Not a card, not a new color — pure spacing +
+   one line. Combined with .section-label so its higher specificity wins
+   over the plain margin-top above without depending on rule order. */
+.zone-break.section-label {
+  margin-top: 56px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
 .stack { display: flex; flex-direction: column; gap: 10px; }
+
+/* Screen-reader-only: visually invisible but present in the accessibility
+   tree and for heading navigation. Never use `display: none` for this —
+   that removes it from both. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* ─── Tab bar ─── */
 
