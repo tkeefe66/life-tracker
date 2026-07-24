@@ -324,3 +324,22 @@ export function buildSocialPatch(state: SocialEditState): SocialPatch {
 
   return patch;
 }
+
+export interface VendorLine { vendor: string; count: number; amount: number }
+export interface VendorTail { vendors: number; count: number; amount: number }
+
+// Top-N + "Everything else" split for the vendor breakdown. A tail of one
+// vendor is promoted into `top` — "Everything else (1 vendor)" would be
+// longer than the line it hides.
+export function vendorSplit(lines: VendorLine[], topN: number = 15):
+  { top: VendorLine[]; tail: VendorTail | null; rest: VendorLine[] } {
+  if (lines.length <= topN + 1) return { top: lines, tail: null, rest: [] };
+  const top = lines.slice(0, topN);
+  const rest = lines.slice(topN);
+  const tail = {
+    vendors: rest.length,
+    count: rest.reduce((s, l) => s + l.count, 0),
+    amount: rest.reduce((s, l) => s + l.amount, 0),
+  };
+  return { top, tail, rest };
+}

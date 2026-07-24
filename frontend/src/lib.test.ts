@@ -430,3 +430,33 @@ describe("trackedShareSentence", () => {
     expect(trackedShareSentence(0, 0)).toBe("");
   });
 });
+
+import { vendorSplit, type VendorLine } from "./lib";
+
+const line = (vendor: string, amount: number): VendorLine =>
+  ({ vendor, count: 1, amount });
+
+describe("vendorSplit", () => {
+  it("returns everything in top when at or under the cutoff", () => {
+    const lines = [line("A", 30), line("B", 20)];
+    const { top, tail, rest } = vendorSplit(lines, 15);
+    expect(top).toEqual(lines);
+    expect(tail).toBeNull();
+    expect(rest).toEqual([]);
+  });
+
+  it("promotes a single-vendor tail instead of an 'Everything else (1)'", () => {
+    const lines = [line("A", 30), line("B", 20), line("C", 10)];
+    const { top, tail } = vendorSplit(lines, 2);
+    expect(top).toEqual(lines);
+    expect(tail).toBeNull();
+  });
+
+  it("aggregates a multi-vendor tail and exposes its lines as rest", () => {
+    const lines = [line("A", 30), line("B", 20), line("C", 10), line("D", 5)];
+    const { top, tail, rest } = vendorSplit(lines, 2);
+    expect(top).toEqual([line("A", 30), line("B", 20)]);
+    expect(tail).toEqual({ vendors: 2, count: 2, amount: 15 });
+    expect(rest).toEqual([line("C", 10), line("D", 5)]);
+  });
+});
