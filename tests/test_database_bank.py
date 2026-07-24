@@ -575,3 +575,60 @@ def test_label_vocabulary_distinct_most_used_first(temp_db_path):
     _seed_txn(db, "u1", acct_id, "2026-07-20", -5.0)   # unlabeled — not in vocab
 
     assert db.get_bank_label_vocabulary() == ["Groceries", "Monthly Rent"]
+
+
+# ── suggested_label: derived write, resolution, vendor bulk ────────────────────
+
+def test_label_suggestions_bulk_write_and_resolved_label(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    _seed_txn(db, "t1", acct_id, "2026-07-20", -50.0)
+    _seed_txn(db, "t2", acct_id, "2026-07-20", -60.0)
+    db.set_bank_label("t2", "Groceries")
+
+    written = db.set_bank_label_suggestions_bulk({"t1": "Groceries", "t2": None, "ghost": "X"})
+    assert written == 2                     # unknown id skipped, not an error
+
+    rows = {t["simplefin_id"]: t for t in db.get_all_bank_transactions()}
+    assert rows["t1"]["suggested_label"] == "Groceries"
+    assert rows["t1"]["user_label"] is None
+    assert rows["t1"]["resolved_label"] == "Groceries"     # suggestion shows
+    assert rows["t2"]["resolved_label"] == "Groceries"     # user label wins
+    assert rows["t2"]["suggested_label"] is None
+
+
+def test_user_label_beats_suggested_in_resolved(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    _seed_txn(db, "t1", acct_id, "2026-07-20", -50.0)
+    db.set_bank_label_suggestions_bulk({"t1": "Groceries"})
+    db.set_bank_label("t1", "Household")
+    row = next(t for t in db.get_all_bank_transactions() if t["simplefin_id"] == "t1")
+    assert row["resolved_label"] == "Household"
+
+
+def test_set_bank_labels_by_vendor_skips_user_labeled_rows(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    for sfid in ("a1", "a2", "a3"):
+        db.upsert_bank_transaction(sfid, acct_id, "2026-07-20", "2026-07-20",
+                                   -10.0, "RAW", "Amazon", "", None)
+        db.set_bank_transaction_derived(sfid, "spending", None, False)
+    db.set_bank_label("a1", "Gifts")
+
+    assert db.count_bank_unlabeled_by_vendor("Amazon") == 2
+    applied = db.set_bank_labels_by_vendor("Amazon", "Household")
+    assert applied == 2
+    rows = {t["simplefin_id"]: t["user_label"] for t in db.get_all_bank_transactions()}
+    assert rows == {"a1": "Gifts", "a2": "Household", "a3": "Household"}
+
+
+def test_vendor_bulk_uses_description_fallback_for_empty_payee(temp_db_path):
+    import database as db
+    acct_id = _seed_account(db)
+    db.upsert_bank_transaction("c1", acct_id, "2026-07-20", "2026-07-20",
+                               -900.0, "CHECK 1042", "", "", None)
+    db.set_bank_transaction_derived("c1", "spending", None, False)
+
+    assert db.count_bank_unlabeled_by_vendor("CHECK 1042") == 1
+    assert db.set_bank_labels_by_vendor("CHECK 1042", "Monthly Rent") == 1

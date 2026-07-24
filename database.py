@@ -666,6 +666,17 @@ def _init_v2_tables():
             if "user_label" not in cols:
                 c.execute("ALTER TABLE bank_transactions ADD COLUMN user_label TEXT")
 
+        # suggested_label: nullable TEXT on bank_transactions. DERIVED — the
+        # sync's label-suggestion pass owns it exclusively and recomputes it
+        # for the whole table every run (unlike suggested_flow's write-once);
+        # never written by a route, never touches user_label.
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS suggested_label TEXT")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(bank_transactions)").fetchall()]
+            if "suggested_label" not in cols:
+                c.execute("ALTER TABLE bank_transactions ADD COLUMN suggested_label TEXT")
+
 
 # ── Check-ins ─────────────────────────────────────────────────────────────────
 
@@ -1260,6 +1271,47 @@ def get_bank_label_vocabulary():
         return [r["label"] for r in c.fetchall()]
 
 
+def set_bank_label_suggestions_bulk(mapping):
+    """Write `suggested_label` for many rows in ONE transaction. DERIVED —
+    only the sync's label pass calls this (jobs/sync_bank.py), with values
+    that are the user's own labels propagated by bank_flows.label_suggestions;
+    never touches user_label. None retires a stale suggestion. Unknown ids
+    skipped. Returns rows actually updated."""
+    p = _p()
+    updated = 0
+    with _cursor(write=True) as c:
+        for simplefin_id, label in mapping.items():
+            c.execute(f"UPDATE bank_transactions SET suggested_label = {p} WHERE simplefin_id = {p}",
+                      (label, simplefin_id))
+            updated += c.rowcount
+    return updated
+
+
+_VENDOR_KEY_SQL = "CASE WHEN payee != '' THEN payee ELSE description END"
+
+
+def set_bank_labels_by_vendor(vendor, label):
+    """Bulk USER apply: label every un-user-labeled row of one vendor.
+    The route's bulk mode calls this after the user taps the explicit
+    'apply to N more' offer — the tap is the confirmation. Never touches
+    rows that already carry a user_label. Returns rows updated."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE bank_transactions SET user_label = {p} "
+                  f"WHERE {_VENDOR_KEY_SQL} = {p} AND user_label IS NULL",
+                  (label, vendor))
+        return c.rowcount
+
+
+def count_bank_unlabeled_by_vendor(vendor):
+    p = _p()
+    with _cursor() as c:
+        c.execute(f"SELECT COUNT(*) AS n FROM bank_transactions "
+                  f"WHERE {_VENDOR_KEY_SQL} = {p} AND user_label IS NULL",
+                  (vendor,))
+        return c.fetchone()["n"]
+
+
 def get_bank_triage(limit):
     """The triage worklist: rows the classifier flagged as ambiguous, plus
     unexplained deposits, each capped at `limit` and newest-`posted` first
@@ -1409,9 +1461,10 @@ def set_bank_suggestions_bulk(mapping):
 _BANK_TXN_SELECT = """
     SELECT t.id, t.simplefin_id, t.account_id, t.posted, t.transacted_at, t.amount,
            t.description, t.payee, t.memo, t.mcc, t.flow, t.user_flow, t.pair_id,
-           t.ambiguous, t.user_note, t.suggested_flow, t.user_label, a.role AS account_role,
-           a.name AS account_name,
-           COALESCE(t.user_flow, t.flow) AS resolved_flow
+           t.ambiguous, t.user_note, t.suggested_flow, t.user_label, t.suggested_label,
+           a.role AS account_role, a.name AS account_name,
+           COALESCE(t.user_flow, t.flow) AS resolved_flow,
+           COALESCE(t.user_label, t.suggested_label) AS resolved_label
     FROM bank_transactions t JOIN bank_accounts a ON a.id = t.account_id
 """
 
