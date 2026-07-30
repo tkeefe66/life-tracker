@@ -242,7 +242,10 @@ button.item:active { transform: scale(0.985); }
 
 .chips button:active { transform: scale(0.92); background: var(--accent-soft); }
 
-/* Quiet detection rows */
+/* Quiet text rows — shared by Settings' "Detected orders" list, Money,
+   VendorBreakdown, Investments, Insights and TriageQueue's inline bulk-apply
+   button. NOT Today's Day log rows below, which have their own class family
+   (day-log-*) now that "Noticed quietly" has been replaced. */
 
 .quiet {
   display: flex;
@@ -253,16 +256,7 @@ button.item:active { transform: scale(0.985); }
   color: var(--ink-2);
 }
 
-/* Social rows are wrapped in .quiet-row (for the inline editor slot below the
-   button), so plain adjacent-sibling .quiet + .quiet no longer spans the
-   delivery list ↔ social rows boundary or between two social rows — cover
-   every combination of the two. */
-.quiet + .quiet,
-.quiet + .quiet-row,
-.quiet-row + .quiet,
-.quiet-row + .quiet-row {
-  border-top: 1px solid var(--line);
-}
+.quiet + .quiet { border-top: 1px solid var(--line); }
 .quiet .when { margin-left: auto; font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
 .quiet.empty { color: var(--muted); font-size: 0.85rem; }
 
@@ -288,16 +282,119 @@ button.quiet-btn::after {
   line-height: 1;
 }
 
-/* A "Didn't happen" row: kept in place (not removed from the list) so Undo
-   has something to restore. Struck-through and dimmed rather than styled as
-   an error — this is a quiet correction, not a warning. */
-.quiet-removed {
+/* ─── Day log (spec: 2026-07-30-day-log-redesign-design) ───
+   One chronological feed replaces the old "Noticed quietly" grouped-by-kind
+   rows (§1). Row anatomy (§6): [icon] name … time · $amount [chip] ›. */
+
+.day-log-entry + .day-log-entry,
+.day-log-entry + .day-log-row,
+.day-log-row + .day-log-entry,
+.day-log-row + .day-log-row {
+  border-top: 1px solid var(--line);
+}
+
+.day-log-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 6px;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+  border-radius: 8px;
+  transition: background var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+
+[role="button"].day-log-row { cursor: pointer; }
+[role="button"].day-log-row:hover,
+[role="button"].day-log-row:active { background: var(--accent-soft); }
+[role="button"].day-log-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Filtered-out rows dim, they never unmount (§2) — the day's shape stays
+   visible even while narrowed to one category. */
+.day-log-row.dim { opacity: 0.35; }
+
+.day-log-row.removed { color: var(--muted); }
+.day-log-row.removed .day-log-name { text-decoration: line-through; }
+
+.category-icon {
+  width: 22px;
+  text-align: center;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+}
+
+.day-log-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.day-log-meta {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Chevron affordance for interactive rows only — a row with nothing to tap
+   (a delivery, a check-in) never shows one. */
+.day-log-chev {
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.day-log-empty { color: var(--muted); font-size: 0.85rem; padding: 8px 6px; }
+
+/* The confident "social" chip has no meta before it to lean on (unlike the
+   question/removed groups, which carry their own margin-left: auto) — pin it
+   to the row's right edge directly so a meta-less row still right-aligns. */
+.day-log-row > .chip { margin-left: auto; }
+
+/* Status chips: the tiny, fixed vocabulary (§4/§7) — `social`, inline
+   `social? Yes/No`, `Removed · Undo`. The "social" chip reuses .chip/
+   .chip-accent (WeekDays' info-tag signature) rather than inventing a new
+   tone. Rendered *inside* the row (§7 — the bug this fixes: the chip used
+   to float on its own detached line). */
+.chip-question-group,
+.chip-removed-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 0.78rem;
   color: var(--muted);
 }
-.quiet-removed .removed-title {
-  text-decoration: line-through;
+
+.chip-question { background: var(--accent-soft); color: var(--accent); }
+
+.chip-question-group button {
+  border: none;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: var(--pill-radius);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
 }
-.quiet-removed .undo-btn {
+.chip-question-group button:hover,
+.chip-question-group button:active {
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.chip-removed-group .undo-btn {
   border: none;
   background: none;
   padding: 0;
@@ -306,41 +403,31 @@ button.quiet-btn::after {
   color: var(--accent);
   cursor: pointer;
 }
-.quiet-removed .undo-btn:hover,
-.quiet-removed .undo-btn:active {
+.chip-removed-group .undo-btn:hover,
+.chip-removed-group .undo-btn:active {
   text-decoration: underline;
 }
 
-/* Ambiguity chip (spec: 2026-07-30-social-classification-granularity-design)
-   — the classifier's lean governs counting until answered, so this is a
-   quiet "this is an assumption" marker, not a warning. Same accent-soft +
-   accent-text signature as the triage queue's chip-suggested and
-   .vendor-label-suggested, so a hint reads consistently everywhere it
-   appears in the app. */
-.uncertain-chip {
+/* ─── Filter strip (§2) ─── */
+.filter-strip {
+  display: flex;
+  gap: 6px;
+  margin: 2px 2px 8px;
+}
+.filter-chip {
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 6px 8px;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-.uncertain-chip button {
-  border: none;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font: inherit;
-  font-weight: 600;
-  padding: 3px 10px;
-  border-radius: var(--pill-radius);
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 1rem;
   cursor: pointer;
-  transition: background var(--dur) var(--ease);
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
-.uncertain-chip button:hover,
-.uncertain-chip button:active {
-  background: var(--accent);
-  color: var(--surface);
-}
+.filter-chip.on { background: var(--accent-soft); border-color: var(--accent); }
 
 /* ── Social event add/edit inline forms ── */
 .social-form {
@@ -502,7 +589,7 @@ button.quiet-btn::after {
 }
 .spend-row + .spend-row { border-top: 1px solid var(--line); }
 
-.spend-service { color: var(--ink-2); }
+.spend-service { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); }
 .spend-amount { color: var(--ink); }
 
 /* ─── Vendor breakdown ("Where it went") ───

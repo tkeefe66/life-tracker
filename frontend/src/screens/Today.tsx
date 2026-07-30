@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { apiGet, apiSend } from "../api";
 import {
-  addDays, buildSocialPatch, buildUncertainResolvePatch, mergeRemovedSocialEvents,
-  subtotalsFromDay, targetLabel,
+  addDays, buildSocialPatch, buildUncertainResolvePatch, categoryForKind, dayLogRowMeta,
+  isDimmed, mergeRemovedSocialEvents, orderDayLog, presentCategories, subtotalsFromDay,
+  targetLabel, type DayLogCategory,
 } from "../lib";
 import DayNav from "../components/DayNav";
+import DayLogRow from "../components/DayLogRow";
+import FilterStrip from "../components/FilterStrip";
+import StatusChip from "../components/StatusChip";
 import SpendSubtotals from "../components/SpendSubtotals";
 
 interface SocialEvent {
@@ -56,11 +61,6 @@ const STRIP_LABELS: Record<string, string> = {
   gym: "Gym", social: "Social", delivery: "Delivery", alcohol: "Alcohol", substances: "Subst.",
 };
 
-function timeLabel(iso: string): string {
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
 interface Props {
   /** A date carried over from Week's "open this day" tap. Consumed once —
    * selects that day, then fires onConsumed() so the pin doesn't stick around
@@ -104,8 +104,14 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
   // persisted anywhere; it resets whenever the visible day changes below.
   const [removed, setRemoved] = useState<Record<string, SocialEvent>>({});
 
+  // The FilterStrip's selection is per-day, same reasoning as `removed`
+  // above — a category active on one day has no meaning once the user
+  // navigates to a different one.
+  const [activeCategory, setActiveCategory] = useState<DayLogCategory | null>(null);
+
   useEffect(() => {
     setRemoved({});
+    setActiveCategory(null);
   }, [data?.date]);
 
   const refresh = useCallback(() => {
@@ -283,7 +289,179 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
   // Merge in any just-removed rows the day query no longer returns, so the
   // "Nothing this day" empty state and the Undo row agree with each other.
   const socialRows = mergeRemovedSocialEvents(data.social_events, removed);
-  const detections = data.deliveries.length + socialRows.length + data.rides.length;
+
+  // The Day log (spec: 2026-07-30-day-log-redesign-design) — one
+  // chronological feed of deliveries, rides, social events, and the day's
+  // logged check-ins. Each entry carries `timeIso` for `orderDayLog` (§1/§6)
+  // and `category` for the FilterStrip (§2/§3); `node` is the rendered row
+  // (plus, for social events, its inline edit form).
+  interface LogEntry { key: string; timeIso: string | null; category: DayLogCategory; node: ReactNode }
+
+  const deliveryEntries: LogEntry[] = data.deliveries.map((d) => {
+    const category = categoryForKind("delivery");
+    return {
+      key: `delivery:${d.ordered_at}`,
+      timeIso: d.ordered_at,
+      category,
+      node: (
+        <DayLogRow
+          key={`delivery:${d.ordered_at}`}
+          category={category}
+          name={`${d.service} order`}
+          meta={dayLogRowMeta(d.ordered_at, d.amount)}
+          dimmed={isDimmed(category, activeCategory)}
+        />
+      ),
+    };
+  });
+
+  const rideEntries: LogEntry[] = data.rides.map((r) => {
+    const category = categoryForKind("ride");
+    const unconfirmed = r.ai_is_work === true && r.user_is_work === null;
+    const name = `${r.service} ${r.is_cancellation ? "cancellation fee" : "ride"}${unconfirmed ? " · work?" : ""}`;
+    return {
+      key: `ride:${r.id}`,
+      timeIso: r.ride_time,
+      category,
+      node: (
+        <DayLogRow
+          key={`ride:${r.id}`}
+          category={category}
+          name={name}
+          meta={dayLogRowMeta(r.ride_time, r.amount)}
+          interactive
+          onClick={() => toggleRideWork(r)}
+          dimmed={isDimmed(category, activeCategory)}
+        />
+      ),
+    };
+  });
+
+  const socialEntries: LogEntry[] = socialRows.map((e) => {
+    const isRemoved = Object.prototype.hasOwnProperty.call(removed, e.gcal_event_id);
+    const category = categoryForKind("social");
+    const dimmed = isDimmed(category, activeCategory);
+
+    // §7: the ambiguity chip renders inside its own row (fixing the old
+    // detached-line bug), and the "social"/"social?" chips are mutually
+    // exclusive with the removed state — a removed row only ever shows
+    // Removed · Undo.
+    const chip = isRemoved
+      ? <StatusChip kind="removed" onUndo={() => undoDidntHappen(e)} />
+      : e.uncertain
+      ? <StatusChip kind="uncertain" onYes={() => resolveUncertain(e, true)} onNo={() => resolveUncertain(e, false)} />
+      : <StatusChip kind="social" />;
+
+    return {
+      key: `social:${e.gcal_event_id}`,
+      timeIso: e.start_at,
+      category,
+      node: (
+        <div className="day-log-entry" key={`social:${e.gcal_event_id}`}>
+          <DayLogRow
+            category={category}
+            name={e.title}
+            meta={isRemoved ? undefined : dayLogRowMeta(e.start_at, e.amount)}
+            chip={chip}
+            interactive={!isRemoved}
+            onClick={!isRemoved ? () => openEditSocial(e) : undefined}
+            dimmed={dimmed}
+            removed={isRemoved}
+          />
+          {editingId === e.gcal_event_id && !isRemoved && (
+            <div className="social-form">
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(ev) => setEditTitle(ev.target.value)}
+                placeholder="Event name"
+                aria-label="Event name"
+              />
+              {/* §7: while the event is unanswered-uncertain, the checkbox
+                  does not render — a checked box would assert a certainty
+                  the system doesn't have. The chip above is the answer
+                  surface. Once answered (or for confident events), the
+                  checkbox is the correction control it always was. */}
+              {!e.uncertain && (
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={editIsSocial}
+                    onChange={(ev) => setEditIsSocial(ev.target.checked)}
+                  />
+                  Counts as social
+                </label>
+              )}
+              <input
+                className="field-num"
+                type="number"
+                min="0"
+                step="0.01"
+                value={editAmount}
+                onChange={(ev) => setEditAmount(ev.target.value)}
+                placeholder="Cost"
+                aria-label="Cost"
+              />
+              <div className="row-actions">
+                <button onClick={cancelEditSocial}>Cancel</button>
+                {e.source === "manual" ? (
+                  <button className="danger" onClick={deleteEditSocial}>Delete</button>
+                ) : (
+                  <button className="danger" onClick={() => didntHappenSocial(e)}>Didn't happen</button>
+                )}
+                <button className="primary" onClick={saveEditSocial}>Save</button>
+              </div>
+            </div>
+          )}
+        </div>
+      ),
+    };
+  });
+
+  // Logged check-ins (§1: "check-ins ... in time order"; the parent spec's
+  // placement rule: no time, so they sit after every timed row). Only gym
+  // and alcohol map onto the closed six-category set (fitness, drink) —
+  // substances has no category home among the six (§3: the cap is a rule,
+  // not a suggestion), so it stays represented only by its own top-of-screen
+  // toggle, unchanged.
+  const checkinEntries: LogEntry[] = [];
+  if (data.gym) {
+    const category = categoryForKind("gym");
+    checkinEntries.push({
+      key: "checkin:gym",
+      timeIso: null,
+      category,
+      node: (
+        <DayLogRow
+          key="checkin:gym"
+          category={category}
+          name="Gym"
+          meta="from your check-in"
+          dimmed={isDimmed(category, activeCategory)}
+        />
+      ),
+    });
+  }
+  if (data.alcohol_level !== null) {
+    const category = categoryForKind("alcohol");
+    checkinEntries.push({
+      key: "checkin:alcohol",
+      timeIso: null,
+      category,
+      node: (
+        <DayLogRow
+          key="checkin:alcohol"
+          category={category}
+          name={`Alcohol · level ${data.alcohol_level}`}
+          meta="from your check-in"
+          dimmed={isDimmed(category, activeCategory)}
+        />
+      ),
+    });
+  }
+
+  const dayLogEntries = orderDayLog([...deliveryEntries, ...rideEntries, ...socialEntries, ...checkinEntries]);
+  const dayLogCategories = presentCategories(dayLogEntries);
 
   return (
     <div>
@@ -341,102 +519,15 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
         )}
       </div>
 
-      <h2 className="section-label">Noticed quietly</h2>
-      {detections === 0 && <p className="quiet empty">Nothing this day.</p>}
-      {data.deliveries.map((d) => (
-        <p className="quiet" key={d.ordered_at}>
-          <span>{d.service} order</span>
-          <span className="when">
-            {d.amount != null && `$${d.amount.toFixed(2).replace(/\.00$/, "")} · `}
-            {timeLabel(d.ordered_at)}
-          </span>
-        </p>
-      ))}
-      {data.rides.map((r) => {
-        const unconfirmed = r.ai_is_work === true && r.user_is_work === null;
-        return (
-          <button className="quiet quiet-btn" key={r.id} onClick={() => toggleRideWork(r)}>
-            <span>{r.service} {r.is_cancellation ? "cancellation fee" : "ride"}{unconfirmed ? " · work?" : ""}</span>
-            <span className="when">
-              {r.amount != null && `$${r.amount.toFixed(2).replace(/\.00$/, "")} · `}
-              {timeLabel(r.ride_time)}
-            </span>
-          </button>
-        );
-      })}
-      {socialRows.map((e) => {
-        const isRemoved = Object.prototype.hasOwnProperty.call(removed, e.gcal_event_id);
-        return (
-          <div className="quiet-row" key={e.gcal_event_id}>
-            {isRemoved ? (
-              <div className="quiet quiet-removed">
-                <span className="removed-title">{e.title}</span>
-                <span className="when">
-                  Removed · <button className="undo-btn" onClick={() => undoDidntHappen(e)}>Undo</button>
-                </span>
-              </div>
-            ) : (
-              <button className="quiet quiet-btn" onClick={() => openEditSocial(e)}>
-                <span>{e.title}</span>
-                <span className="when">
-                  {e.amount !== null
-                    ? `$${e.amount.toFixed(2).replace(/\.00$/, "")}`
-                    : e.source === "manual"
-                    ? "manual"
-                    : e.is_social
-                    ? "counted as social"
-                    : "not counted"}
-                </span>
-              </button>
-            )}
-            {e.uncertain && !isRemoved && (
-              <div className="uncertain-chip">
-                <span>social?</span>
-                <button onClick={() => resolveUncertain(e, true)}>Yes</button>
-                <button onClick={() => resolveUncertain(e, false)}>No</button>
-              </div>
-            )}
-            {editingId === e.gcal_event_id && !isRemoved && (
-              <div className="social-form">
-                <input
-                  type="text"
-                  value={editTitle}
-                  onChange={(ev) => setEditTitle(ev.target.value)}
-                  placeholder="Event name"
-                  aria-label="Event name"
-                />
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={editIsSocial}
-                    onChange={(ev) => setEditIsSocial(ev.target.checked)}
-                  />
-                  Counts as social
-                </label>
-                <input
-                  className="field-num"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={editAmount}
-                  onChange={(ev) => setEditAmount(ev.target.value)}
-                  placeholder="Cost"
-                  aria-label="Cost"
-                />
-                <div className="row-actions">
-                  <button onClick={cancelEditSocial}>Cancel</button>
-                  {e.source === "manual" ? (
-                    <button className="danger" onClick={deleteEditSocial}>Delete</button>
-                  ) : (
-                    <button className="danger" onClick={() => didntHappenSocial(e)}>Didn't happen</button>
-                  )}
-                  <button className="primary" onClick={saveEditSocial}>Save</button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
+      <h2 className="section-label">Day log</h2>
+      {dayLogEntries.length === 0 ? (
+        <p className="day-log-empty">Nothing this day.</p>
+      ) : (
+        <>
+          <FilterStrip categories={dayLogCategories} active={activeCategory} onSelect={setActiveCategory} />
+          {dayLogEntries.map((entry) => entry.node)}
+        </>
+      )}
 
       {addingSocial ? (
         <div className="social-form">

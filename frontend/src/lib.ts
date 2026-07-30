@@ -374,6 +374,106 @@ export function mergeRemovedSocialEvents<T extends { gcal_event_id: string; star
 }
 
 /**
+ * Day log (spec: 2026-07-30-day-log-redesign-design) — the closed six-category
+ * set (§3): food, transport, social, drink, fitness, money. Adding a seventh
+ * is a deliberate design event, same weight as adding a chart color. Icons
+ * are emoji glyphs only — no color fields (§4, mockup option B) — so no
+ * per-category color tokens exist here on purpose.
+ */
+export type DayLogCategory = "food" | "transport" | "social" | "drink" | "fitness" | "money";
+
+export const DAY_LOG_CATEGORY_ORDER: DayLogCategory[] = [
+  "food", "transport", "social", "drink", "fitness", "money",
+];
+
+const DAY_LOG_GLYPHS: Record<DayLogCategory, string> = {
+  food: "🍔", transport: "🚗", social: "🎉", drink: "🍺", fitness: "🏋", money: "💰",
+};
+
+/** The emoji glyph for a category — the only visual encoding a category ever
+ * gets (§4). Shared by CategoryIcon (Day log rows, FilterStrip) and the Week
+ * screen's SpendSubtotals rows (§8). */
+export function categoryGlyph(category: DayLogCategory): string {
+  return DAY_LOG_GLYPHS[category];
+}
+
+/**
+ * Row-kind → category (§5: "icons encode source, never inference"). A
+ * delivery-app order is `food` because it came from a delivery service, full
+ * stop — never a guess about what was ordered. `kind` values match the
+ * existing METRICS keys (`delivery`, `ride`, `social`, `alcohol`, `gym`) so
+ * this doubles as the mapping for SpendSubtotals' `SpendRow.kind`. Any
+ * unrecognized kind (future bank rows — see Future work) falls back to
+ * `money` rather than throwing, since a display helper should degrade, not
+ * crash the screen (same convention as `flowLabel`).
+ */
+export function categoryForKind(kind: string): DayLogCategory {
+  switch (kind) {
+    case "delivery": return "food";
+    case "ride": return "transport";
+    case "social": return "social";
+    case "alcohol": return "drink";
+    case "gym": return "fitness";
+    default: return "money";
+  }
+}
+
+/** Clock-time label for a Day log row (`7:37 PM`). An unparsable timestamp
+ * degrades to "" rather than "Invalid Date" — a display helper should never
+ * crash the screen over a bad string. */
+export function dayLogTimeLabel(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+/**
+ * Row meta text (§6 row anatomy): `time · $amount`, time strictly to the
+ * left of the amount — the bug this fixes is the old "Noticed quietly"
+ * ordering (`$ · time`), which read backwards. Either half may be absent (a
+ * check-in has no time; an amount-less social event has no cost) and the
+ * join degrades gracefully rather than leaving a dangling " · ".
+ */
+export function dayLogRowMeta(timeIso: string | null, amount: number | null): string {
+  const parts: string[] = [];
+  if (timeIso) {
+    const label = dayLogTimeLabel(timeIso);
+    if (label) parts.push(label);
+  }
+  if (amount != null) parts.push(money(amount));
+  return parts.join(" · ");
+}
+
+/**
+ * Feed ordering (§1, §6): one chronological story. Check-ins carry no time
+ * (`timeIso: null`) — they are placed after every timed row rather than
+ * interleaved by insertion order, per the spec's explicit placement rule.
+ * Both partitions are otherwise stable: equal-time items and the untimed
+ * group keep their input order.
+ */
+export function orderDayLog<T extends { timeIso: string | null }>(items: T[]): T[] {
+  const timed = items.filter((i) => i.timeIso !== null);
+  const untimed = items.filter((i) => i.timeIso === null);
+  timed.sort((a, b) => new Date(a.timeIso as string).getTime() - new Date(b.timeIso as string).getTime());
+  return [...timed, ...untimed];
+}
+
+/** Categories actually present in a day's rows, in the canonical six-category
+ * order — never the full six, and never in insertion order (FilterStrip's
+ * icon order should stay stable regardless of which row happened to load
+ * first). */
+export function presentCategories<T extends { category: DayLogCategory }>(items: T[]): DayLogCategory[] {
+  const present = new Set(items.map((i) => i.category));
+  return DAY_LOG_CATEGORY_ORDER.filter((c) => present.has(c));
+}
+
+/** Filter predicate (§2): filtered-out rows dim, they never unmount — a day's
+ * shape stays visible even while narrowed to one category. No active filter
+ * (`null`) dims nothing. */
+export function isDimmed(category: DayLogCategory, active: DayLogCategory | null): boolean {
+  return active !== null && active !== category;
+}
+
+/**
  * Whether Google integration is broken badly enough to warn on EVERY screen,
  * not just Settings (CLAUDE.md: "Google auth expiry surfaces as a visible
  * banner in the app, never silent missing data"). Only `"error: auth"`

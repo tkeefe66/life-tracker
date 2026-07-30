@@ -554,3 +554,122 @@ describe("googleAuthBroken", () => {
     expect(googleAuthBroken(null, null)).toBe(false);
   });
 });
+
+import {
+  categoryForKind, categoryGlyph, dayLogRowMeta, dayLogTimeLabel, isDimmed, orderDayLog,
+  presentCategories, type DayLogCategory,
+} from "./lib";
+
+describe("categoryForKind", () => {
+  it("maps every known row kind to its category (spec §5)", () => {
+    expect(categoryForKind("delivery")).toBe("food");
+    expect(categoryForKind("ride")).toBe("transport");
+    expect(categoryForKind("social")).toBe("social");
+    expect(categoryForKind("alcohol")).toBe("drink");
+    expect(categoryForKind("gym")).toBe("fitness");
+  });
+
+  it("degrades an unrecognized kind to money rather than throwing", () => {
+    expect(categoryForKind("bank")).toBe("money");
+    expect(categoryForKind("")).toBe("money");
+  });
+});
+
+describe("categoryGlyph", () => {
+  it("returns a distinct glyph for each of the six categories", () => {
+    const categories: DayLogCategory[] = ["food", "transport", "social", "drink", "fitness", "money"];
+    const glyphs = categories.map(categoryGlyph);
+    expect(new Set(glyphs).size).toBe(6);
+  });
+});
+
+describe("dayLogTimeLabel", () => {
+  it("formats a valid timestamp", () => {
+    expect(dayLogTimeLabel("2026-07-24T19:37:00")).toBe("7:37 PM");
+  });
+
+  it("degrades an unparsable timestamp to an empty string", () => {
+    expect(dayLogTimeLabel("not-a-date")).toBe("");
+  });
+});
+
+describe("dayLogRowMeta", () => {
+  it("joins time and amount, time first (spec §6 — fixes the old $ · time order)", () => {
+    expect(dayLogRowMeta("2026-07-24T19:37:00", 20.93)).toBe("7:37 PM · $20.93");
+  });
+
+  it("shows only the time when there is no amount", () => {
+    expect(dayLogRowMeta("2026-07-24T19:37:00", null)).toBe("7:37 PM");
+  });
+
+  it("shows only the amount when there is no time (a check-in-like row)", () => {
+    expect(dayLogRowMeta(null, 18.85)).toBe("$18.85");
+  });
+
+  it("is empty when both are absent", () => {
+    expect(dayLogRowMeta(null, null)).toBe("");
+  });
+
+  it("trims a whole-dollar amount the same way money() does", () => {
+    expect(dayLogRowMeta(null, 20)).toBe("$20");
+  });
+});
+
+interface Orderable { key: string; timeIso: string | null }
+const item = (key: string, timeIso: string | null): Orderable => ({ key, timeIso });
+
+describe("orderDayLog", () => {
+  it("sorts timed rows chronologically", () => {
+    const items = [item("evening", "2026-07-24T19:37:00"), item("morning", "2026-07-24T10:17:00")];
+    expect(orderDayLog(items).map((i) => i.key)).toEqual(["morning", "evening"]);
+  });
+
+  it("places untimed check-in rows after every timed row (spec §1/§6)", () => {
+    const items = [
+      item("checkin", null),
+      item("evening", "2026-07-24T19:37:00"),
+      item("morning", "2026-07-24T10:17:00"),
+    ];
+    expect(orderDayLog(items).map((i) => i.key)).toEqual(["morning", "evening", "checkin"]);
+  });
+
+  it("preserves input order among multiple untimed rows", () => {
+    const items = [item("gym", null), item("alcohol", null)];
+    expect(orderDayLog(items).map((i) => i.key)).toEqual(["gym", "alcohol"]);
+  });
+
+  it("is a no-op on an all-timed, already-sorted list", () => {
+    const items = [item("a", "2026-07-24T08:00:00"), item("b", "2026-07-24T09:00:00")];
+    expect(orderDayLog(items).map((i) => i.key)).toEqual(["a", "b"]);
+  });
+});
+
+interface Categorized { category: DayLogCategory }
+const cat = (category: DayLogCategory): Categorized => ({ category });
+
+describe("presentCategories", () => {
+  it("dedupes and returns the canonical six-category order regardless of input order", () => {
+    const items = [cat("drink"), cat("food"), cat("food"), cat("transport")];
+    expect(presentCategories(items)).toEqual(["food", "transport", "drink"]);
+  });
+
+  it("returns an empty list for an empty day", () => {
+    expect(presentCategories([])).toEqual([]);
+  });
+
+  it("never returns more than the categories actually present", () => {
+    expect(presentCategories([cat("money")])).toEqual(["money"]);
+  });
+});
+
+describe("isDimmed", () => {
+  it("dims nothing when no filter is active", () => {
+    expect(isDimmed("food", null)).toBe(false);
+    expect(isDimmed("transport", null)).toBe(false);
+  });
+
+  it("dims every category except the active one", () => {
+    expect(isDimmed("food", "transport")).toBe(true);
+    expect(isDimmed("transport", "transport")).toBe(false);
+  });
+});
