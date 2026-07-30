@@ -53,6 +53,61 @@ def test_security_headers_present(temp_db_path):
     assert "includesubdomains" in resp.headers["strict-transport-security"].lower()
 
 
+# ── Cache-Control (SPA stale-deploy fix) ──────────────────────────────────────
+#
+# Regression: index.html was served with an ETag/Last-Modified but no
+# Cache-Control, so browsers heuristically cached it and kept requesting the
+# previous deploy's content-hashed asset filenames until a hard refresh.
+
+def test_api_responses_get_no_cache_control_header(temp_db_path):
+    """/api/* must be left exactly as it was — no caching header added here,
+    regardless of the static-asset policy below."""
+    client = _client(temp_db_path)
+    resp = client.get("/api/health")
+    assert "cache-control" not in resp.headers
+
+
+def test_cache_control_for_path_pure_function():
+    """Unit-test the decision function directly — the dist mount isn't built
+    in the test environment (no frontend/dist), so this is the reliable way
+    to pin the policy without depending on a built frontend."""
+    from app.api import cache_control_for_path
+
+    assert cache_control_for_path("/api/targets") is None
+    assert cache_control_for_path("/api/health") is None
+    assert cache_control_for_path("/assets/index-abc123.js") == "public, max-age=31536000, immutable"
+    assert cache_control_for_path("/assets/index-abc123.css") == "public, max-age=31536000, immutable"
+    assert cache_control_for_path("/") == "no-cache"
+    assert cache_control_for_path("/index.html") == "no-cache"
+    assert cache_control_for_path("/some/client/route") == "no-cache"  # SPA fallback
+
+
+def test_spa_shell_and_assets_get_correct_cache_control_through_the_full_stack(tmp_path, temp_db_path, monkeypatch):
+    """End-to-end through the real StaticFiles mount: build a throwaway dist/
+    directory, point FRONTEND_DIST at it, and confirm the middleware header
+    survives StaticFiles' own response (which only sets ETag/Last-Modified)."""
+    from fastapi.testclient import TestClient
+
+    from app import api as api_mod
+
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<html>shell</html>")
+    (assets / "index-abc123.js").write_text("console.log('hi')")
+
+    monkeypatch.setattr(api_mod, "FRONTEND_DIST", dist)
+    client = TestClient(api_mod.create_app(), base_url="https://testserver")
+
+    root_resp = client.get("/")
+    assert root_resp.status_code == 200
+    assert root_resp.headers["cache-control"] == "no-cache"
+
+    asset_resp = client.get("/assets/index-abc123.js")
+    assert asset_resp.status_code == 200
+    assert asset_resp.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
 # ── Sessions: expiry, revocation, logout ──────────────────────────────────────
 
 def test_session_cookie_is_not_derivable_from_password(temp_db_path):

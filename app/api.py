@@ -3,6 +3,7 @@ import datetime
 import logging
 import threading
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +23,30 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "same-origin",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
 }
+
+
+def cache_control_for_path(path: str) -> Optional[str]:
+    """Cache-Control decision for a response path — a pure function so the
+    policy is unit-testable without spinning up the ASGI app.
+
+    - `/api/*`: left alone entirely (returns None) — API responses must never
+      pick up the static-asset caching rules below.
+    - `/assets/*`: vite content-hashes these filenames on every build, so a
+      given URL's content never changes — safe to cache for a year and mark
+      immutable.
+    - everything else (the SPA shell `index.html`, served both at `/` and as
+      the StaticFiles(html=True) fallback for unmatched client-side routes):
+      `no-cache`, NOT `no-store`. `no-cache` still forces revalidation on
+      every load (so a stale shell can't keep pointing at last deploy's
+      hashed asset filenames — the bug this fixes), but the ETag StaticFiles
+      already sets makes that revalidation a cheap 304 instead of a full
+      re-fetch. `no-store` would throw that away for no benefit.
+    """
+    if path.startswith("/api/"):
+        return None
+    if path.startswith("/assets/"):
+        return "public, max-age=31536000, immutable"
+    return "no-cache"
 
 # ── Login throttling ──────────────────────────────────────────────────────────
 # State lives in app_settings (not memory) so it survives a redeploy. Single-user
@@ -120,6 +145,9 @@ def create_app(lifespan=None) -> FastAPI:
         response = await call_next(request)
         for name, value in SECURITY_HEADERS.items():
             response.headers[name] = value
+        cache_control = cache_control_for_path(request.url.path)
+        if cache_control is not None:
+            response.headers["Cache-Control"] = cache_control
         return response
 
     @app.get("/api/health")
