@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import { apiGet, apiSend } from "../api";
 import {
   addDays, buildSocialPatch, buildUncertainResolvePatch, categoryForKind, dayLogRowMeta,
-  isDimmed, mergeRemovedSocialEvents, orderDayLog, presentCategories, subtotalsFromDay,
-  targetLabel, type DayLogCategory,
+  isDimmed, mergeRemovedSocialEvents, mondayOf, orderDayLog, presentCategories, subtotalsFromDay,
+  targetLabel, weekRangeLabel, type DayLogCategory,
 } from "../lib";
 import DayNav from "../components/DayNav";
 import DayLogRow from "../components/DayLogRow";
@@ -562,7 +562,11 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
 
       {week && (
         <>
-          <h2 className="section-label">This week</h2>
+          <h2 className="section-label">
+            {mondayOf(data.date) === mondayOf(todayIso ?? data.date)
+              ? "This week"
+              : `Week of ${weekRangeLabel(mondayOf(data.date))}`}
+          </h2>
           <div className="week-strip">
             {STRIP_ORDER.map((key) => {
               const m = week.metrics[key];
