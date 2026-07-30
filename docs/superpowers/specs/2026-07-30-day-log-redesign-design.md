@@ -81,7 +81,10 @@ claims metric membership; chips do that.
 
 ### 6. Row anatomy
 
-`[icon] name ……… time · $amount [status chip] ›`
+`[icon] name ……… [status chip] time · $amount ›`
+
+(Chip inside the meta, so amounts right-align down the list — revised from
+chip-outermost after seeing it live on 2026-07-30.)
 
 - Time sits **left of the amount** (`7:37 PM · $20.93`).
 - Money formatting unchanged (`$16.31`, `$20`, real `$0` shows).
