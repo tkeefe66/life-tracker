@@ -18,11 +18,15 @@ interface Ride {
   id: number;
   service: string;
   ride_at: string;
+  // Resolved TRUE ride time (parsed trip time when known, else ride_at) —
+  // display this, not ride_at, which is only the email-arrival time.
+  ride_time: string;
   subject: string;
   amount: number | null;
   ai_is_work: boolean | null;
   user_is_work: boolean | null;
   is_work: boolean;
+  is_cancellation: boolean | null;
 }
 
 interface TodayData {
@@ -331,10 +335,10 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
         const unconfirmed = r.ai_is_work === true && r.user_is_work === null;
         return (
           <button className="quiet quiet-btn" key={r.id} onClick={() => toggleRideWork(r)}>
-            <span>{r.service} ride{unconfirmed ? " · work?" : ""}</span>
+            <span>{r.service} {r.is_cancellation ? "cancellation fee" : "ride"}{unconfirmed ? " · work?" : ""}</span>
             <span className="when">
               {r.amount != null && `$${r.amount.toFixed(2).replace(/\.00$/, "")} · `}
-              {timeLabel(r.ride_at)}
+              {timeLabel(r.ride_time)}
             </span>
           </button>
         );

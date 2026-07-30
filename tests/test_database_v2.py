@@ -420,6 +420,55 @@ def test_rides_migration_is_idempotent(temp_db_path):
     assert len(rows) == 1 and rows[0]["amount"] == 14.50
 
 
+# ── Effective date (night cutoff) — rides only ────────────────────────────────
+
+def test_get_rides_range_buckets_late_night_ride_into_previous_day(temp_db_path):
+    """A ride at 2026-07-25T02:34 belongs to 2026-07-24 — the SQL bucketing/
+    filtering must agree with metrics.effective_date."""
+    db = _db(temp_db_path)
+    db.add_ride("r1", "Uber", "2026-07-25T02:40:00-06:00", "2026-07-25T02:34", "Late ride", 9.0)
+
+    # The 25th's range must NOT include it...
+    assert db.get_rides_range("2026-07-25", "2026-07-25") == []
+    # ...the 24th's range must.
+    rows = db.get_rides_range("2026-07-24", "2026-07-24")
+    assert len(rows) == 1
+    assert rows[0]["subject"] == "Late ride"
+
+
+def test_get_rides_range_monday_early_morning_buckets_into_sunday_previous_week(temp_db_path):
+    """Net effect on weekly bucketing: a Monday 01:00 ride belongs to Sunday —
+    the previous week's range must include it, the Monday-starting week must not."""
+    db = _db(temp_db_path)
+    db.add_ride("r1", "Uber", "2026-07-20T01:10:00-06:00", "2026-07-20T01:00", "Monday early ride", 12.0)
+
+    # Week of 2026-07-20 (Mon) .. 2026-07-26 (Sun) must NOT include it.
+    assert db.get_rides_range("2026-07-20", "2026-07-26") == []
+    # Week of 2026-07-13 (Mon) .. 2026-07-19 (Sun) must.
+    rows = db.get_rides_range("2026-07-13", "2026-07-19")
+    assert len(rows) == 1
+
+
+def test_get_rides_range_exposes_resolved_ride_time(temp_db_path):
+    """`ride_time` resolves to the TRUE ride time (parsed ride_key) rather than
+    the raw email-arrival ride_at, so the frontend can display it."""
+    db = _db(temp_db_path)
+    db.add_ride("r1", "Uber", "2026-07-25T08:10:00-06:00", "2026-07-25T02:34", "Late ride", 9.0)
+    row = db.get_rides_range("2026-07-24", "2026-07-24")[0]
+    assert row["ride_time"] == "2026-07-25T02:34"
+    assert row["ride_at"] == "2026-07-25T08:10:00-06:00"  # raw column unchanged
+
+
+def test_get_rides_range_falls_back_to_ride_at_when_ride_key_not_iso(temp_db_path):
+    """When ride_key parsing failed, it holds the "{day}|{subject}" fallback
+    shape — ride_time must fall back to ride_at rather than exposing that
+    non-timestamp string."""
+    db = _db(temp_db_path)
+    db.add_ride("r1", "Uber", "2026-07-25T08:10:00-06:00", "2026-07-25|Your trip", "Your trip", 9.0)
+    row = db.get_rides_range("2026-07-25", "2026-07-25")[0]
+    assert row["ride_time"] == "2026-07-25T08:10:00-06:00"
+
+
 # ── Sessions ──────────────────────────────────────────────────────────────────
 
 def test_session_create_get_delete_roundtrip(temp_db_path):

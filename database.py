@@ -11,6 +11,7 @@ from datetime import date
 import pytz
 
 from config import DATABASE_URL, DATABASE_PATH, TIMEZONE
+from metrics import NIGHT_CUTOFF_HOUR
 
 
 def _today() -> date:
@@ -65,6 +66,48 @@ def _serial():
 
 def _bool_type():
     return "BOOLEAN" if USE_POSTGRES else "INTEGER"
+
+
+# ── Rides: effective-date (night cutoff) SQL helpers ──────────────────────────
+# Dialect-aware twin of metrics.effective_date — both must agree on the exact
+# cutoff. See rides queries below for usage.
+
+def _ride_true_ts_expr() -> str:
+    """SQL expression resolving to the TRUE ride timestamp for a `rides` row:
+    `ride_key` when it has the ISO shape ('YYYY-MM-DDTHH:MM...') the parsed
+    trip time takes, else `ride_at` (the email-arrival fallback). `ride_key`
+    falls back to the non-ISO "{day}|{subject}" shape when parsing failed
+    (see jobs/scan_gmail.py) — that shape never matches the pattern below."""
+    if USE_POSTGRES:
+        return "CASE WHEN ride_key ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}' THEN ride_key ELSE ride_at END"
+    return ("CASE WHEN ride_key GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]*' "
+            "THEN ride_key ELSE ride_at END")
+
+
+def _effective_date_expr(ts_expr: str) -> str:
+    """Wrap a SQL timestamp expression to bucket/filter it by "effective
+    date" — a timestamp before NIGHT_CUTOFF_HOUR local belongs to the
+    PREVIOUS calendar day (metrics.effective_date is the pure Python twin).
+    Returns a TEXT 'YYYY-MM-DD' expression, matching every other date
+    comparison in this module (e.g. `substr(ride_at, 1, 10) >= {p}`).
+
+    Deliberately NOT `date(<ts>, '-N hours')` / `(<ts>::timestamp - interval)`
+    parsed as a real timestamp: `ride_at` strings carry a trailing local UTC
+    offset (e.g. "-06:00"), and SQLite's date()/datetime() functions silently
+    normalize an offset-bearing string to UTC before doing arithmetic on it —
+    verified empirically: `date('2026-07-15T02:34:00-06:00', '-4 hours')`
+    returns '2026-07-15', not '2026-07-14', because SQLite converts through
+    UTC first. That would defeat the cutoff for exactly the timestamps that
+    need it most (the ride_at fallback). Operating on the literal wall-clock
+    date/hour substrings sidesteps timezone parsing entirely on both dialects,
+    so they can never drift apart."""
+    hour_expr = f"CAST(substr(({ts_expr}), 12, 2) AS INTEGER)"
+    day_expr = f"substr(({ts_expr}), 1, 10)"
+    if USE_POSTGRES:
+        shifted = f"to_char(({day_expr})::date - INTERVAL '1 day', 'YYYY-MM-DD')"
+    else:
+        shifted = f"date({day_expr}, '-1 day')"
+    return f"(CASE WHEN {hour_expr} < {NIGHT_CUTOFF_HOUR} THEN {shifted} ELSE {day_expr} END)"
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -568,6 +611,7 @@ def _init_v2_tables():
                 ai_is_work {bool_t},
                 ai_confidence REAL,
                 user_is_work {bool_t},
+                is_cancellation {bool_t},
                 detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -701,6 +745,18 @@ def _init_v2_tables():
             cols = [r["name"] for r in c.execute("PRAGMA table_info(bank_accounts)").fetchall()]
             if "nickname" not in cols:
                 c.execute("ALTER TABLE bank_accounts ADD COLUMN nickname TEXT")
+
+        # is_cancellation: nullable bool on rides. NULL means "not yet
+        # determined" (pre-migration rows, or a row inserted before this
+        # column existed) — jobs/scan_gmail.py backfills it the next time the
+        # ride's message is seen in a scan (has_ride guard already refetches
+        # it every run). Label-only: never changes count/spend aggregates.
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE rides ADD COLUMN IF NOT EXISTS is_cancellation BOOLEAN")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(rides)").fetchall()]
+            if "is_cancellation" not in cols:
+                c.execute("ALTER TABLE rides ADD COLUMN is_cancellation INTEGER")
 
 
 # ── Check-ins ─────────────────────────────────────────────────────────────────
@@ -983,15 +1039,40 @@ def has_ride(gmail_message_id):
         return c.fetchone() is not None
 
 
-def add_ride(gmail_message_id, service, ride_at, ride_key, subject, amount=None):
+def add_ride(gmail_message_id, service, ride_at, ride_key, subject, amount=None, is_cancellation=None):
     p = _p()
     with _cursor(write=True) as c:
         c.execute(
-            f"""INSERT INTO rides (gmail_message_id, service, ride_at, ride_key, subject, amount)
-                VALUES ({p}, {p}, {p}, {p}, {p}, {p}) ON CONFLICT(gmail_message_id) DO NOTHING""",
-            (gmail_message_id, service, ride_at, ride_key, subject, amount),
+            f"""INSERT INTO rides (gmail_message_id, service, ride_at, ride_key, subject, amount, is_cancellation)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}) ON CONFLICT(gmail_message_id) DO NOTHING""",
+            (gmail_message_id, service, ride_at, ride_key, subject, amount, is_cancellation),
         )
         return c.rowcount > 0
+
+
+def get_ride_by_message_id(gmail_message_id):
+    """Existence check that also surfaces `is_cancellation` so the scan can
+    backfill it on an already-ingested ride (see jobs/scan_gmail.py) without a
+    second round trip."""
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"SELECT id, is_cancellation FROM rides WHERE gmail_message_id = {p}",
+            (gmail_message_id,),
+        )
+        row = c.fetchone()
+        if row is None:
+            return None
+        out = dict(row)
+        if out["is_cancellation"] is not None:
+            out["is_cancellation"] = bool(out["is_cancellation"])
+        return out
+
+
+def set_ride_cancellation(ride_id, is_cancellation):
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE rides SET is_cancellation = {p} WHERE id = {p}", (is_cancellation, ride_id))
 
 
 def find_ride_by_key(service, ride_key):
@@ -1034,24 +1115,37 @@ def set_ride_work_override(ride_id, is_work):
 
 
 def _ride_bool_rows(rows):
-    """Cast the nullable ai_is_work / user_is_work columns to real bool-or-None —
-    SQLite returns 0/1 ints, which would otherwise leak into the API as non-bool JSON."""
+    """Cast the nullable ai_is_work / user_is_work / is_cancellation columns to
+    real bool-or-None — SQLite returns 0/1 ints, which would otherwise leak
+    into the API as non-bool JSON."""
     out = [dict(r) for r in rows]
     for r in out:
-        for col in ("ai_is_work", "user_is_work"):
+        for col in ("ai_is_work", "user_is_work", "is_cancellation"):
             if r[col] is not None:
                 r[col] = bool(r[col])
     return out
 
 
 def get_rides_range(start_day, end_day):
+    """Buckets AND filters by "effective date" (night cutoff), not raw
+    `date(ride_at)` — see metrics.effective_date and _effective_date_expr
+    above. The bucketing timestamp is the TRUE ride time when known
+    (`ride_key`'s parsed trip time), falling back to `ride_at` (email arrival)
+    only when `ride_key` isn't in the ISO shape (see _ride_true_ts_expr).
+    `ride_at` itself is never rewritten — the row still carries it unchanged
+    (see set_ride_amount) — but the resolved true timestamp is also exposed
+    as `ride_time` so callers can display/group by it without recomputing the
+    CASE logic in Python."""
     p = _p()
+    ts_expr = _ride_true_ts_expr()
+    eff_date_expr = _effective_date_expr(ts_expr)
     with _cursor() as c:
         c.execute(
-            f"""SELECT id, service, ride_at, subject, amount, ai_is_work, ai_confidence, user_is_work
+            f"""SELECT id, service, ride_at, ride_key, subject, amount, ai_is_work, ai_confidence,
+                       user_is_work, is_cancellation, {ts_expr} AS ride_time
                 FROM rides
-                WHERE substr(ride_at, 1, 10) >= {p} AND substr(ride_at, 1, 10) <= {p}
-                ORDER BY ride_at""",
+                WHERE {eff_date_expr} >= {p} AND {eff_date_expr} <= {p}
+                ORDER BY {ts_expr}""",
             (start_day, end_day),
         )
         return _ride_bool_rows(c.fetchall())

@@ -580,6 +580,108 @@ def test_ride_at_immutable_when_followup_lands_on_next_calendar_day(temp_db_path
     assert rides[0]["ride_at"].startswith("2026-07-19")  # ride_at never moved to the 20th
 
 
+# ── Cancellation-fee detection (label only) ──────────────────────────────────
+
+_CANCELLATION_SNIPPET = (
+    "Jul 25, 2026 1:52 AM Canceled Jul 25, 2026 , 1:52 AM We'll connect "
+    "another time, Tom Here's the receipt for your canceled trip. "
+    "Total $5.65 A fee is charged if there is a cancelation after the"
+)
+
+
+def test_cancellation_ride_flagged_at_insert_time(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import scan_gmail
+
+    ride = {"gmail_message_id": "r1", "sender": "noreply@uber.com",
+            "subject": "Your Saturday night trip with Uber",
+            "ordered_at": "2026-07-25T01:55:00-06:00",
+            "snippet": _CANCELLATION_SNIPPET}
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [ride])
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    monkeypatch.setattr(scan_gmail.ai_metrics, "classify_work_ride",
+                        lambda *a, **k: {"is_work": False, "confidence": 0.0})
+
+    scan_gmail.run()
+
+    rides = db.get_rides_range("2026-07-24", "2026-07-25")
+    assert len(rides) == 1
+    assert bool(rides[0]["is_cancellation"]) is True
+    # Label only: still a ride, still counts, still carries its amount/spend.
+    assert rides[0]["amount"] == 5.65
+
+
+def test_completed_ride_not_flagged_as_cancellation(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import scan_gmail
+
+    ride = {"gmail_message_id": "r1", "sender": "noreply@uber.com",
+            "subject": "Your Saturday night trip with Uber",
+            "ordered_at": "2026-07-25T02:40:00-06:00",
+            "snippet": "Jul 25, 2026 2:34 AM This is your charge summary "
+                       "This document acknowledges your trip completion. Total $27.82"}
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [ride])
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    monkeypatch.setattr(scan_gmail.ai_metrics, "classify_work_ride",
+                        lambda *a, **k: {"is_work": False, "confidence": 0.0})
+
+    scan_gmail.run()
+
+    rides = db.get_rides_range("2026-07-24", "2026-07-25")
+    assert len(rides) == 1
+    assert bool(rides[0]["is_cancellation"]) is False
+
+
+def test_already_seen_ride_backfills_null_cancellation_flag(temp_db_path, monkeypatch):
+    """The scan currently `continue`s once has_ride is true — this must not
+    stay a dead end for rows that predate the is_cancellation column: on the
+    next sighting of the same message, a NULL flag gets derived and set."""
+    import database as db
+    from jobs import scan_gmail
+
+    db.add_ride("r1", "Uber", "2026-07-25T01:55:00-06:00", "2026-07-25T01:52",
+                "Your Saturday night trip with Uber", 5.65)  # is_cancellation left NULL
+    ride = {"gmail_message_id": "r1", "sender": "noreply@uber.com",
+            "subject": "Your Saturday night trip with Uber",
+            "ordered_at": "2026-07-25T01:55:00-06:00",
+            "snippet": _CANCELLATION_SNIPPET}
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [ride])
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    ai_calls = []
+    monkeypatch.setattr(scan_gmail.ai_metrics, "classify_work_ride",
+                        lambda *a, **k: ai_calls.append(1) or {"is_work": False, "confidence": 0.0})
+
+    scan_gmail.run()
+
+    rides = db.get_rides_range("2026-07-24", "2026-07-25")
+    assert len(rides) == 1  # no duplicate row created
+    assert bool(rides[0]["is_cancellation"]) is True
+    assert ai_calls == []  # backfill path never re-runs work classification
+
+
+def test_already_flagged_ride_not_reclassified_on_backfill(temp_db_path, monkeypatch):
+    """Once is_cancellation is set (not NULL), the backfill must leave it alone
+    even if scanned again — only a NULL flag triggers the derive-and-set path."""
+    import database as db
+    from jobs import scan_gmail
+
+    db.add_ride("r1", "Uber", "2026-07-25T01:55:00-06:00", "2026-07-25T01:52",
+                "Your Saturday night trip with Uber", 5.65, is_cancellation=False)
+    ride = {"gmail_message_id": "r1", "sender": "noreply@uber.com",
+            "subject": "Your Saturday night trip with Uber",
+            "ordered_at": "2026-07-25T01:55:00-06:00",
+            "snippet": _CANCELLATION_SNIPPET}  # would derive True if re-evaluated
+    monkeypatch.setattr(scan_gmail, "fetch_delivery_candidates", lambda: [ride])
+    monkeypatch.setattr(scan_gmail.google_auth, "is_configured", lambda: True)
+    monkeypatch.setattr(scan_gmail.ai_metrics, "classify_work_ride",
+                        lambda *a, **k: {"is_work": False, "confidence": 0.0})
+
+    scan_gmail.run()
+
+    rides = db.get_rides_range("2026-07-24", "2026-07-25")
+    assert bool(rides[0]["is_cancellation"]) is False  # untouched, stayed False
+
+
 def test_query_uses_union_of_delivery_and_ride_domains():
     from services import gmail_service
     q = gmail_service._query()
