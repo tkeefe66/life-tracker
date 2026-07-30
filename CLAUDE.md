@@ -85,10 +85,11 @@ as a scored line.
   incidental: the user's Uber receipts are auto-trashed, so without it the scan sees
   nothing. Gmail purges trash after ~30 days, which caps how far any backfill can
   reach.
-- **The scan also runs once at startup** (`next_run_time=now` in `main.py`), so
-  `railway redeploy --yes` forces an immediate re-scan instead of waiting up to
-  `GMAIL_SCAN_INTERVAL_HOURS`. `gmail_last_status`/`gmail_last_result` in Settings only
-  change when a scan actually runs.
+- **All three scans run once at startup** (`next_run_time=now` in `main.py` — gmail,
+  bank, and since 2026-07-30 the calendar scan too), so `railway redeploy --yes`
+  forces an immediate re-scan instead of waiting for the next interval/cron.
+  `gmail_last_status`/`gmail_last_result` in Settings only change when a scan
+  actually runs.
 - **One trip or order produces several emails.** Delivery: order receipt, tip receipt,
   refund adjustment — `receipts.is_followup()` skips the follow-ups, and a tip receipt
   with no existing order row *creates* it (many orders leave only the tip email).
@@ -96,9 +97,22 @@ as a scored line.
 - **Ride dedupe keys on the ride timestamp parsed from the snippet**
   (`receipts.extract_ride_time`), never the subject — two distinct trips the same
   morning share the subject "Your Sunday morning trip with Uber".
-- **`rides.ride_at` is immutable after insert.** `get_rides_range` buckets on its date,
-  so rewriting it would retroactively move a ride into a different week.
+- **`rides.ride_at` is immutable after insert.** Bucketing/display use the *derived*
+  true ride time — `ride_key` when it's ISO-shaped, else `ride_at` — shifted by the
+  night cutoff (`metrics.effective_date`, `NIGHT_CUTOFF_HOUR = 4`): a pre-4 AM ride
+  belongs to the previous day, resolved in SQL so every caller agrees. Nothing is
+  ever rewritten.
+- **Cancellation fees are rides with `is_cancellation = true`** — detected at ingest
+  by `receipts.is_cancellation_fee` (snippet says "canceled trip"), backfilled on
+  re-scan when NULL. Label-only by explicit user decision: they still count as rides
+  and in spend; only the row text changes. SQLite gotcha locked into the tests:
+  `date(ts, '-4 hours')` normalizes offset-bearing strings through UTC, so both
+  dialects compute the cutoff from wall-clock substrings instead.
 - Amounts come from `receipts.extract_amount` (`Total $X` in the snippet).
+- **The night cutoff applies to rides only.** Extending it to delivery orders is a
+  deliberately deferred decision (they're a *scored* metric — week-boundary moves
+  change hit/miss); bank transactions are date-only so it's a no-op there. See
+  docs/superpowers/specs/2026-07-29-ride-cancellation-and-effective-date-design.md.
 
 ### Bank ingestion — hard-won facts
 
@@ -142,11 +156,20 @@ signal:
 2. **Resolve in SQL** so every caller agrees — `COALESCE(user_title, title)`,
    `COALESCE(user_is_social, is_social)`. Never resolve in Python at one call site.
 3. The scan may overwrite its own columns but must never touch the user's.
-4. Feed recent overrides back as few-shot examples in the classification prompt
-   (`db.get_classification_examples`, `db.get_ride_examples`) so one correction fixes
-   a recurring event.
+4. Feed user overrides back as few-shot examples in the classification prompt —
+   but **only verdicts that generalize**. For calendar events that means recurring
+   series only (`recurring_event_id` non-null), one example per series, a series
+   with contradictory verdicts excluded, one-off events never fed. This rule exists
+   because a single "Didn't happen" tap once taught the classifier that kickball
+   isn't social (see the 2026-07-30 granularity spec).
 5. Only a **confirmed** user verdict changes behavior — an AI flag alone never
    excludes anything silently.
+6. **"Didn't happen" is not "not social."** `user_removed` (occurrence didn't occur)
+   and `user_is_social` (classification correction) are separate user columns —
+   never conflate them; only the latter may feed examples. Low-confidence unresolved
+   events (`confidence < AMBIGUOUS_CONFIDENCE = 0.7`) surface with `uncertain: true`
+   and an inline "social? Yes/No" chip; they follow the AI's lean in counts until
+   answered.
 
 ---
 
@@ -167,6 +190,8 @@ signal:
 │                            #   weekly reflection)
 ├── app/
 │   ├── api.py               # FastAPI app factory: /api/health, /api/login, static SPA mount
+│   │                        #   + cache headers: shell no-cache, /assets/* immutable —
+│   │                        #   don't remove; stale-index bugs otherwise recur every deploy
 │   ├── auth.py               # Single-user password → HMAC session cookie
 │   ├── routes.py              # Protected API routes (checkins, scorecard, insights,
 │   │                        #   reflection, deliveries, rides, social, spend, targets,
@@ -180,7 +205,8 @@ signal:
 ├── jobs/
 │   ├── scan_gmail.py          # Every GMAIL_SCAN_INTERVAL_HOURS + once at startup:
 │   │                        #   three-way route — delivery order / ride / neither
-│   ├── scan_calendar.py         # Daily @ CALENDAR_SCAN_HOUR: social event classification
+│   ├── scan_calendar.py         # Daily @ CALENDAR_SCAN_HOUR + once at startup:
+│   │                        #   social event classification (series-aware examples)
 │   ├── sync_bank.py            # Every SIMPLEFIN_SYNC_INTERVAL_HOURS + once at startup:
 │   │                        #   fetch, upsert, then reclassify the WHOLE table via
 │   │                        #   bank_flows (see Bank Ingestion below)
@@ -194,9 +220,12 @@ signal:
 │   └── telegram_notify.py         # notify(text) — send-only, no inbound handling
 ├── frontend/                # React + Vite SPA, built to dist/
 │   └── src/
-│       ├── screens/          # Today, Scorecard (Week), Money, Insights, Settings
+│       ├── screens/          # Today (the "Day log"), Scorecard (Week), Money, Insights, Settings
 │       ├── components/        # DayNav, WeekNav, TrendChart, WeekdayHeatmap, SpendSubtotals,
-│       │                    #   BankSpendChart, TriageQueue, Investments…
+│       │                    #   BankSpendChart, TriageQueue, Investments, plus the Day log
+│       │                    #   primitives: DayLogRow, CategoryIcon, StatusChip, FilterStrip
+│       │                    #   (six categories max — the cap is a rule; see the
+│       │                    #   2026-07-30 day-log-redesign spec)
 │       ├── lib.ts             # Pure helpers (dates, labels, money, chart scales) — unit-tested
 │       └── styles.css          # The whole design system: OKLCH tokens, both themes
 ├── scripts/
@@ -236,7 +265,7 @@ adding it here *and* there in the same change.
 |-----|-------------|
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Send-only weekly scorecard push, toggled in Settings (default off) |
 | `DATABASE_URL` | Postgres URL (Railway sets automatically); blank = local SQLite |
-| `GOOGLE_CALENDAR_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` / `_ID` | OAuth2 for Calendar + Gmail — one refresh token must carry both scopes; generate via `scripts/calendar_auth.py` |
+| `GOOGLE_CALENDAR_CLIENT_ID` / `_CLIENT_SECRET` / `_REFRESH_TOKEN` / `_ID` | OAuth2 for Calendar + Gmail — one refresh token must carry both scopes; generate via `scripts/calendar_auth.py`. The GCP OAuth consent screen is **published to Production** (2026-07-29) — do not put it back in Testing: Testing-mode refresh tokens expire after 7 days, which took all ingestion down that day |
 | `TIMEZONE` | Local timezone for week boundaries and job schedule times (default `America/Denver`) |
 | `GMAIL_SCAN_INTERVAL_HOURS` | Gmail receipt scan interval (default 4) |
 | `GMAIL_SCAN_LOOKBACK_DAYS` | Gmail scan lookback window in days (default 7) |
@@ -274,8 +303,8 @@ rule has been widened again — fix the rule rather than working around it.
 |---|---|---|
 | `checkins` | unique `(date, type)` | `type` ∈ gym / alcohol / substances; `level` is alcohol-only |
 | `delivery_orders` | unique `gmail_message_id` | `amount` nullable; cluster key for dedupe is `(service, day, subject)` |
-| `rides` | unique `gmail_message_id` | `ride_key` = parsed trip time; `ai_is_work` / `user_is_work`; `ride_at` immutable after insert |
-| `calendar_events` | unique `gcal_event_id` | `user_title` / `user_is_social` overrides, `source` (`gcal`\|`manual`), `amount`. Manual events use id `manual:<uuid4>` |
+| `rides` | unique `gmail_message_id` | `ride_key` = parsed trip time; `ai_is_work` / `user_is_work`; `ride_at` immutable after insert; `is_cancellation` derived at ingest, label-only (still counts in rides + spend); queries bucket on the effective date (night cutoff) of the true ride time |
+| `calendar_events` | unique `gcal_event_id` | `user_title` / `user_is_social` overrides, `source` (`gcal`\|`manual`), `amount`, `user_removed` ("didn't happen" — separate from `user_is_social`, excluded from example feed), `recurring_event_id` (Google series id — gates classifier generalization), `confidence` (< 0.7 unresolved ⇒ `uncertain` chip). Manual events use id `manual:<uuid4>` |
 | `weekly_reflections` | unique `week_start` | Cached AI paragraph — at most one Claude call per week |
 | `bank_accounts` | unique `simplefin_id` | `role` (spending/bills/savings/investment/credit_card/unknown) and `active` are user-set; the sync overwrites `name`/`org`/`kind` but never those two. `nickname` is a fourth user-set nullable TEXT column on the same footing — `upsert_bank_account` never touches it — resolved as `COALESCE(NULLIF(nickname,''), name)`, exposed as `display_name` from `get_bank_accounts()` and as `account_name` in `_BANK_TXN_SELECT`, so every transaction surface shows it |
 | `bank_transactions` | unique `simplefin_id` | `flow` (derived) / `user_flow` (override) resolved via `COALESCE(user_flow, flow)`, same Override + Learning pattern as social events and rides; `pair_id` links the two halves of a matched transfer/card-payment, set by `bank_flows.match_pairs`; `user_note` and `user_label` are nullable, user-set TEXT columns (the sync never touches either) alongside `user_flow` — `user_label` doubles as the category system: the label vocabulary is `SELECT DISTINCT user_label`, not a table, and the Money screen's Labels view groups by it with an Unlabeled bucket. `refund` is a seventh `BANK_FLOWS` value that only `user_flow` can hold — `classify_flow` never emits it — and nets out of spending (positive side only) in aggregates. `suggested_flow` is a derived, advisory, nullable TEXT column — written only by the sync's post-reclassify suggestion pass (`ai_metrics.suggest_bank_flows`), never by a route; computed once per row and never recomputed once set; distinct from `user_flow` and ignored by every aggregate (`app/money.py` never reads it) — it only pre-highlights a triage chip until the user taps a real answer. `suggested_label` is the label counterpart with the OPPOSITE recompute rule: derived and sync-owned, but recomputed for the WHOLE table every sync by the rule-based label pass (`bank_flows.label_suggestions` — unanimous same-vendor inheritance, no AI), so retired/changed user labels self-heal; resolved via `resolved_label`, which ONLY the Labels view reads. `user_no_label` is the third label column: the user's durable "this row gets no label" verdict (boolean, user-set, sync never touches it) — mutually exclusive with `user_label` (each writer clears the other), excluded from the suggestion pass, bulk apply, and the audit queue, and folded into resolution: `resolved_label = CASE WHEN user_no_label THEN NULL ELSE COALESCE(user_label, suggested_label) END`. Without it a rejected suggestion would return on the next full recompute |
@@ -321,7 +350,9 @@ is enough. Tests only exercise the SQLite path; Postgres DDL is verified by depl
 - **The redaction boundary.** Ingestion jobs (and `jobs/weekly_push.py`) never store `str(exception)` in `app_settings` — that value is read back by `/api/settings` and rendered in Settings. `except Exception as e:` blocks call `logger.exception(...)` for full server-side detail, then `db.set_setting(..., safe_status(e))` (`services/safe_status.py`), which maps the exception to one of `"ok"` / `"error: auth"` / `"error: unreachable"` / `"error: rate limited"` / `"error: see logs"` — never anything else. This exists because the SimpleFIN bank-access URL (`services/simplefin_service.py`) carries its credentials inside the URL itself, and HTTP libraries routinely put the request URL into exception messages (a Gmail URL already leaked this way once, and it's the same failure mode SimpleFIN would hit without this boundary). Rule: **prevent the credential-bearing string from being constructed; never scrub it afterwards.** Any new ingestion job follows the same pattern. The pre-flight "we never even tried" statuses (`services.safe_status.NOT_CONFIGURED`, `GOOGLE_NOT_CONFIGURED`) are also `CLOSED_SET` members — written outside the try/except, before `safe_status()` ever runs, but from the same named constants so the invariant holds everywhere, not just inside the exception path.
 - **HTTP client loggers are the third leak path, and the boundary above does not cover them.** `httpx` logs the full request URL at INFO — and since the SimpleFIN access URL *is* the credential, an INFO-level `httpx` logger writes the bearer token to the deploy logs on every sync. Nothing is raised and nothing is stored, so neither `safe_status()` nor `app_settings` ever sees it: the exception-based boundary is bypassed entirely rather than defeated. `main.py` pins `httpx` and `httpcore` to `WARNING` immediately after `logging.basicConfig`, and a test in `tests/test_simplefin_service.py` locks it. That test asserts an **explicit** level on those loggers, not the effective level — under pytest the root logger already has handlers, so `basicConfig` no-ops and an effective-level assertion passes while production still leaks. This happened for real on 2026-07-23, the first time the credential was set in Railway — the token reached the deploy logs and was knowingly left in place rather than rotated, so the logs from that date should be treated as sensitive. Never lower those levels, and treat any new logging config or HTTP client as subject to the same check.
 - **Bank payee/description may reach Claude in exactly one place: `ai_metrics.suggest_bank_flows`.** That's the triage-suggestion call — same footing as Gmail subjects (`classify_receipt`) and calendar titles (`classify_social_event`), and it goes through no other path. `/api/reflection` and `jobs/weekly_push.py`'s `format_scorecard_text` (Telegram) stay bank-free: both build their prompt from `METRICS`-derived cards and noticings, bank data is not in `METRICS` (see Metrics above), so neither outbound path ever sees a bank transaction description, counterparty, or `user_note` — this holds by construction, not by an explicit filter, so it keeps holding only as long as bank data stays out of `METRICS`. **`user_note` never reaches any AI, not even `suggest_bank_flows`** — the note is the user's own words, the most personal text in the database; the prompt builder excludes it by construction (simply not selected), pinned by a sentinel prompt-content test that fails if a note string ever appears in the built prompt.
-- Google auth expiry surfaces as a visible banner in the app, never silent missing data
+- Google auth expiry surfaces as a visible banner on **every screen** (app shell,
+  `lib.googleAuthBroken` — fires on `"error: auth"` only; transient errors stay
+  Settings-only), never silent missing data
 - **Money formats one way:** `$16.31`, whole dollars trimmed to `$20`, via `.toFixed(2).replace(/\.00$/, "")`. Always null-check, never truthiness — a real `$0` must display
 - **Secondary surfaces fail quietly.** A failed fetch for insights/reflection/spend hides that section; it never sets the screen-level error state that would blank the page
 - **Charts:** hand-rolled SVG, no chart library. Never set a fixed pixel height on a chart — use a wide viewBox with `width:100%; height:auto`, or the plot letterboxes into the middle of its container. The x-axis band lives inside the viewBox so labels can't clip
