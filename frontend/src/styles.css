@@ -272,8 +272,44 @@ button.quiet-btn {
   background: none;
   text-align: left;
   border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
 }
+button.quiet-btn:hover,
 button.quiet-btn:active { background: var(--accent-soft); }
+
+/* Chevron affordance — these rows look like static text otherwise. Sits as
+   the last flex child, right after .when (which already carries the
+   margin-left: auto that pins both to the row's right edge). */
+button.quiet-btn::after {
+  content: "›";
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+/* A "Didn't happen" row: kept in place (not removed from the list) so Undo
+   has something to restore. Struck-through and dimmed rather than styled as
+   an error — this is a quiet correction, not a warning. */
+.quiet-removed {
+  color: var(--muted);
+}
+.quiet-removed .removed-title {
+  text-decoration: line-through;
+}
+.quiet-removed .undo-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+.quiet-removed .undo-btn:hover,
+.quiet-removed .undo-btn:active {
+  text-decoration: underline;
+}
 
 /* ── Social event add/edit inline forms ── */
 .social-form {

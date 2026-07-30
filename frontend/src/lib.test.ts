@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   dayChips, dayLabel, dayRowDate, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel, type Day,
   TRIAGE_CHOICES, flowLabel, suggestionHint, coverageNote, weekCaption, trackedShareSentence,
-  signedMoney, signedPct, vendorSplit, type VendorLine,
+  signedMoney, signedPct, vendorSplit, type VendorLine, mergeRemovedSocialEvents,
 } from "./lib";
 
 describe("weekLabel", () => {
@@ -480,5 +480,40 @@ describe("vendorSplit", () => {
     expect(top).toEqual([line("A", 30), line("B", 20)]);
     expect(tail).toEqual({ vendors: 2, count: 2, amount: 15 });
     expect(rest).toEqual([line("C", 10), line("D", 5)]);
+  });
+});
+
+interface StubEvent { gcal_event_id: string; start_at: string; title: string }
+const ev = (id: string, start_at: string, title = id): StubEvent => ({ gcal_event_id: id, start_at, title });
+
+describe("mergeRemovedSocialEvents", () => {
+  it("returns the fetched list unchanged when nothing is removed", () => {
+    const fetched = [ev("a", "2026-07-20T10:00:00"), ev("b", "2026-07-20T18:00:00")];
+    expect(mergeRemovedSocialEvents(fetched, {})).toEqual(fetched);
+  });
+
+  it("re-inserts a removed event the backend no longer returns, sorted by start time", () => {
+    const fetched = [ev("a", "2026-07-20T10:00:00")];
+    const removed = { b: ev("b", "2026-07-20T08:00:00") };
+    expect(mergeRemovedSocialEvents(fetched, removed)).toEqual([
+      ev("b", "2026-07-20T08:00:00"),
+      ev("a", "2026-07-20T10:00:00"),
+    ]);
+  });
+
+  it("does not duplicate an event that is both fetched and marked removed", () => {
+    // Can happen right after Undo, before the refresh() PATCH result lands —
+    // the fetched copy (now restored) must win over the stale removed one.
+    const fetched = [ev("a", "2026-07-20T10:00:00")];
+    const removed = { a: ev("a", "2026-07-20T10:00:00") };
+    expect(mergeRemovedSocialEvents(fetched, removed)).toEqual(fetched);
+  });
+
+  it("sorts multiple restored-in-place removals among fetched events", () => {
+    const fetched = [ev("a", "2026-07-20T09:00:00"), ev("c", "2026-07-20T15:00:00")];
+    const removed = { b: ev("b", "2026-07-20T12:00:00"), d: ev("d", "2026-07-20T18:00:00") };
+    expect(mergeRemovedSocialEvents(fetched, removed).map((e) => e.gcal_event_id)).toEqual([
+      "a", "b", "c", "d",
+    ]);
   });
 });

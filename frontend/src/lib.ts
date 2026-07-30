@@ -339,6 +339,28 @@ export function buildSocialPatch(state: SocialEditState): SocialPatch {
   return patch;
 }
 
+/**
+ * Merges freshly-fetched social events with locally-tracked "Didn't happen"
+ * removals (spec: 2026-07-29-social-event-didnt-happen-design) so a just-removed
+ * row keeps rendering — with its own Undo action — even though the backend day
+ * query (`get_events_for_day`) no longer returns an event once `is_social`
+ * resolves false. Never relies on a refetch to restore the row; the caller
+ * supplies the removed event's own last-known data. Re-sorted by start time so
+ * a restored slot lands back where it was chronologically, rather than at
+ * whatever position the removal/undo happened to leave it.
+ */
+export function mergeRemovedSocialEvents<T extends { gcal_event_id: string; start_at: string }>(
+  fetched: T[],
+  removed: Record<string, T>,
+): T[] {
+  const extra = Object.values(removed).filter(
+    (e) => !fetched.some((f) => f.gcal_event_id === e.gcal_event_id),
+  );
+  return [...fetched, ...extra].sort(
+    (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
+  );
+}
+
 export interface VendorLine { vendor: string; count: number; amount: number }
 export interface VendorTail { vendors: number; count: number; amount: number }
 

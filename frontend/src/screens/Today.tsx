@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
-import { addDays, buildSocialPatch, subtotalsFromDay, targetLabel } from "../lib";
+import { addDays, buildSocialPatch, mergeRemovedSocialEvents, subtotalsFromDay, targetLabel } from "../lib";
 import DayNav from "../components/DayNav";
 import SpendSubtotals from "../components/SpendSubtotals";
 
@@ -84,6 +84,17 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
   const [editLoaded, setEditLoaded] = useState<{ title: string; isSocial: boolean; amount: number | null }>({
     title: "", isSocial: true, amount: null,
   });
+
+  // Detected social events the user just marked "Didn't happen" this
+  // session, keyed by gcal_event_id. The day query filters resolved-social
+  // events, so a refresh() no longer returns these — this map is the only
+  // reason the row keeps rendering (with its own Undo). Deliberately not
+  // persisted anywhere; it resets whenever the visible day changes below.
+  const [removed, setRemoved] = useState<Record<string, SocialEvent>>({});
+
+  useEffect(() => {
+    setRemoved({});
+  }, [data?.date]);
 
   const refresh = useCallback(() => {
     apiGet<TodayData>(`/today${selected ? `?date=${selected}` : ""}`)
@@ -208,6 +219,31 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
     }
   };
 
+  const didntHappenSocial = async (e: SocialEvent) => {
+    try {
+      await apiSend("PATCH", `/social/${e.gcal_event_id}`, { is_social: false });
+      setRemoved((prev) => ({ ...prev, [e.gcal_event_id]: e }));
+      setEditingId(null);
+      refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const undoDidntHappen = async (e: SocialEvent) => {
+    try {
+      await apiSend("PATCH", `/social/${e.gcal_event_id}`, { is_social: true });
+      setRemoved((prev) => {
+        const next = { ...prev };
+        delete next[e.gcal_event_id];
+        return next;
+      });
+      refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const toggleRideWork = async (r: Ride) => {
     try {
       // Tapping also teaches future classification — the API folds confirmed
@@ -219,7 +255,10 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
     }
   };
 
-  const detections = data.deliveries.length + data.social_events.length + data.rides.length;
+  // Merge in any just-removed rows the day query no longer returns, so the
+  // "Nothing this day" empty state and the Undo row agree with each other.
+  const socialRows = mergeRemovedSocialEvents(data.social_events, removed);
+  const detections = data.deliveries.length + socialRows.length + data.rides.length;
 
   return (
     <div>
@@ -300,52 +339,66 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
           </button>
         );
       })}
-      {data.social_events.map((e) => (
-        <div className="quiet-row" key={e.gcal_event_id}>
-          <button className="quiet quiet-btn" onClick={() => openEditSocial(e)}>
-            <span>{e.title}</span>
-            <span className="when">
-              {e.amount !== null ? `$${e.amount.toFixed(2).replace(/\.00$/, "")}` : e.source === "manual" ? "manual" : "counted as social"}
-            </span>
-          </button>
-          {editingId === e.gcal_event_id && (
-            <div className="social-form">
-              <input
-                type="text"
-                value={editTitle}
-                onChange={(ev) => setEditTitle(ev.target.value)}
-                placeholder="Event name"
-                aria-label="Event name"
-              />
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={editIsSocial}
-                  onChange={(ev) => setEditIsSocial(ev.target.checked)}
-                />
-                Counts as social
-              </label>
-              <input
-                className="field-num"
-                type="number"
-                min="0"
-                step="0.01"
-                value={editAmount}
-                onChange={(ev) => setEditAmount(ev.target.value)}
-                placeholder="Cost"
-                aria-label="Cost"
-              />
-              <div className="row-actions">
-                <button onClick={cancelEditSocial}>Cancel</button>
-                {e.source === "manual" && (
-                  <button className="danger" onClick={deleteEditSocial}>Delete</button>
-                )}
-                <button className="primary" onClick={saveEditSocial}>Save</button>
+      {socialRows.map((e) => {
+        const isRemoved = Object.prototype.hasOwnProperty.call(removed, e.gcal_event_id);
+        return (
+          <div className="quiet-row" key={e.gcal_event_id}>
+            {isRemoved ? (
+              <div className="quiet quiet-removed">
+                <span className="removed-title">{e.title}</span>
+                <span className="when">
+                  Removed · <button className="undo-btn" onClick={() => undoDidntHappen(e)}>Undo</button>
+                </span>
               </div>
-            </div>
-          )}
-        </div>
-      ))}
+            ) : (
+              <button className="quiet quiet-btn" onClick={() => openEditSocial(e)}>
+                <span>{e.title}</span>
+                <span className="when">
+                  {e.amount !== null ? `$${e.amount.toFixed(2).replace(/\.00$/, "")}` : e.source === "manual" ? "manual" : "counted as social"}
+                </span>
+              </button>
+            )}
+            {editingId === e.gcal_event_id && !isRemoved && (
+              <div className="social-form">
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(ev) => setEditTitle(ev.target.value)}
+                  placeholder="Event name"
+                  aria-label="Event name"
+                />
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={editIsSocial}
+                    onChange={(ev) => setEditIsSocial(ev.target.checked)}
+                  />
+                  Counts as social
+                </label>
+                <input
+                  className="field-num"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editAmount}
+                  onChange={(ev) => setEditAmount(ev.target.value)}
+                  placeholder="Cost"
+                  aria-label="Cost"
+                />
+                <div className="row-actions">
+                  <button onClick={cancelEditSocial}>Cancel</button>
+                  {e.source === "manual" ? (
+                    <button className="danger" onClick={deleteEditSocial}>Delete</button>
+                  ) : (
+                    <button className="danger" onClick={() => didntHappenSocial(e)}>Didn't happen</button>
+                  )}
+                  <button className="primary" onClick={saveEditSocial}>Save</button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
 
       {addingSocial ? (
         <div className="social-form">
