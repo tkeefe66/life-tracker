@@ -272,6 +272,39 @@ def test_patch_social_is_social_false_drops_from_count(temp_db_path):
     assert after["metrics"]["social"]["count"] == 0
 
 
+def test_patch_social_removed_true_drops_from_today_and_scorecard(temp_db_path):
+    """`removed` is the new "Didn't happen" mechanism — distinct from
+    `is_social` — and must not leave a user_is_social verdict behind."""
+    client = _client(temp_db_path)
+    import database as db
+    db.upsert_calendar_event("ev1", "Kickball", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    before = client.get("/api/scorecard?week_start=2026-07-13").json()
+    assert before["metrics"]["social"]["count"] == 1
+
+    resp = client.patch("/api/social/ev1", json={"removed": True})
+    assert resp.status_code == 200
+
+    after = client.get("/api/scorecard?week_start=2026-07-13").json()
+    assert after["metrics"]["social"]["count"] == 0
+    snap = client.get("/api/today?date=2026-07-15").json()
+    assert not any(e["gcal_event_id"] == "ev1" for e in snap["social_events"])
+    assert db.get_event("ev1")["user_is_social"] is None  # not conflated with a classification verdict
+
+
+def test_patch_social_removed_false_undoes_removal(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    db.upsert_calendar_event("ev1", "Kickball", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    client.patch("/api/social/ev1", json={"removed": True})
+
+    resp = client.patch("/api/social/ev1", json={"removed": False})
+    assert resp.status_code == 200
+    snap = client.get("/api/today?date=2026-07-15").json()
+    assert any(e["gcal_event_id"] == "ev1" for e in snap["social_events"])
+
+
 def test_patch_social_unknown_id_404(temp_db_path):
     client = _client(temp_db_path)
     resp = client.patch("/api/social/nope", json={"title": "x"})

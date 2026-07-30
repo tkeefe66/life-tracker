@@ -101,7 +101,7 @@ describe("weekRangeLabel", () => {
   });
 });
 
-import { buildSocialPatch } from "./lib";
+import { buildSocialPatch, buildUncertainResolvePatch } from "./lib";
 
 describe("buildSocialPatch", () => {
   const loaded = { loadedTitle: "Dinner", loadedIsSocial: true, loadedAmount: null };
@@ -146,6 +146,16 @@ describe("buildSocialPatch", () => {
   it("combines multiple real changes", () => {
     const patch = buildSocialPatch({ ...loaded, title: "Dinner out", isSocial: false, amountText: "40" });
     expect(patch).toEqual({ title: "Dinner out", is_social: false, amount: 40 });
+  });
+});
+
+describe("buildUncertainResolvePatch", () => {
+  it("answers Yes with a plain is_social: true patch", () => {
+    expect(buildUncertainResolvePatch(true)).toEqual({ is_social: true });
+  });
+
+  it("answers No with a plain is_social: false patch", () => {
+    expect(buildUncertainResolvePatch(false)).toEqual({ is_social: false });
   });
 });
 

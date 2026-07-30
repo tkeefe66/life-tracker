@@ -263,10 +263,16 @@ def test_delete_event(temp_db_path):
 
 
 def test_get_classification_examples_only_overridden_newest_first_capped(temp_db_path):
+    """Series-aware learning (2026-07-30 granularity spec): only recurring
+    events (non-null recurring_event_id) with a confirmed, non-contradictory
+    user verdict become examples."""
     db = _db(temp_db_path)
     for i in range(3):
         eid = f"ev{i}"
-        db.upsert_calendar_event(eid, f"Event {i}", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+        db.upsert_calendar_event(
+            eid, f"Event {i}", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00",
+            recurring_event_id=f"series-{i}",
+        )
         db.set_event_classification(eid, True, 0.9)
     # Only override some — others should never appear as examples.
     db.set_event_overrides("ev0", {"user_is_social": False})
@@ -286,11 +292,257 @@ def test_get_classification_examples_respects_limit(temp_db_path):
     db = _db(temp_db_path)
     for i in range(5):
         eid = f"ev{i}"
-        db.upsert_calendar_event(eid, f"Event {i}", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+        db.upsert_calendar_event(
+            eid, f"Event {i}", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00",
+            recurring_event_id=f"series-{i}",
+        )
         db.set_event_classification(eid, True, 0.9)
         db.set_event_overrides(eid, {"user_is_social": True})
     examples = db.get_classification_examples(limit=2)
     assert len(examples) == 2
+
+
+def test_get_classification_examples_excludes_one_off_events(temp_db_path):
+    """A one-off (recurring_event_id IS NULL) override — exactly the
+    "Didn't happen" poisoning scenario the spec fixes — must never appear as
+    an example, no matter how it was answered."""
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev1", "Canceled Kickball", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    db.set_event_overrides("ev1", {"user_is_social": False})
+
+    assert db.get_classification_examples(limit=10) == []
+
+
+def test_get_classification_examples_excludes_contradictory_series(temp_db_path):
+    """Two occurrences of the same series with disagreeing user verdicts —
+    the whole series is excluded, not just the older answer."""
+    db = _db(temp_db_path)
+    db.upsert_calendar_event(
+        "ev1", "Kickball week 1", "2026-07-08T19:00:00-06:00", "2026-07-08T21:00:00-06:00",
+        recurring_event_id="kickball-series",
+    )
+    db.set_event_classification("ev1", True, 0.9)
+    db.set_event_overrides("ev1", {"user_is_social": True})
+
+    db.upsert_calendar_event(
+        "ev2", "Kickball week 2 (canceled)", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00",
+        recurring_event_id="kickball-series",
+    )
+    db.set_event_classification("ev2", True, 0.9)
+    db.set_event_overrides("ev2", {"user_is_social": False})
+
+    assert db.get_classification_examples(limit=10) == []
+
+    # A separate, agreeing series still contributes normally.
+    db.upsert_calendar_event(
+        "ev3", "Trivia night", "2026-07-16T19:00:00-06:00", "2026-07-16T21:00:00-06:00",
+        recurring_event_id="trivia-series",
+    )
+    db.set_event_classification("ev3", True, 0.9)
+    db.set_event_overrides("ev3", {"user_is_social": True})
+
+    examples = db.get_classification_examples(limit=10)
+    assert [e["title"] for e in examples] == ["Trivia night"]
+
+
+def test_get_classification_examples_one_example_per_series_most_recent(temp_db_path):
+    """An agreeing series with several confirmed occurrences contributes
+    exactly one example: the most recent verdict."""
+    db = _db(temp_db_path)
+    for i, eid in enumerate(["ev1", "ev2", "ev3"]):
+        db.upsert_calendar_event(
+            eid, f"Book club {i}", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00",
+            recurring_event_id="book-club-series",
+        )
+        db.set_event_classification(eid, True, 0.9)
+        db.set_event_overrides(eid, {"user_is_social": True})
+
+    examples = db.get_classification_examples(limit=10)
+    assert len(examples) == 1
+    assert examples[0]["title"] == "Book club 2"  # most recently inserted/overridden
+
+
+# ── user_removed ("didn't happen" vs "not social") ──────────────────────────
+
+def test_user_removed_excludes_event_from_day_and_range(temp_db_path):
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev1", "Kickball", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    assert len(db.get_events_for_day("2026-07-15")) == 1
+    assert len(db.get_social_events_range("2026-07-14", "2026-07-20")) == 1
+
+    db.set_event_overrides("ev1", {"user_removed": True})
+    assert db.get_events_for_day("2026-07-15") == []
+    assert db.get_social_events_range("2026-07-14", "2026-07-20") == []
+
+
+def test_user_removed_does_not_flip_user_is_social(temp_db_path):
+    """user_removed and user_is_social are separate columns — marking an
+    occurrence removed must not touch (or fabricate) a classification
+    verdict, unlike the old is_social=false 'Didn't happen' path."""
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev1", "Kickball", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    db.set_event_overrides("ev1", {"user_removed": True})
+    row = db.get_event("ev1")
+    assert row["user_is_social"] is None
+    # Undo (removed: false) restores it to the day/range queries.
+    db.set_event_overrides("ev1", {"user_removed": False})
+    assert len(db.get_events_for_day("2026-07-15")) == 1
+
+
+def test_calendar_events_migration_converts_prior_didnt_happen_rows(tmp_path, monkeypatch):
+    """One-time data conversion, exercised against a genuinely pre-migration
+    database (built by hand, missing user_removed/recurring_event_id) rather
+    than temp_db_path, whose fixture already runs the current schema —
+    otherwise there is nothing to "first add" and the guard's one-shot
+    behavior can't actually be observed.
+
+    A pre-migration row with source='gcal' AND user_is_social=false was
+    necessarily a "Didn't happen" tap under the old mechanism (that was the
+    only way to produce it) — the first initialize_db() that adds the
+    column must reclassify it as user_removed=true, user_is_social=NULL."""
+    import importlib
+    import sqlite3
+
+    db_path = str(tmp_path / "premigration.db")
+    monkeypatch.setenv("DATABASE_PATH", db_path)
+    monkeypatch.setenv("DATABASE_URL", "")
+    import config
+    importlib.reload(config)
+    import database as db
+    importlib.reload(db)
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE calendar_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            gcal_event_id TEXT NOT NULL UNIQUE,
+            title TEXT NOT NULL,
+            start_at TEXT NOT NULL,
+            end_at TEXT NOT NULL,
+            is_social INTEGER,
+            confidence REAL,
+            classified_at TIMESTAMP,
+            user_title TEXT,
+            user_is_social INTEGER,
+            source TEXT DEFAULT 'gcal',
+            amount REAL
+        )
+    """)
+    conn.execute(
+        "INSERT INTO calendar_events (gcal_event_id, title, start_at, end_at, is_social, "
+        "user_is_social, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("ev1", "Volo Kickball", "2026-07-22T19:00:00-06:00", "2026-07-22T21:00:00-06:00", 1, 0, "gcal"),
+    )
+    # A second gcal row with user_is_social=false in the same pre-migration
+    # snapshot — the conversion sweep is blind to whether a given row was
+    # "really" didn't-happen vs. a genuine not-social correction (the spec
+    # accepts this: in prod exactly one such row existed, the canceled
+    # 2026-07-22 Volo event, so the sweep's imprecision costs nothing there).
+    # Both rows convert the same way; this asserts that unconditional
+    # behavior rather than something narrower.
+    conn.execute(
+        "INSERT INTO calendar_events (gcal_event_id, title, start_at, end_at, is_social, "
+        "user_is_social, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("ev2", "Dentist", "2026-07-16T09:00:00-06:00", "2026-07-16T10:00:00-06:00", 0, 0, "gcal"),
+    )
+    conn.commit()
+    conn.close()
+
+    db.initialize_db()  # first call: user_removed didn't exist -> add + convert
+
+    ev1 = db.get_event("ev1")
+    assert bool(ev1["user_removed"]) is True
+    assert ev1["user_is_social"] is None
+
+    ev2 = db.get_event("ev2")
+    assert bool(ev2["user_removed"]) is True
+    assert ev2["user_is_social"] is None
+
+
+def test_calendar_events_migration_data_conversion_is_one_shot(temp_db_path):
+    """Once the column exists (temp_db_path's fixture already ran
+    initialize_db once), a later initialize_db() must never re-run the
+    conversion — a genuine post-migration 'not social' correction
+    (user_removed explicitly False, user_is_social explicitly False) must
+    survive untouched."""
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev1", "Book club", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    db.set_event_overrides("ev1", {"user_removed": False, "user_is_social": False})
+
+    db.initialize_db()  # must be a no-op for this row — guard already tripped
+    db.initialize_db()
+
+    row = db.get_event("ev1")
+    assert bool(row["user_is_social"]) is False
+    assert bool(row["user_removed"]) is False
+
+
+# ── Uncertain (ambiguity chip) ────────────────────────────────────────────────
+
+def test_get_events_for_day_uncertain_below_threshold(temp_db_path):
+    from metrics import AMBIGUOUS_CONFIDENCE
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev1", "Movie night", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", False, AMBIGUOUS_CONFIDENCE - 0.1)  # unresolved, low confidence, NOT-social lean
+    rows = db.get_events_for_day("2026-07-15")
+    assert len(rows) == 1  # surfaced despite the not-social lean
+    assert rows[0]["uncertain"] is True
+    assert rows[0]["is_social"] is False  # the lean is preserved, not flipped
+
+
+def test_get_events_for_day_confident_at_threshold_not_uncertain(temp_db_path):
+    from metrics import AMBIGUOUS_CONFIDENCE
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev1", "Dentist", "2026-07-15T09:00:00-06:00", "2026-07-15T10:00:00-06:00")
+    db.set_event_classification("ev1", False, AMBIGUOUS_CONFIDENCE)  # AT threshold: not "< threshold", so confident
+    rows = db.get_events_for_day("2026-07-15")
+    assert rows == []  # not-social lean, not uncertain -> excluded like before
+
+
+def test_get_events_for_day_confident_above_threshold_not_uncertain(temp_db_path):
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev1", "Dinner", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.95)
+    rows = db.get_events_for_day("2026-07-15")
+    assert len(rows) == 1
+    assert rows[0]["uncertain"] is False
+
+
+def test_get_events_for_day_uncertain_flag_false_once_user_resolves(temp_db_path):
+    from metrics import AMBIGUOUS_CONFIDENCE
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev1", "Movie night", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", False, AMBIGUOUS_CONFIDENCE - 0.1)
+    db.set_event_overrides("ev1", {"user_is_social": True})  # user answers the chip
+    rows = db.get_events_for_day("2026-07-15")
+    assert len(rows) == 1
+    assert rows[0]["uncertain"] is False
+    assert rows[0]["is_social"] is True
+
+
+def test_get_events_for_day_uncertain_excludes_removed(temp_db_path):
+    """A removed occurrence never surfaces as uncertain even if it was
+    low-confidence — user_removed wins over the ambiguity chip."""
+    from metrics import AMBIGUOUS_CONFIDENCE
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev1", "Movie night", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, AMBIGUOUS_CONFIDENCE - 0.1)
+    db.set_event_overrides("ev1", {"user_removed": True})
+    assert db.get_events_for_day("2026-07-15") == []
+
+
+def test_get_events_for_day_all_rows_carry_uncertain_key(temp_db_path):
+    """Resolved/confident rows still carry uncertain: false, not an absent key."""
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev1", "Dinner", "2026-07-15T19:00:00-06:00", "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev1", True, 0.9)
+    db.set_event_overrides("ev1", {"user_is_social": True})
+    rows = db.get_events_for_day("2026-07-15")
+    assert rows[0]["uncertain"] is False
 
 
 # ── Rides ─────────────────────────────────────────────────────────────────────

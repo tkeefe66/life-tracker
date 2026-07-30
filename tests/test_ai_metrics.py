@@ -123,6 +123,18 @@ def test_classify_social_event_non_numeric_confidence(mock_anthropic):
     assert out == {"is_social": True, "confidence": 0.0}
 
 
+def test_classify_social_event_prompt_instructs_low_confidence_when_unsure(mock_anthropic):
+    """The classifier may say 'can't tell' — inherently solo-or-social
+    activities (movie, restaurant, hobby) should get a low confidence score
+    rather than a confident guess when the signal doesn't decide it."""
+    import ai_metrics
+    _set_response(mock_anthropic, '{"is_social": true, "confidence": 0.9}')
+    ai_metrics.classify_social_event("Movie night", "", "", [])
+    prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "do not guess" in prompt.lower()
+    assert "low" in prompt.lower() and "confidence" in prompt.lower()
+
+
 def test_classify_social_event_prompt_includes_examples(mock_anthropic):
     import ai_metrics
     _set_response(mock_anthropic, '{"is_social": true, "confidence": 0.9}')

@@ -311,6 +311,37 @@ button.quiet-btn::after {
   text-decoration: underline;
 }
 
+/* Ambiguity chip (spec: 2026-07-30-social-classification-granularity-design)
+   — the classifier's lean governs counting until answered, so this is a
+   quiet "this is an assumption" marker, not a warning. Same accent-soft +
+   accent-text signature as the triage queue's chip-suggested and
+   .vendor-label-suggested, so a hint reads consistently everywhere it
+   appears in the app. */
+.uncertain-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 8px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.uncertain-chip button {
+  border: none;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--pill-radius);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+.uncertain-chip button:hover,
+.uncertain-chip button:active {
+  background: var(--accent);
+  color: var(--surface);
+}
+
 /* ── Social event add/edit inline forms ── */
 .social-form {
   display: flex;

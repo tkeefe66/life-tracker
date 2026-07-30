@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
-import { addDays, buildSocialPatch, mergeRemovedSocialEvents, subtotalsFromDay, targetLabel } from "../lib";
+import {
+  addDays, buildSocialPatch, buildUncertainResolvePatch, mergeRemovedSocialEvents,
+  subtotalsFromDay, targetLabel,
+} from "../lib";
 import DayNav from "../components/DayNav";
 import SpendSubtotals from "../components/SpendSubtotals";
 
@@ -12,6 +15,11 @@ interface SocialEvent {
   source: string;
   amount: number | null;
   is_social: boolean;
+  // True when the classifier hasn't decided confidently AND the user hasn't
+  // answered — the row still shows (following the AI's lean for counting
+  // purposes) but also carries the "social? Yes/No" ambiguity chip. See
+  // docs/superpowers/specs/2026-07-30-social-classification-granularity-design.md.
+  uncertain: boolean;
 }
 
 interface Ride {
@@ -225,7 +233,11 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
 
   const didntHappenSocial = async (e: SocialEvent) => {
     try {
-      await apiSend("PATCH", `/social/${e.gcal_event_id}`, { is_social: false });
+      // `removed` — "this occurrence didn't happen" — not `is_social`,
+      // which means "this event type isn't social". Conflating the two
+      // used to poison the classifier's few-shot examples with one-off
+      // cancellations (see the granularity spec).
+      await apiSend("PATCH", `/social/${e.gcal_event_id}`, { removed: true });
       setRemoved((prev) => ({ ...prev, [e.gcal_event_id]: e }));
       setEditingId(null);
       refresh();
@@ -236,12 +248,21 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
 
   const undoDidntHappen = async (e: SocialEvent) => {
     try {
-      await apiSend("PATCH", `/social/${e.gcal_event_id}`, { is_social: true });
+      await apiSend("PATCH", `/social/${e.gcal_event_id}`, { removed: false });
       setRemoved((prev) => {
         const next = { ...prev };
         delete next[e.gcal_event_id];
         return next;
       });
+      refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const resolveUncertain = async (e: SocialEvent, isSocial: boolean) => {
+    try {
+      await apiSend("PATCH", `/social/${e.gcal_event_id}`, buildUncertainResolvePatch(isSocial));
       refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -358,9 +379,22 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
               <button className="quiet quiet-btn" onClick={() => openEditSocial(e)}>
                 <span>{e.title}</span>
                 <span className="when">
-                  {e.amount !== null ? `$${e.amount.toFixed(2).replace(/\.00$/, "")}` : e.source === "manual" ? "manual" : "counted as social"}
+                  {e.amount !== null
+                    ? `$${e.amount.toFixed(2).replace(/\.00$/, "")}`
+                    : e.source === "manual"
+                    ? "manual"
+                    : e.is_social
+                    ? "counted as social"
+                    : "not counted"}
                 </span>
               </button>
+            )}
+            {e.uncertain && !isRemoved && (
+              <div className="uncertain-chip">
+                <span>social?</span>
+                <button onClick={() => resolveUncertain(e, true)}>Yes</button>
+                <button onClick={() => resolveUncertain(e, false)}>No</button>
+              </div>
             )}
             {editingId === e.gcal_event_id && !isRemoved && (
               <div className="social-form">

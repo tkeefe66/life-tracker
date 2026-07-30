@@ -63,8 +63,13 @@ def test_scan_passes_classification_examples_to_each_call(temp_db_path, monkeypa
     import database as db
     from jobs import scan_calendar
 
-    # A prior user override becomes an example for future classification calls.
-    db.upsert_calendar_event("evold", "Taco Tuesday", "2026-07-01T19:00:00-06:00", "2026-07-01T21:00:00-06:00")
+    # A prior user override on a recurring event becomes an example for future
+    # classification calls — series membership is what makes it safe to
+    # generalize (see get_classification_examples / the granularity spec).
+    db.upsert_calendar_event(
+        "evold", "Taco Tuesday", "2026-07-01T19:00:00-06:00", "2026-07-01T21:00:00-06:00",
+        recurring_event_id="taco-tuesday-series",
+    )
     db.set_event_classification("evold", False, 0.5)
     db.set_event_overrides("evold", {"user_is_social": True})
 

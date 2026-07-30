@@ -38,6 +38,18 @@ def test_maps_events(monkeypatch):
     assert ev["attendees"] == ["Sam"]
 
 
+def test_maps_recurring_event_id(monkeypatch):
+    from services import calendar_service
+    monkeypatch.setattr(
+        calendar_service, "_get_service",
+        lambda: _fake_service([_item(recurringEventId="series-abc"), _item(id="oneoff")]),
+    )
+    events = calendar_service.get_events_range(days_back=3)
+    by_id = {e["event_id"]: e for e in events}
+    assert by_id["ev1"]["recurring_event_id"] == "series-abc"
+    assert by_id["oneoff"]["recurring_event_id"] is None  # a one-off event has none
+
+
 def test_excludes_declined_cancelled_allday_birthday(monkeypatch):
     from services import calendar_service
     items = [

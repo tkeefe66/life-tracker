@@ -182,6 +182,10 @@ class SocialPatch(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
     is_social: Optional[bool] = None
     amount: Optional[float] = Field(default=None, ge=0)
+    # "This occurrence didn't happen" — distinct from is_social ("this event
+    # type isn't social"). See the granularity spec for why the two were
+    # conflated before and why that conflation poisoned the classifier.
+    removed: Optional[bool] = None
 
 
 @router.post("/social")
@@ -212,6 +216,8 @@ def patch_social(event_id: str, body: SocialPatch):
         updates["user_is_social"] = body.is_social
     if "amount" in provided:
         updates["amount"] = body.amount
+    if "removed" in provided:
+        updates["user_removed"] = body.removed
     if updates:
         db.set_event_overrides(event_id, updates)
     return {"ok": True}

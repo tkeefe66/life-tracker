@@ -111,6 +111,12 @@ people: dinners, drinks, parties, dates, hangouts, group activities, weddings.
 
 NOT social: work meetings, appointments (doctor, dentist), errands, solo activities
 (gym, haircut), reminders, flights, focus blocks.
+
+Some activities are inherently either solo or social depending on who's there — a
+movie, a restaurant meal, a hobby that can go either way. When the title,
+description, and attendees don't tell you which it was, do not guess: pick your
+best lean but return a LOW confidence score, rather than a confident answer you
+can't actually support.
 {example_block}
 Title: {title}
 Description: {description[:300]}

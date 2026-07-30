@@ -21,6 +21,14 @@ def week_bounds(d):
 NIGHT_CUTOFF_HOUR = 4
 
 
+# ── Social classification ambiguity threshold ────────────────────────────────
+# The single named constant for "the classifier isn't confident enough to
+# trust silently" — below this, an unresolved event surfaces as `uncertain`
+# in the day payload instead of quietly following the AI's lean. See
+# docs/superpowers/specs/2026-07-30-social-classification-granularity-design.md.
+AMBIGUOUS_CONFIDENCE = 0.7
+
+
 def effective_date(ts: str) -> date:
     """A timestamp before NIGHT_CUTOFF_HOUR local belongs to the PREVIOUS
     calendar day. Handles 'YYYY-MM-DDTHH:MM' and 'YYYY-MM-DDTHH:MM:SS' shapes.

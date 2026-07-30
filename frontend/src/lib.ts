@@ -88,6 +88,7 @@ export interface SocialPatch {
   title?: string;
   is_social?: boolean;
   amount?: number | null;
+  removed?: boolean;
 }
 
 /** Left-hand label for a spend-subtotal row: rides get a "rides" suffix,
@@ -337,6 +338,17 @@ export function buildSocialPatch(state: SocialEditState): SocialPatch {
   }
 
   return patch;
+}
+
+/**
+ * The patch sent when the user answers the ambiguity chip ("social? Yes /
+ * No") on an `uncertain` event (spec: 2026-07-30-social-classification-
+ * granularity-design). Always a full is_social answer — unlike
+ * buildSocialPatch, which diffs against previously-loaded editor state,
+ * tapping the chip IS the answer, not an edit of some other loaded value.
+ */
+export function buildUncertainResolvePatch(isSocial: boolean): SocialPatch {
+  return { is_social: isSocial };
 }
 
 /**

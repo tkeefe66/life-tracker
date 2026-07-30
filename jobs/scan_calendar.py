@@ -29,7 +29,10 @@ def run():
         examples = db.get_classification_examples()
         classified = 0
         for ev in events:
-            db.upsert_calendar_event(ev["event_id"], ev["title"], ev["start_datetime"], ev["end_datetime"])
+            db.upsert_calendar_event(
+                ev["event_id"], ev["title"], ev["start_datetime"], ev["end_datetime"],
+                recurring_event_id=ev.get("recurring_event_id"),
+            )
             if db.event_needs_classification(ev["event_id"]):
                 result = ai_metrics.classify_social_event(
                     ev["title"], ev["description"], ev["location"], ev["attendees"], examples=examples

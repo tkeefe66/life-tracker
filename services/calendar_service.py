@@ -86,6 +86,10 @@ def get_events_range(days_back: int) -> list:
             "description": item.get("description", ""),
             "location": item.get("location", ""),
             "attendees": attendees,
+            # Present only on an occurrence of a recurring event; None for a
+            # one-off. Series membership drives get_classification_examples'
+            # generalization rule (database.py) — see the granularity spec.
+            "recurring_event_id": item.get("recurringEventId"),
         })
     logger.info("Fetched %d calendar events (%d-day past window)", len(events), days_back)
     return events

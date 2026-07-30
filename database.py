@@ -11,7 +11,7 @@ from datetime import date
 import pytz
 
 from config import DATABASE_URL, DATABASE_PATH, TIMEZONE
-from metrics import NIGHT_CUTOFF_HOUR
+from metrics import AMBIGUOUS_CONFIDENCE, NIGHT_CUTOFF_HOUR
 
 
 def _today() -> date:
@@ -758,6 +758,64 @@ def _init_v2_tables():
             if "is_cancellation" not in cols:
                 c.execute("ALTER TABLE rides ADD COLUMN is_cancellation INTEGER")
 
+        # user_removed: nullable boolean on calendar_events — "this occurrence
+        # didn't happen" (user_removed), split out from "this event type
+        # isn't social" (user_is_social). See spec
+        # docs/superpowers/specs/2026-07-30-social-classification-granularity-design.md
+        # for the incident this fixes: the "Didn't happen" button used to
+        # write user_is_social=false, and get_classification_examples fed
+        # every user_is_social override back to the classifier as a few-shot
+        # example — one canceled kickball taught the model kickball isn't
+        # social, which then misclassified real kickball events. A USER
+        # column: the scan never touches it. `user_removed_col_existed` gates
+        # the one-time data conversion below so it can never re-fire.
+        if USE_POSTGRES:
+            c.execute("""SELECT column_name FROM information_schema.columns
+                         WHERE table_name = 'calendar_events' AND column_name = 'user_removed'""")
+            user_removed_col_existed = c.fetchone() is not None
+            if not user_removed_col_existed:
+                c.execute("ALTER TABLE calendar_events ADD COLUMN user_removed BOOLEAN")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(calendar_events)").fetchall()]
+            user_removed_col_existed = "user_removed" in cols
+            if not user_removed_col_existed:
+                c.execute("ALTER TABLE calendar_events ADD COLUMN user_removed INTEGER")
+
+        if not user_removed_col_existed:
+            # One-time conversion, only runs the run the column is first
+            # added. Every pre-migration row with source='gcal' AND
+            # user_is_social=false was necessarily a "Didn't happen" tap —
+            # that was the ONLY way to set user_is_social=false on a
+            # detected event before this migration existed (the edit form's
+            # "Counts as social" checkbox could also do it, but a checkbox
+            # uncheck is itself indistinguishable from "didn't happen" in
+            # the old data, and in prod exactly one such row exists: the
+            # canceled 2026-07-22 Volo kickball event, which was in fact a
+            # cancellation, not a genuine classification correction).
+            # Reclassifying it as user_removed=true (and clearing
+            # user_is_social back to NULL, its "no verdict yet" state) is
+            # the correct one-time read of that history.
+            p = _p()
+            c.execute(
+                f"""UPDATE calendar_events SET user_removed = {p}, user_is_social = NULL
+                    WHERE source = 'gcal' AND user_is_social = {p}""",
+                (True, False),
+            )
+
+        # recurring_event_id: nullable TEXT on calendar_events — Google's
+        # recurringEventId, passed through by services/calendar_service.py
+        # and jobs/scan_calendar.py. Series membership is what makes it safe
+        # to generalize a user's verdict to future occurrences (see
+        # get_classification_examples below) — a scan-owned column (mirrors
+        # Google's own data), so upsert_calendar_event overwrites it like
+        # title/start_at/end_at, never a user column.
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS recurring_event_id TEXT")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(calendar_events)").fetchall()]
+            if "recurring_event_id" not in cols:
+                c.execute("ALTER TABLE calendar_events ADD COLUMN recurring_event_id TEXT")
+
 
 # ── Check-ins ─────────────────────────────────────────────────────────────────
 
@@ -839,15 +897,18 @@ def get_delivery_orders_range(start_day, end_day):
 
 # ── Calendar events ───────────────────────────────────────────────────────────
 
-def upsert_calendar_event(gcal_event_id, title, start_at, end_at):
+def upsert_calendar_event(gcal_event_id, title, start_at, end_at, recurring_event_id=None):
+    """`recurring_event_id` is Google's own data (like title/start_at/end_at),
+    never a user column — a re-upsert overwrites it same as the others."""
     p = _p()
     with _cursor(write=True) as c:
         c.execute(
-            f"""INSERT INTO calendar_events (gcal_event_id, title, start_at, end_at)
-                VALUES ({p}, {p}, {p}, {p})
+            f"""INSERT INTO calendar_events (gcal_event_id, title, start_at, end_at, recurring_event_id)
+                VALUES ({p}, {p}, {p}, {p}, {p})
                 ON CONFLICT(gcal_event_id) DO UPDATE
-                SET title = excluded.title, start_at = excluded.start_at, end_at = excluded.end_at""",
-            (gcal_event_id, title, start_at, end_at),
+                SET title = excluded.title, start_at = excluded.start_at, end_at = excluded.end_at,
+                    recurring_event_id = excluded.recurring_event_id""",
+            (gcal_event_id, title, start_at, end_at, recurring_event_id),
         )
 
 
@@ -874,6 +935,10 @@ def _social_true():
     return "TRUE" if USE_POSTGRES else "1"
 
 
+def _social_false():
+    return "FALSE" if USE_POSTGRES else "0"
+
+
 def _social_rows(rows):
     """Cast the resolved is_social column to a real bool — SQLite returns 0/1 ints."""
     out = [dict(r) for r in rows]
@@ -882,7 +947,19 @@ def _social_rows(rows):
     return out
 
 
+def _social_rows_with_uncertain(rows):
+    """Same as _social_rows, plus casting the derived `uncertain` column."""
+    out = _social_rows(rows)
+    for r in out:
+        r["uncertain"] = bool(r["uncertain"])
+    return out
+
+
 def get_social_events_range(start_day, end_day):
+    """Resolved-social rows in [start_day, end_day] by end_at (the "has this
+    occurred" boundary — see app/scorecard.py's _social_counts). Excludes any
+    row the user has marked `user_removed` ("didn't happen") — see the
+    calendar_events migration above."""
     p = _p()
     with _cursor() as c:
         c.execute(
@@ -890,7 +967,8 @@ def get_social_events_range(start_day, end_day):
                        COALESCE(user_is_social, is_social) AS is_social, start_at, end_at,
                        source, amount
                 FROM calendar_events
-                WHERE COALESCE(user_is_social, is_social) = {_social_true()}
+                WHERE user_removed IS NOT TRUE
+                  AND COALESCE(user_is_social, is_social) = {_social_true()}
                   AND substr(end_at, 1, 10) >= {p} AND substr(end_at, 1, 10) <= {p}
                 ORDER BY start_at""",
             (start_day, end_day),
@@ -899,18 +977,41 @@ def get_social_events_range(start_day, end_day):
 
 
 def get_events_for_day(day):
+    """Detected/manual events for the Today/Day screen. Two kinds of row
+    qualify, both excluding `user_removed` ("didn't happen") events:
+
+    1. Resolved-social rows (COALESCE(user_is_social, is_social) = true) —
+       the pre-existing behavior.
+    2. Unresolved AND low-confidence rows (`user_is_social IS NULL` and
+       `confidence < AMBIGUOUS_CONFIDENCE`) — surfaced regardless of the
+       AI's is_social lean, so the day screen can show the "social? Yes/No"
+       ambiguity chip even for an event the model leans NOT-social on but
+       isn't confident about. These carry `uncertain: true`; every other
+       returned row carries `uncertain: false`. See
+       docs/superpowers/specs/2026-07-30-social-classification-granularity-design.md
+       ("ask when unsure", follows-the-lean counting is unaffected — this
+       function's counting cousin, get_social_events_range, is untouched)."""
     p = _p()
+    social_true, social_false = _social_true(), _social_false()
     with _cursor() as c:
         c.execute(
             f"""SELECT gcal_event_id, COALESCE(user_title, title) AS title,
                        COALESCE(user_is_social, is_social) AS is_social, start_at, end_at,
-                       source, amount
+                       source, amount,
+                       CASE WHEN user_is_social IS NULL AND user_removed IS NOT TRUE
+                                 AND confidence IS NOT NULL AND confidence < {p}
+                            THEN {social_true} ELSE {social_false} END AS uncertain
                 FROM calendar_events
-                WHERE COALESCE(user_is_social, is_social) = {_social_true()} AND substr(start_at, 1, 10) = {p}
+                WHERE user_removed IS NOT TRUE
+                  AND substr(start_at, 1, 10) = {p}
+                  AND (
+                        COALESCE(user_is_social, is_social) = {social_true}
+                        OR (user_is_social IS NULL AND confidence IS NOT NULL AND confidence < {p})
+                      )
                 ORDER BY start_at""",
-            (day,),
+            (AMBIGUOUS_CONFIDENCE, day, AMBIGUOUS_CONFIDENCE),
         )
-        return _social_rows(c.fetchall())
+        return _social_rows_with_uncertain(c.fetchall())
 
 
 def add_manual_social_event(event_id, title, start_at, end_at, amount=None):
@@ -937,7 +1038,7 @@ def set_event_overrides(event_id, updates: dict):
     if not updates:
         return
     p = _p()
-    allowed = {"user_title", "user_is_social", "amount"}
+    allowed = {"user_title", "user_is_social", "amount", "user_removed"}
     cols = [k for k in updates if k in allowed]
     if not cols:
         return
@@ -954,16 +1055,45 @@ def delete_event(event_id):
 
 
 def get_classification_examples(limit=10):
-    p = _p()
+    """Few-shot examples for ai_metrics.classify_social_event — generalizing
+    only from recurring event SERIES, not one-off corrections. See
+    docs/superpowers/specs/2026-07-30-social-classification-granularity-design.md:
+    a single "Didn't happen" tap on a one-off kickball event used to poison
+    the classifier into thinking kickball in general isn't social, because
+    every user_is_social override was fed back as an example regardless of
+    whether it generalizes.
+
+    A row qualifies only with a non-null user_is_social AND a non-null
+    recurring_event_id — series membership is what makes generalizing safe.
+    Rows are grouped by recurring_event_id; a series whose confirmed members
+    carry CONTRADICTORY verdicts is excluded entirely (split opinion inside
+    one series is not something to hand the model as ground truth); an
+    agreeing series contributes exactly one example, its most recent
+    verdict. One-off events (recurring_event_id IS NULL) never appear.
+    Capped at `limit`, newest-verdict-first across series."""
     with _cursor() as c:
         c.execute(
-            f"""SELECT COALESCE(user_title, title) AS title, user_is_social
-                FROM calendar_events
-                WHERE user_is_social IS NOT NULL
-                ORDER BY id DESC LIMIT {p}""",
-            (limit,),
+            """SELECT id, COALESCE(user_title, title) AS title, user_is_social, recurring_event_id
+               FROM calendar_events
+               WHERE user_is_social IS NOT NULL AND recurring_event_id IS NOT NULL
+               ORDER BY id DESC"""
         )
-        return [dict(r) for r in c.fetchall()]
+        rows = [dict(r) for r in c.fetchall()]
+
+    by_series: dict = {}
+    for r in rows:
+        by_series.setdefault(r["recurring_event_id"], []).append(r)
+
+    examples = []
+    for members in by_series.values():
+        verdicts = {bool(m["user_is_social"]) for m in members}
+        if len(verdicts) > 1:
+            continue  # contradictory verdicts inside one series — exclude entirely
+        newest = members[0]  # rows arrived id DESC, so index 0 is the most recent
+        examples.append((newest["id"], {"title": newest["title"], "user_is_social": bool(newest["user_is_social"])}))
+
+    examples.sort(key=lambda t: t[0], reverse=True)
+    return [ex for _, ex in examples[:limit]]
 
 
 # ── Targets & settings ────────────────────────────────────────────────────────
