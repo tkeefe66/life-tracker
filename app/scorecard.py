@@ -158,7 +158,11 @@ def spend(weeks: int) -> dict:
         we = metrics.week_bounds(ws)[1]
         ws_iso, we_iso = ws.isoformat(), we.isoformat()
         week_orders = [o for o in orders if ws_iso <= o["ordered_at"][:10] <= we_iso]
-        week_rides = [r for r in rides if ws_iso <= r["ride_at"][:10] <= we_iso]
+        # Regrouped by effective date (night cutoff), not raw ride_time[:10] —
+        # get_rides_range already filtered the outer window this way; this
+        # per-week split inside that window must agree, or a late-night ride
+        # near a week boundary would land in the wrong week's total.
+        week_rides = [r for r in rides if ws_iso <= metrics.effective_date(r["ride_time"]).isoformat() <= we_iso]
         week_social = [e for e in social if ws_iso <= e["end_at"][:10] <= we_iso]
         delivery_total = round(sum(o["amount"] or 0 for o in week_orders), 2)
         rides_total = round(sum(r["amount"] or 0 for r in week_rides), 2)
@@ -193,8 +197,10 @@ def spend(weeks: int) -> dict:
                           "label": o["subject"], "at": o["ordered_at"], "amount": round(o["amount"], 2)})
     for r in rides:
         if r["amount"]:
+            # "at" is the resolved TRUE ride time (ride_time), not the raw
+            # email-arrival ride_at — see database.get_rides_range.
             items.append({"kind": "ride", "service": r["service"],
-                          "label": r["subject"], "at": r["ride_at"], "amount": round(r["amount"], 2)})
+                          "label": r["subject"], "at": r["ride_time"], "amount": round(r["amount"], 2)})
     for e in social:
         if e["amount"]:
             items.append({"kind": "social", "service": "Social",
@@ -235,11 +241,14 @@ def week_days(week_start: date) -> dict:
                               "at": o["ordered_at"], "amount": round(amount, 2), "is_work": False})
                 day_total += amount
         for r in rides:
-            if r["ride_at"][:10] == d_iso:
+            # Grouped by effective date (night cutoff) via the resolved TRUE
+            # ride time, not raw ride_at[:10] — see metrics.effective_date and
+            # database.get_rides_range.
+            if metrics.effective_date(r["ride_time"]).isoformat() == d_iso:
                 amount = r["amount"] or 0
                 is_work = r["id"] not in personal_ride_ids
                 items.append({"kind": "ride", "service": r["service"], "label": r["subject"],
-                              "at": r["ride_at"], "amount": round(amount, 2), "is_work": is_work})
+                              "at": r["ride_time"], "amount": round(amount, 2), "is_work": is_work})
                 if not is_work:
                     day_total += amount
         for e in social:

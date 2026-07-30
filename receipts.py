@@ -102,6 +102,20 @@ def classify_ride(sender: str, subject: str) -> tuple:
     return "ambiguous", service
 
 
+_CANCELLATION_RE = re.compile(r"cancell?ed trip", re.IGNORECASE)
+
+
+def is_cancellation_fee(snippet) -> bool:
+    """True for a canceled-trip fee receipt — keyed on Uber's "canceled trip"
+    phrasing (spelling varies: canceled/cancelled). A completed-trip charge
+    summary or a thanks-for-riding follow-up never uses this phrase, so this
+    is label-only: it never changes whether a ride counts or how much it
+    contributes to spend (see repo guide). Note extract_ride_time still works
+    on cancellation snippets — the parsed time appears first — so dedupe is
+    unaffected."""
+    return bool(_CANCELLATION_RE.search(snippet or ""))
+
+
 def extract_ride_time(snippet):
     """'Jul 19, 2026 4:03 AM' -> '2026-07-19T04:03'; None if absent."""
     m = _RIDE_TIME_RE.search(snippet or "")

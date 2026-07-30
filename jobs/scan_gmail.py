@@ -29,9 +29,19 @@ def run():
         ride_examples = db.get_ride_examples()
         added = ai_checked = rides_added = 0
         for cand in candidates:
-            if db.has_delivery_order(cand["gmail_message_id"]) or db.has_ride(cand["gmail_message_id"]):
+            if db.has_delivery_order(cand["gmail_message_id"]):
                 continue
             snippet = cand.get("snippet", "")
+
+            existing_ride = db.get_ride_by_message_id(cand["gmail_message_id"])
+            if existing_ride:
+                # Backfill path: self-heals rides ingested before is_cancellation
+                # existed (or any other row that somehow never got classified) —
+                # the 7-day lookback window still covers recently-seen rides.
+                if existing_ride["is_cancellation"] is None:
+                    db.set_ride_cancellation(existing_ride["id"], receipts.is_cancellation_fee(snippet))
+                continue
+
             amount = receipts.extract_amount(snippet)
             day = cand["ordered_at"][:10]
 
@@ -57,7 +67,8 @@ def run():
                         db.set_ride_amount(existing["id"], amount)
                     continue
                 if db.add_ride(cand["gmail_message_id"], ride_service, cand["ordered_at"],
-                               key, cand["subject"], amount):
+                               key, cand["subject"], amount,
+                               is_cancellation=receipts.is_cancellation_fee(snippet)):
                     rides_added += 1
                     stored = db.find_ride_by_key(ride_service, key)
                     verdict = ai_metrics.classify_work_ride(

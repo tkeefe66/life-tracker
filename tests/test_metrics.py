@@ -1,12 +1,47 @@
 from datetime import date
 
-from metrics import METRICS, build_scorecard, is_hit, streaks, week_bounds
+from metrics import METRICS, NIGHT_CUTOFF_HOUR, build_scorecard, effective_date, is_hit, streaks, week_bounds
 
 
 def test_week_bounds_monday_start():
     assert week_bounds(date(2026, 7, 20)) == (date(2026, 7, 20), date(2026, 7, 26))  # a Monday
     assert week_bounds(date(2026, 7, 22)) == (date(2026, 7, 20), date(2026, 7, 26))  # Wednesday
     assert week_bounds(date(2026, 7, 26)) == (date(2026, 7, 20), date(2026, 7, 26))  # Sunday
+
+
+def test_night_cutoff_hour_is_4am():
+    assert NIGHT_CUTOFF_HOUR == 4
+
+
+def test_effective_date_before_cutoff_belongs_to_previous_day():
+    assert effective_date("2026-07-25T02:34") == date(2026, 7, 24)
+    assert effective_date("2026-07-25T02:34:00") == date(2026, 7, 24)  # HH:MM:SS shape too
+
+
+def test_effective_date_at_or_after_cutoff_stays_same_day():
+    assert effective_date("2026-07-25T04:00") == date(2026, 7, 25)  # exact boundary
+    assert effective_date("2026-07-25T04:00:00") == date(2026, 7, 25)
+    assert effective_date("2026-07-25T23:59") == date(2026, 7, 25)
+
+
+def test_effective_date_midnight_belongs_to_previous_day():
+    assert effective_date("2026-07-25T00:00") == date(2026, 7, 24)
+    assert effective_date("2026-07-25T00:00:00") == date(2026, 7, 24)
+
+
+def test_effective_date_monday_early_morning_belongs_to_sunday():
+    """Net effect that matters for weekly bucketing: a Monday 01:00 ride
+    belongs to Sunday — the previous week."""
+    monday = date(2026, 7, 20)
+    assert monday.weekday() == 0  # sanity: this really is a Monday
+    assert effective_date("2026-07-20T01:00") == date(2026, 7, 19)  # Sunday
+
+
+def test_effective_date_ignores_trailing_utc_offset():
+    """Timestamps in this system carry a trailing local offset as inert
+    metadata, never a conversion instruction — a naive tz-aware parse would
+    normalize through UTC and could shift the bucketed day."""
+    assert effective_date("2026-07-25T02:34:00-06:00") == date(2026, 7, 24)
 
 
 def test_substances_metric_defined():

@@ -16,6 +16,26 @@ def week_bounds(d):
     return monday, monday + timedelta(days=6)
 
 
+# ── Effective date (night cutoff) — applied to rides only, see repo guide ────
+
+NIGHT_CUTOFF_HOUR = 4
+
+
+def effective_date(ts: str) -> date:
+    """A timestamp before NIGHT_CUTOFF_HOUR local belongs to the PREVIOUS
+    calendar day. Handles 'YYYY-MM-DDTHH:MM' and 'YYYY-MM-DDTHH:MM:SS' shapes.
+    Any trailing UTC offset (e.g. '-06:00') is ignored on purpose — every
+    timestamp in this system already represents local wall-clock time, so the
+    offset is inert metadata, never a conversion instruction. This is the pure
+    Python twin of database._effective_date_expr, the SQL expression used to
+    bucket/filter rides at query time — both must agree on the exact cutoff."""
+    day = date.fromisoformat(ts[:10])
+    hour = int(ts[11:13])
+    if hour < NIGHT_CUTOFF_HOUR:
+        return day - timedelta(days=1)
+    return day
+
+
 def is_hit(direction, count, target):
     return count <= target if direction == "ceiling" else count >= target
 

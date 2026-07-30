@@ -154,3 +154,62 @@ def test_spend_by_service_shape_sorting_and_exclusions(temp_db_path):
         {"kind": "delivery", "service": "DoorDash", "amount": 8.0},
     ]
     assert not any(r["service"] == "Lyft" for r in rows)  # confirmed-work ride excluded
+
+
+def test_week_days_buckets_ride_by_effective_date_and_shows_true_ride_time(temp_db_path):
+    """A ride placed at 2026-07-20T01:10 (Monday, raw ride_at) but whose TRUE
+    ride time (ride_key) is 2026-07-19T23:00 (Sunday night, before the 4am
+    cutoff doesn't even apply here — 23:00 is well after it) must land on
+    Sunday, not Monday, and the item's displayed time must be the true ride
+    time, not the email-arrival ride_at."""
+    import database as db
+    from app.scorecard import week_days
+    db.seed_default_targets()
+    db.add_ride("r1", "Uber", "2026-07-20T01:10:00-06:00", "2026-07-19T23:00", "Late Sunday ride", 9.0)
+
+    out = week_days(date(2026, 7, 13))  # week of 2026-07-13 (Mon) .. 2026-07-19 (Sun)
+    sunday = out["days"][6]
+    assert sunday["date"] == "2026-07-19"
+    assert len(sunday["items"]) == 1
+    assert sunday["items"][0]["at"] == "2026-07-19T23:00"  # true ride time, not ride_at
+    assert sunday["total"] == 9.0
+
+    monday = out["days"][0]
+    assert monday["items"] == []  # not double-counted on the Monday it arrived
+
+
+def test_week_days_night_cutoff_moves_early_morning_ride_to_previous_day(temp_db_path):
+    """A ride truly occurring at 2026-07-25T02:34 (before the 4am cutoff)
+    belongs to 2026-07-24, even though its raw ride_at is on the 25th."""
+    import database as db
+    from app.scorecard import week_days
+    db.seed_default_targets()
+    db.add_ride("r1", "Uber", "2026-07-25T08:00:00-06:00", "2026-07-25T02:34", "Cutoff ride", 7.0)
+
+    out = week_days(date(2026, 7, 20))  # week of 2026-07-20 (Mon) .. 2026-07-26 (Sun)
+    friday = next(d for d in out["days"] if d["date"] == "2026-07-24")
+    saturday = next(d for d in out["days"] if d["date"] == "2026-07-25")
+    assert len(friday["items"]) == 1
+    assert friday["items"][0]["label"] == "Cutoff ride"
+    assert saturday["items"] == []
+
+
+def test_spend_windows_ride_into_previous_week_across_night_cutoff(temp_db_path, monkeypatch):
+    """Net effect on weekly spend: a Monday 01:00 ride belongs to the previous
+    week (Sunday), not the week it technically starts — exercised through
+    app.scorecard.spend()'s per-week regrouping."""
+    import datetime as dt
+    import database as db
+    from app import scorecard
+    db.seed_default_targets()
+    monkeypatch.setattr(scorecard, "_local_today", lambda: dt.date(2026, 7, 22))  # a Wednesday
+    # ride_at (raw) lands on Monday 2026-07-20; the TRUE ride time (ride_key)
+    # is Sunday night 2026-07-19T23:00, well after the 4am cutoff even applies —
+    # it's simply a different calendar day than the raw email-arrival time.
+    db.add_ride("r1", "Uber", "2026-07-20T01:10:00-06:00", "2026-07-19T23:00", "Late Sunday ride", 9.0)
+
+    out = scorecard.spend(weeks=2)
+    by_week = {w["week_start"]: w["rides"] for w in out["weeks"]}
+    assert by_week["2026-07-13"] == 9.0  # week containing the 19th (Sunday)
+    assert by_week["2026-07-20"] == 0.0  # week containing the 20th (Monday) — not double-counted
+    assert out["items"][0]["at"] == "2026-07-19T23:00"  # true ride time, not raw ride_at
