@@ -361,6 +361,24 @@ export function mergeRemovedSocialEvents<T extends { gcal_event_id: string; star
   );
 }
 
+/**
+ * Whether Google integration is broken badly enough to warn on EVERY screen,
+ * not just Settings (CLAUDE.md: "Google auth expiry surfaces as a visible
+ * banner in the app, never silent missing data"). Only `"error: auth"`
+ * qualifies: it needs user action (rerun `scripts/calendar_auth.py`) and
+ * never self-heals. Other error statuses (unreachable, rate limited, see
+ * logs) are usually transient and stay Settings-only. `"error: Google not
+ * configured"` also starts with `"error"` but is a deliberate no-op — Google
+ * was never wired up, which isn't a *break* — so it must never trigger this
+ * app-wide banner either.
+ */
+export function googleAuthBroken(
+  gmailStatus: string | null,
+  calendarStatus: string | null
+): boolean {
+  return gmailStatus === "error: auth" || calendarStatus === "error: auth";
+}
+
 export interface VendorLine { vendor: string; count: number; amount: number }
 export interface VendorTail { vendors: number; count: number; amount: number }
 

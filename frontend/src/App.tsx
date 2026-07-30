@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet, LockedOutError, login, onUnauthorized, UnauthorizedError } from "./api";
+import { googleAuthBroken } from "./lib";
 import Today from "./screens/Today";
 import Scorecard from "./screens/Scorecard";
 import Money from "./screens/Money";
@@ -97,6 +98,11 @@ export default function App() {
   // A date tapped on Week's day-by-day view, carried to Today and consumed
   // once it lands there — see Today's initialDate/onConsumed.
   const [pendingDay, setPendingDay] = useState<string | null>(null);
+  // App-wide "Google is disconnected" banner (CLAUDE.md: this must surface
+  // on every screen, not just Settings). A secondary surface — a failed
+  // fetch leaves this false, no banner, no screen-level error, page never
+  // blanks.
+  const [googleBroken, setGoogleBroken] = useState(false);
 
   const probe = () => {
     setProbeError(null);
@@ -118,6 +124,15 @@ export default function App() {
     onUnauthorized(() => setAuthed(false));
   }, []);
 
+  // Fetched once per app load (on the authed transition), not on every tab
+  // switch — Settings.tsx does its own richer fetch/banner independently.
+  useEffect(() => {
+    if (!authed) return;
+    apiGet<{ gmail_last_status: string | null; calendar_last_status: string | null }>("/settings")
+      .then((s) => setGoogleBroken(googleAuthBroken(s.gmail_last_status, s.calendar_last_status)))
+      .catch(() => {});
+  }, [authed]);
+
   if (probeError) {
     return (
       <div className="center">
@@ -133,6 +148,11 @@ export default function App() {
   return (
     <div className="app">
       <main>
+        {googleBroken && (
+          <div className="banner">
+            Google is disconnected — passive tracking is paused. See Settings.
+          </div>
+        )}
         {tab === "today" && (
           <Today initialDate={pendingDay} onConsumed={() => setPendingDay(null)} />
         )}

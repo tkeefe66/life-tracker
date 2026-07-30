@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   dayChips, dayLabel, dayRowDate, money, serviceLabel, subtotalsFromDay, targetLabel, weekLabel, type Day,
   TRIAGE_CHOICES, flowLabel, suggestionHint, coverageNote, weekCaption, trackedShareSentence,
-  signedMoney, signedPct, vendorSplit, type VendorLine, mergeRemovedSocialEvents,
+  signedMoney, signedPct, vendorSplit, type VendorLine, mergeRemovedSocialEvents, googleAuthBroken,
 } from "./lib";
 
 describe("weekLabel", () => {
@@ -515,5 +515,32 @@ describe("mergeRemovedSocialEvents", () => {
     expect(mergeRemovedSocialEvents(fetched, removed).map((e) => e.gcal_event_id)).toEqual([
       "a", "b", "c", "d",
     ]);
+  });
+});
+
+describe("googleAuthBroken", () => {
+  it("flags a gmail auth error", () => {
+    expect(googleAuthBroken("error: auth", "ok")).toBe(true);
+  });
+
+  it("flags a calendar auth error", () => {
+    expect(googleAuthBroken("ok", "error: auth")).toBe(true);
+  });
+
+  it("does not flag a healthy ok status", () => {
+    expect(googleAuthBroken("ok", "ok")).toBe(false);
+  });
+
+  it("does not flag when Google was never configured", () => {
+    expect(googleAuthBroken("error: Google not configured", "error: Google not configured")).toBe(false);
+  });
+
+  it("does not flag other transient error kinds", () => {
+    expect(googleAuthBroken("error: unreachable", "error: rate limited")).toBe(false);
+    expect(googleAuthBroken("error: see logs", null)).toBe(false);
+  });
+
+  it("does not flag null statuses (job hasn't run yet)", () => {
+    expect(googleAuthBroken(null, null)).toBe(false);
   });
 });

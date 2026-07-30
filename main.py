@@ -63,7 +63,16 @@ async def lifespan(app):
         id="sync_bank",
         next_run_time=datetime.datetime.now(pytz.timezone(TIMEZONE)),
     )
-    scheduler.add_job(scan_calendar, CronTrigger(hour=CALENDAR_SCAN_HOUR, minute=0), id="scan_calendar")
+    # next_run_time=now, same reasoning as scan_gmail/sync_bank: a deploy
+    # should refresh calendar data too, not wait for the 6 AM cron. Cheap to
+    # run at startup — the job already no-ops when Google isn't configured,
+    # and classification is skipped for already-classified events.
+    scheduler.add_job(
+        scan_calendar,
+        CronTrigger(hour=CALENDAR_SCAN_HOUR, minute=0),
+        id="scan_calendar",
+        next_run_time=datetime.datetime.now(pytz.timezone(TIMEZONE)),
+    )
     scheduler.add_job(weekly_push, CronTrigger(day_of_week="mon", hour=WEEKLY_PUSH_HOUR, minute=0), id="weekly_push")
     # Daily, not weekly: manual check-ins are hand-entered and reconstructable
     # from nothing, so a weekly cadence risked losing up to seven days of them.
