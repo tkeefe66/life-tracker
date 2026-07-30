@@ -1,0 +1,95 @@
+<h2>Day screen: what should the event section be?</h2>
+<p class="subtitle">Both use your real Friday, July 24 — time left of $, "Day log" as working title. Click the one that feels right (or tell me what to steal from each).</p>
+
+<style>
+  .phone { background:#f6f6f8; border-radius:18px; padding:16px 14px; max-width:420px; font-family:-apple-system,system-ui,sans-serif; color:#1c1c26; }
+  .phone .sec { font-size:13px; font-weight:650; color:#6b6b7a; letter-spacing:.02em; margin:14px 4px 6px; }
+  .phone .row { display:flex; align-items:center; gap:10px; background:#fff; border-radius:12px; padding:10px 12px; margin-bottom:6px; box-shadow:0 1px 2px rgba(20,20,40,.05); }
+  .phone .glyph { width:26px; height:26px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0; }
+  .phone .t { flex:1; min-width:0; }
+  .phone .t .name { font-size:14.5px; font-weight:520; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .phone .t .meta { font-size:12px; color:#8a8a99; margin-top:1px; }
+  .phone .right { font-size:13px; color:#55555f; white-space:nowrap; }
+  .phone .tag { font-size:10.5px; font-weight:600; padding:2px 7px; border-radius:99px; background:#e9e7fb; color:#5b54c9; }
+  .phone .tag.q { background:#fdf0dc; color:#a06b12; }
+  .phone .chev { color:#c3c3cf; font-size:15px; margin-left:2px; }
+  .phone .timedot { font-size:11.5px; color:#a5a5b3; width:56px; text-align:right; flex-shrink:0; }
+  .phone .nightband { border-left:3px solid #d8d4f4; margin-left:8px; padding-left:8px; }
+</style>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">A · Day timeline — one chronological story</div>
+    <div class="mockup-body">
+      <div class="phone">
+        <div class="sec">Day log</div>
+        <div class="row"><span class="timedot">10:17 AM</span><span class="glyph" style="background:#ffe9d9">🍔</span>
+          <div class="t"><div class="name">Uber Eats order</div></div>
+          <span class="right">$18.85</span><span class="chev">›</span></div>
+        <div class="row"><span class="timedot">7:37 PM</span><span class="glyph" style="background:#ddf0e2">🚗</span>
+          <div class="t"><div class="name">Uber ride</div></div>
+          <span class="right">$20.93</span><span class="chev">›</span></div>
+        <div class="row"><span class="timedot">evening</span><span class="glyph" style="background:#e9e7fb">🎉</span>
+          <div class="t"><div class="name">Adi Bday Downtown</div></div>
+          <span class="tag">social</span><span class="chev">›</span></div>
+        <div class="row"><span class="timedot">night</span><span class="glyph" style="background:#f3e3ea">🍺</span>
+          <div class="t"><div class="name">Alcohol · level 2</div><div class="meta">from your check-in</div></div></div>
+        <div class="nightband">
+          <div class="row"><span class="timedot">1:52 AM</span><span class="glyph" style="background:#eee">✕</span>
+            <div class="t"><div class="name">Uber cancellation fee</div></div>
+            <span class="right">$5.65</span><span class="chev">›</span></div>
+          <div class="row"><span class="timedot">2:14 AM</span><span class="glyph" style="background:#eee">✕</span>
+            <div class="t"><div class="name">Uber cancellation fee</div></div>
+            <span class="right">$5.65</span><span class="chev">›</span></div>
+          <div class="row"><span class="timedot">2:34 AM</span><span class="glyph" style="background:#ddf0e2">🚗</span>
+            <div class="t"><div class="name">Uber ride home</div></div>
+            <span class="right">$27.82</span><span class="chev">›</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">B · Grouped by kind — no mental sorting</div>
+    <div class="mockup-body">
+      <div class="phone">
+        <div class="sec">Social</div>
+        <div class="row"><span class="glyph" style="background:#e9e7fb">🎉</span>
+          <div class="t"><div class="name">Adi Bday Downtown</div><div class="meta">manual</div></div>
+          <span class="tag">social</span><span class="chev">›</span></div>
+        <div class="sec">Food &amp; delivery</div>
+        <div class="row"><span class="glyph" style="background:#ffe9d9">🍔</span>
+          <div class="t"><div class="name">Uber Eats order</div></div>
+          <span class="right">10:17 AM · $18.85</span><span class="chev">›</span></div>
+        <div class="sec">Getting around</div>
+        <div class="row"><span class="glyph" style="background:#ddf0e2">🚗</span>
+          <div class="t"><div class="name">Uber ride</div></div>
+          <span class="right">7:37 PM · $20.93</span><span class="chev">›</span></div>
+        <div class="row"><span class="glyph" style="background:#eee">✕</span>
+          <div class="t"><div class="name">Uber cancellation fee</div></div>
+          <span class="right">1:52 AM · $5.65</span><span class="chev">›</span></div>
+        <div class="row"><span class="glyph" style="background:#eee">✕</span>
+          <div class="t"><div class="name">Uber cancellation fee</div></div>
+          <span class="right">2:14 AM · $5.65</span><span class="chev">›</span></div>
+        <div class="row"><span class="glyph" style="background:#ddf0e2">🚗</span>
+          <div class="t"><div class="name">Uber ride</div></div>
+          <span class="right">2:34 AM · $27.82</span><span class="chev">›</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="timeline" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content"><h3>Day timeline</h3>
+      <p>Chronological story of the day. The night out reads as one arc (party → failed pickups → ride home → alcohol), and check-ins can live in the flow. Time gets its own left column.</p></div>
+  </div>
+  <div class="option" data-choice="grouped" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content"><h3>Grouped by kind</h3>
+      <p>Small labeled sections — you always know what a row is by where it sits. Social rows stop competing with spend rows. Time sits inline, left of the $.</p></div>
+  </div>
+</div>
+
+<p class="subtitle">Note in A: the late-night rows sit in a subtle "night band" — the visual hook that could later connect alcohol, bar charges, and rides into one "night out" story you mentioned.</p>

@@ -1,0 +1,72 @@
+<h2>Row anatomy at scale: how types &amp; status read</h2>
+<p class="subtitle">Same mockup day, but from the future — bank rows (rent, Target, a bar tab) have joined. Three marking systems; the "social?" chip now lives inside its row in all of them. Click a favorite.</p>
+
+<style>
+  .phone { background:#f6f6f8; border-radius:18px; padding:14px 12px; max-width:400px; font-family:-apple-system,system-ui,sans-serif; color:#1c1c26; }
+  .phone .row { display:flex; align-items:center; gap:9px; background:#fff; border-radius:12px; padding:9px 11px; margin-bottom:5px; box-shadow:0 1px 2px rgba(20,20,40,.05); }
+  .phone .glyph { width:24px; height:24px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:13px; flex-shrink:0; }
+  .phone .glyph.plain { background:transparent !important; font-size:15px; }
+  .phone .t { flex:1; min-width:0; }
+  .phone .name { font-size:13.5px; font-weight:520; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .phone .right { font-size:12px; color:#55555f; white-space:nowrap; }
+  .phone .tag { font-size:10px; font-weight:600; padding:2px 6px; border-radius:99px; background:#e9e7fb; color:#5b54c9; margin-left:4px; }
+  .phone .tag.q { background:#fdf0dc; color:#a06b12; }
+  .phone .tag.lbl { background:#f0f0f3; color:#71717d; font-weight:500; }
+  .phone .chipbtns { display:inline-flex; gap:4px; margin-left:4px; }
+  .phone .chipbtns b { font-size:10.5px; padding:2px 8px; border-radius:99px; background:#e9e7fb; color:#5b54c9; font-weight:600; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 2px; font-size:11.5px; color:#666; }
+  .legend span { display:inline-flex; align-items:center; gap:4px; }
+  .legend i { width:12px; height:12px; border-radius:4px; display:inline-block; font-style:normal; }
+</style>
+
+<div class="cards">
+  <div class="card" data-choice="cat-color" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="phone">
+        <div class="row"><span class="glyph" style="background:#ffe9d9">🍔</span><div class="t"><div class="name">Uber Eats order</div></div><span class="right">10:17 AM · $18.85</span></div>
+        <div class="row"><span class="glyph" style="background:#fbeaea">🏠</span><div class="t"><div class="name">Rent</div></div><span class="tag lbl">bills</span><span class="right">$1,850</span></div>
+        <div class="row"><span class="glyph" style="background:#e9e7fb">🎉</span><div class="t"><div class="name">Adi Bday Downtown</div></div><span class="tag">social</span></div>
+        <div class="row"><span class="glyph" style="background:#e9e7fb">🎬</span><div class="t"><div class="name">Spider-Man screening</div></div><span class="chipbtns"><span class="tag q">social?</span><b>Yes</b><b>No</b></span></div>
+        <div class="row"><span class="glyph" style="background:#f3e3ea">🍺</span><div class="t"><div class="name">The Cooper Lounge</div></div><span class="tag lbl">going out</span><span class="right">11:48 PM · $64</span></div>
+        <div class="row"><span class="glyph" style="background:#ddf0e2">🚗</span><div class="t"><div class="name">Uber ride home</div></div><span class="right">2:34 AM · $27.82</span></div>
+        <div class="legend">
+          <span><i style="background:#ffe9d9"></i>food</span><span><i style="background:#ddf0e2"></i>transport</span><span><i style="background:#e9e7fb"></i>social</span><span><i style="background:#f3e3ea"></i>drink</span><span><i style="background:#dcefF7"></i>fitness</span><span><i style="background:#fbeaea"></i>money</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>A · Category color + icon, status as chips</h3>
+      <p>Six category hues, forever — bank labels arrive as plain text tags, no new colors. Status is words, not memory.</p></div>
+  </div>
+
+  <div class="card" data-choice="icons-only" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="phone">
+        <div class="row"><span class="glyph plain">🍔</span><div class="t"><div class="name">Uber Eats order</div></div><span class="right">10:17 AM · $18.85</span></div>
+        <div class="row"><span class="glyph plain">🏠</span><div class="t"><div class="name">Rent</div></div><span class="tag lbl">bills</span><span class="right">$1,850</span></div>
+        <div class="row"><span class="glyph plain">🎉</span><div class="t"><div class="name">Adi Bday Downtown</div></div><span class="tag">social</span></div>
+        <div class="row"><span class="glyph plain">🎬</span><div class="t"><div class="name">Spider-Man screening</div></div><span class="chipbtns"><span class="tag q">social?</span><b>Yes</b><b>No</b></span></div>
+        <div class="row"><span class="glyph plain">🍺</span><div class="t"><div class="name">The Cooper Lounge</div></div><span class="tag lbl">going out</span><span class="right">11:48 PM · $64</span></div>
+        <div class="row"><span class="glyph plain">🚗</span><div class="t"><div class="name">Uber ride home</div></div><span class="right">2:34 AM · $27.82</span></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>B · Icons only, no color fields</h3>
+      <p>Quietest. The emoji does all the typing work; color never enters, so scale is a non-question. Slightly less scannable.</p></div>
+  </div>
+
+  <div class="card" data-choice="text-tags" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="phone">
+        <div class="row"><div class="t"><div class="name">Uber Eats order</div></div><span class="tag lbl">delivery</span><span class="right">10:17 AM · $18.85</span></div>
+        <div class="row"><div class="t"><div class="name">Rent</div></div><span class="tag lbl">bills</span><span class="right">$1,850</span></div>
+        <div class="row"><div class="t"><div class="name">Adi Bday Downtown</div></div><span class="tag">social</span></div>
+        <div class="row"><div class="t"><div class="name">Spider-Man screening</div></div><span class="chipbtns"><span class="tag q">social?</span><b>Yes</b><b>No</b></span></div>
+        <div class="row"><div class="t"><div class="name">The Cooper Lounge</div></div><span class="tag lbl">going out</span><span class="right">11:48 PM · $64</span></div>
+        <div class="row"><div class="t"><div class="name">Uber ride home</div></div><span class="tag lbl">ride</span><span class="right">2:34 AM · $27.82</span></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>C · Words for everything</h3>
+      <p>No icons, no color — every row states its type in text. Unambiguous but wordy; rows get crowded as tags stack.</p></div>
+  </div>
+</div>
+
+<p class="subtitle">All three fix today's bugs the same way: the "social?" chip is inside its row, and the edit form would drop the pre-checked "Counts as social" box for unanswered events (the chip IS the answer surface). The bar-tab row shows where alcohol inference could someday hang a quiet "late-night drink spot?" hint.</p>
