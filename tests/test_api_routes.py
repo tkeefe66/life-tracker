@@ -1267,3 +1267,39 @@ def test_patch_ride_day_and_work(temp_db_path):
     # empty body is a 400, unknown id a 404
     assert client.patch(f"/api/rides/{ride['id']}", json={}).status_code == 400
     assert client.patch("/api/rides/999999", json={"day": yesterday}).status_code == 404
+
+
+# ── Date tag + location on events (2026-07-30 date-tracking spec) ─────────────
+
+
+def test_post_social_with_date_and_location(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    resp = client.post("/api/social", json={
+        "name": "Drinks", "date": "2026-07-15", "amount": 40.0,
+        "location": "Wine Bar", "is_date": True,
+    })
+    assert resp.status_code == 200
+    ev_id = resp.json()["gcal_event_id"]
+    row = db.get_event(ev_id)
+    assert bool(row["user_is_date"]) is True and row["location"] == "Wine Bar"
+    # And it shows on its day with the resolved fields.
+    day = client.get("/api/today?date=2026-07-15").json()
+    assert day["social_events"][0]["is_date"] is True
+    assert day["social_events"][0]["location"] == "Wine Bar"
+
+
+def test_patch_social_date_and_location_overrides(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    db.upsert_calendar_event("ev-p1", "Dinner", "2026-07-15T19:00:00-06:00",
+                             "2026-07-15T21:00:00-06:00", location="Old Place")
+    db.set_event_classification("ev-p1", True, 0.9)
+    assert client.patch("/api/social/ev-p1",
+                        json={"is_date": True, "location": "New Place"}).status_code == 200
+    row = db.get_event("ev-p1")
+    assert bool(row["user_is_date"]) is True
+    assert row["user_location"] == "New Place"
+    # Explicit null clears the override (model_fields_set convention).
+    assert client.patch("/api/social/ev-p1", json={"is_date": None}).status_code == 200
+    assert db.get_event("ev-p1")["user_is_date"] is None

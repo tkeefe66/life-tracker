@@ -176,6 +176,8 @@ class SocialCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     date: Optional[str] = None
     amount: Optional[float] = Field(default=None, ge=0)
+    location: Optional[str] = Field(default=None, max_length=300)
+    is_date: Optional[bool] = None
 
 
 class SocialPatch(BaseModel):
@@ -186,6 +188,9 @@ class SocialPatch(BaseModel):
     # type isn't social"). See the granularity spec for why the two were
     # conflated before and why that conflation poisoned the classifier.
     removed: Optional[bool] = None
+    # Date tag + place (2026-07-30 date-tracking spec) — user columns.
+    is_date: Optional[bool] = None
+    location: Optional[str] = Field(default=None, max_length=300)
 
 
 @router.post("/social")
@@ -193,11 +198,13 @@ def post_social(body: SocialCreate):
     day = (_parse_date(body.date) if body.date else _local_today()).isoformat()
     event_id = "manual:" + uuid4().hex
     start_at, end_at = f"{day}T12:00:00", f"{day}T13:00:00"
-    db.add_manual_social_event(event_id, body.name, start_at, end_at, body.amount)
+    db.add_manual_social_event(event_id, body.name, start_at, end_at, body.amount,
+                               location=body.location, is_date=bool(body.is_date))
     return {
         "gcal_event_id": event_id, "title": body.name,
         "start_at": start_at, "end_at": end_at,
         "source": "manual", "amount": body.amount,
+        "location": body.location, "is_date": bool(body.is_date),
     }
 
 
@@ -218,6 +225,10 @@ def patch_social(event_id: str, body: SocialPatch):
         updates["amount"] = body.amount
     if "removed" in provided:
         updates["user_removed"] = body.removed
+    if "is_date" in provided:
+        updates["user_is_date"] = body.is_date
+    if "location" in provided:
+        updates["user_location"] = body.location
     if updates:
         db.set_event_overrides(event_id, updates)
     return {"ok": True}
