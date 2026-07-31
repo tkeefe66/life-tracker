@@ -1303,3 +1303,29 @@ def test_patch_social_date_and_location_overrides(temp_db_path):
     # Explicit null clears the override (model_fields_set convention).
     assert client.patch("/api/social/ev-p1", json={"is_date": None}).status_code == 200
     assert db.get_event("ev-p1")["user_is_date"] is None
+
+
+def test_reflection_prompt_sees_no_date_content(temp_db_path, monkeypatch):
+    # The reflection call may see date COUNTS/SPEND (numbers — rides set that
+    # precedent) but never date content: no title, no venue. Regression lock.
+    client = _client(temp_db_path)
+    import database as db
+    import ai_metrics
+    from app import routes
+    db.seed_default_targets()
+    last_monday = (datetime.date.today() -
+                   datetime.timedelta(days=datetime.date.today().weekday(), weeks=1))
+    day = (last_monday + datetime.timedelta(days=2)).isoformat()
+    db.upsert_calendar_event("refl-d", "Date night", f"{day}T19:00:00-06:00",
+                             f"{day}T21:00:00-06:00", location="Bar Dough", is_date=True)
+    db.set_event_classification("refl-d", True, 0.9)
+    captured = {}
+
+    def fake_reflect(card, noticings):
+        captured["blob"] = (str(card) + str(noticings)).lower()
+        return "a reflection"
+
+    monkeypatch.setattr(routes.ai_metrics, "weekly_reflection", fake_reflect)
+    assert client.post("/api/reflection").status_code == 200
+    assert "bar dough" not in captured["blob"]
+    assert "date night" not in captured["blob"]

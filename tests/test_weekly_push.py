@@ -41,3 +41,23 @@ def test_push_respects_toggle(temp_db_path, monkeypatch):
     weekly_push.run()
     assert len(sent) == 1 and "On Track" in sent[0]
     assert db.get_setting("push_last_status") == "ok"
+
+
+def test_scorecard_text_contains_no_date_lines(temp_db_path):
+    # Dates are unscored (not in METRICS) — the Telegram text is built from
+    # METRICS lines only, so a seeded date must leave no trace: no line, no
+    # venue, no title. Regression lock on the by-construction rule
+    # (2026-07-30 date-tracking spec). Counts/spend NUMBERS elsewhere in the
+    # card are fine (rides set that precedent); content is what must not leak.
+    from datetime import date
+    import database as db
+    from app.scorecard import scorecard_for_week
+    from jobs.weekly_push import format_scorecard_text
+    db.seed_default_targets()
+    db.upsert_calendar_event("push-d", "Date night", "2026-07-15T19:00:00-06:00",
+                             "2026-07-15T21:00:00-06:00", location="Bar Dough", is_date=True)
+    db.set_event_classification("push-d", True, 0.9)
+    text = format_scorecard_text(scorecard_for_week(date(2026, 7, 13)))
+    assert "Date night" not in text
+    assert "Bar Dough" not in text
+    assert "date" not in text.lower()
