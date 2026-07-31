@@ -776,6 +776,23 @@ def _init_v2_tables():
             if "user_date" not in cols:
                 c.execute("ALTER TABLE rides ADD COLUMN user_date TEXT")
 
+        # Date tracking + places (2026-07-30 spec). is_date/location are
+        # GCAL-OWNED (the scan's upsert overwrites them, same footing as
+        # title); user_is_date/user_location are USER columns the scan never
+        # touches. Resolved in SQL: COALESCE(user_is_date, is_date) and
+        # COALESCE(NULLIF(user_location, ''), location).
+        if USE_POSTGRES:
+            c.execute(f"ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS is_date {bool_t}")
+            c.execute(f"ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS user_is_date {bool_t}")
+            c.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS location TEXT")
+            c.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS user_location TEXT")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(calendar_events)").fetchall()]
+            for name, defn in (("is_date", bool_t), ("user_is_date", bool_t),
+                               ("location", "TEXT"), ("user_location", "TEXT")):
+                if name not in cols:
+                    c.execute(f"ALTER TABLE calendar_events ADD COLUMN {name} {defn}")
+
         # user_removed: nullable boolean on calendar_events — "this occurrence
         # didn't happen" (user_removed), split out from "this event type
         # isn't social" (user_is_social). See spec
@@ -944,18 +961,24 @@ def set_delivery_user_date(order_id, user_date):
 
 # ── Calendar events ───────────────────────────────────────────────────────────
 
-def upsert_calendar_event(gcal_event_id, title, start_at, end_at, recurring_event_id=None):
+def upsert_calendar_event(gcal_event_id, title, start_at, end_at, recurring_event_id=None,
+                          location=None, is_date=None):
     """`recurring_event_id` is Google's own data (like title/start_at/end_at),
-    never a user column — a re-upsert overwrites it same as the others."""
+    never a user column — a re-upsert overwrites it same as the others.
+    `location`/`is_date` are Google's own data too — `is_date` is derived from
+    the gcal title by the caller via metrics.title_is_date; a re-upsert
+    overwrites both (user_is_date/user_location are the user's levers)."""
     p = _p()
     with _cursor(write=True) as c:
         c.execute(
-            f"""INSERT INTO calendar_events (gcal_event_id, title, start_at, end_at, recurring_event_id)
-                VALUES ({p}, {p}, {p}, {p}, {p})
+            f"""INSERT INTO calendar_events
+                    (gcal_event_id, title, start_at, end_at, recurring_event_id, location, is_date)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p})
                 ON CONFLICT(gcal_event_id) DO UPDATE
                 SET title = excluded.title, start_at = excluded.start_at, end_at = excluded.end_at,
-                    recurring_event_id = excluded.recurring_event_id""",
-            (gcal_event_id, title, start_at, end_at, recurring_event_id),
+                    recurring_event_id = excluded.recurring_event_id,
+                    location = excluded.location, is_date = excluded.is_date""",
+            (gcal_event_id, title, start_at, end_at, recurring_event_id, location, is_date),
         )
 
 
@@ -1061,14 +1084,20 @@ def get_events_for_day(day):
         return _social_rows_with_uncertain(c.fetchall())
 
 
-def add_manual_social_event(event_id, title, start_at, end_at, amount=None):
+def add_manual_social_event(event_id, title, start_at, end_at, amount=None,
+                            location=None, is_date=False):
+    """Manual events are user assertions, so a date flag lands in
+    user_is_date (the USER column), not the scan-owned is_date."""
     p = _p()
+    user_is_date = True if is_date else None
     with _cursor(write=True) as c:
         c.execute(
             f"""INSERT INTO calendar_events
-                    (gcal_event_id, title, start_at, end_at, is_social, source, confidence, classified_at, amount)
-                VALUES ({p}, {p}, {p}, {p}, {_social_true()}, 'manual', 1.0, CURRENT_TIMESTAMP, {p})""",
-            (event_id, title, start_at, end_at, amount),
+                    (gcal_event_id, title, start_at, end_at, is_social, source, confidence,
+                     classified_at, amount, location, user_is_date)
+                VALUES ({p}, {p}, {p}, {p}, {_social_true()}, 'manual', 1.0,
+                        CURRENT_TIMESTAMP, {p}, {p}, {p})""",
+            (event_id, title, start_at, end_at, amount, location, user_is_date),
         )
 
 
@@ -1085,7 +1114,8 @@ def set_event_overrides(event_id, updates: dict):
     if not updates:
         return
     p = _p()
-    allowed = {"user_title", "user_is_social", "amount", "user_removed"}
+    allowed = {"user_title", "user_is_social", "amount", "user_removed",
+               "user_is_date", "user_location"}
     cols = [k for k in updates if k in allowed]
     if not cols:
         return

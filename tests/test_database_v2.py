@@ -832,3 +832,42 @@ def test_ride_auto_day_helper(temp_db_path):
     assert db.get_ride_auto_day(ride_id) == "2026-07-29"
     assert db.get_ride_auto_day(999999) is None
     assert db.set_ride_user_date(999999, "2026-07-29") is False
+
+
+# ── Date tracking + places (2026-07-30 spec) ─────────────────────────────────
+
+
+def test_calendar_event_date_and_location_columns(temp_db_path):
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev-d1", "Date night", "2026-07-15T19:00:00-06:00",
+                             "2026-07-15T21:00:00-06:00", location="Bar Dough", is_date=True)
+    row = db.get_event("ev-d1")
+    assert bool(row["is_date"]) is True
+    assert row["location"] == "Bar Dough"
+    assert row["user_is_date"] is None
+    assert row["user_location"] is None
+
+
+def test_upsert_overwrites_gcal_columns_never_user_columns(temp_db_path):
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev-d2", "Dinner", "2026-07-15T19:00:00-06:00",
+                             "2026-07-15T21:00:00-06:00", location="Old Place", is_date=False)
+    db.set_event_overrides("ev-d2", {"user_is_date": True, "user_location": "Corrected Venue"})
+    # Re-upsert (a later scan) refreshes gcal-owned columns…
+    db.upsert_calendar_event("ev-d2", "Dinner", "2026-07-15T19:00:00-06:00",
+                             "2026-07-15T21:00:00-06:00", location="New Place", is_date=False)
+    row = db.get_event("ev-d2")
+    assert row["location"] == "New Place"
+    # …but never the user's.
+    assert bool(row["user_is_date"]) is True
+    assert row["user_location"] == "Corrected Venue"
+
+
+def test_manual_event_with_date_and_location(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_manual_social_event("manual:d1", "Drinks", "2026-07-15T12:00:00",
+                               "2026-07-15T13:00:00", 40.0, location="Wine Bar", is_date=True)
+    row = db.get_event("manual:d1")
+    assert bool(row["user_is_date"]) is True   # user-asserted, in the USER column
+    assert row["is_date"] is None
+    assert row["location"] == "Wine Bar"
