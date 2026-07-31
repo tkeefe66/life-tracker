@@ -1,5 +1,6 @@
 """Pure metric computation — no DB, no I/O."""
 
+import re
 from datetime import date, timedelta
 
 METRICS = {
@@ -57,6 +58,15 @@ def nudge_user_date(auto_day, requested, today):
     if abs((requested - auto_day).days) == 1:
         return requested.isoformat()
     raise ValueError("day must be within one day of the automatic day")
+
+
+def title_is_date(title: str) -> bool:
+    """Rule-based date detection — the user's explicit scope: 'only look for
+    things that say Date, besides that it's just manual'. A word-boundary
+    match so 'Update sync' / 'Candidate interview' never fire; deliberately
+    NOT AI (see the 2026-07-30 date-tracking spec's rejected alternatives).
+    Plural 'dates' doesn't match: the signal is the literal word."""
+    return bool(re.search(r"\bdate\b", title or "", re.IGNORECASE))
 
 
 def is_hit(direction, count, target):

@@ -148,3 +148,16 @@ def test_nudge_user_date():
         nudge_user_date(auto, date(2026, 7, 27), today)
     with pytest.raises(ValueError):
         nudge_user_date(date(2026, 7, 30), date(2026, 7, 31), today)
+
+
+def test_title_is_date():
+    from metrics import title_is_date
+    assert title_is_date("Date night") is True
+    assert title_is_date("date w/ Alex") is True
+    assert title_is_date("DATE — Bar Dough") is True
+    assert title_is_date("Second date?") is True
+    assert title_is_date("Update sync") is False
+    assert title_is_date("Candidate interview") is False
+    assert title_is_date("Mandate review") is False
+    assert title_is_date("Dates with friends") is False  # plural is not the word "date"
+    assert title_is_date("") is False
