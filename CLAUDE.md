@@ -109,10 +109,19 @@ as a scored line.
   `date(ts, '-4 hours')` normalizes offset-bearing strings through UTC, so both
   dialects compute the cutoff from wall-clock substrings instead.
 - Amounts come from `receipts.extract_amount` (`Total $X` in the snippet).
-- **The night cutoff applies to rides only.** Extending it to delivery orders is a
-  deliberately deferred decision (they're a *scored* metric — week-boundary moves
-  change hit/miss); bank transactions are date-only so it's a no-op there. See
-  docs/superpowers/specs/2026-07-29-ride-cancellation-and-effective-date-design.md.
+- **The night cutoff applies to rides AND delivery orders** (since 2026-07-30 —
+  it was rides-only at first; the extension re-buckets history retroactively by
+  explicit user decision, even though delivery is a scored metric). Calendar
+  events keep start-time bucketing; check-ins and bank transactions are
+  date-only so it's a no-op there. Both tables also carry `user_date`, a
+  nullable USER column (scan never touches it) holding a ±1-day manual nudge:
+  the resolved day is `COALESCE(user_date, effective_date)`, computed in SQL
+  inside `get_delivery_orders_range`/`get_rides_range` and exposed as `day`
+  (plus cutoff-only `auto_day`) — every caller groups by `day`, never by
+  `ordered_at[:10]` or Python-side date math. Valid `user_date` values are
+  exactly auto ± 1; landing on the automatic day stores NULL (self-healing).
+  See docs/superpowers/specs/2026-07-29-ride-cancellation-and-effective-date-design.md
+  and 2026-07-30-delivery-night-cutoff-and-day-nudge-design.md.
 
 ### Bank ingestion — hard-won facts
 
@@ -302,8 +311,8 @@ rule has been widened again — fix the rule rather than working around it.
 | Table | Key | Notes |
 |---|---|---|
 | `checkins` | unique `(date, type)` | `type` ∈ gym / alcohol / substances; `level` is alcohol-only |
-| `delivery_orders` | unique `gmail_message_id` | `amount` nullable; cluster key for dedupe is `(service, day, subject)` |
-| `rides` | unique `gmail_message_id` | `ride_key` = parsed trip time; `ai_is_work` / `user_is_work`; `ride_at` immutable after insert; `is_cancellation` derived at ingest, label-only (still counts in rides + spend); queries bucket on the effective date (night cutoff) of the true ride time |
+| `delivery_orders` | unique `gmail_message_id` | `amount` nullable; cluster key for dedupe is `(service, raw day, subject)`; `user_date` nullable ±1-day nudge (user column, scan never touches); queries bucket on `COALESCE(user_date, effective date)` exposed as `day` |
+| `rides` | unique `gmail_message_id` | `ride_key` = parsed trip time; `ai_is_work` / `user_is_work`; `ride_at` immutable after insert; `is_cancellation` derived at ingest, label-only (still counts in rides + spend); `user_date` nullable ±1-day nudge (user column, scan never touches); queries bucket on `COALESCE(user_date, effective date of the true ride time)` exposed as `day` |
 | `calendar_events` | unique `gcal_event_id` | `user_title` / `user_is_social` overrides, `source` (`gcal`\|`manual`), `amount`, `user_removed` ("didn't happen" — separate from `user_is_social`, excluded from example feed), `recurring_event_id` (Google series id — gates classifier generalization), `confidence` (< 0.7 unresolved ⇒ `uncertain` chip). Manual events use id `manual:<uuid4>` |
 | `weekly_reflections` | unique `week_start` | Cached AI paragraph — at most one Claude call per week |
 | `bank_accounts` | unique `simplefin_id` | `role` (spending/bills/savings/investment/credit_card/unknown) and `active` are user-set; the sync overwrites `name`/`org`/`kind` but never those two. `nickname` is a fourth user-set nullable TEXT column on the same footing — `upsert_bank_account` never touches it — resolved as `COALESCE(NULLIF(nickname,''), name)`, exposed as `display_name` from `get_bank_accounts()` and as `account_name` in `_BANK_TXN_SELECT`, so every transaction surface shows it |
