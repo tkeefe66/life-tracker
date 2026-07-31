@@ -114,6 +114,8 @@ trip time) and attributed to the wrong calendar day/week because
   (`metrics.METRICS["delivery"]`), and moving its week boundary changes
   hit/miss outcomes retroactively — a much higher-stakes change than rides,
   which carry no target. Should be its own spec if pursued.
+  *Resolved 2026-07-30 — see
+  2026-07-30-delivery-night-cutoff-and-day-nudge-design.md.*
 - **Bank transactions** are date-only (no time component) in this schema, so
   the night-cutoff expression is a no-op there for now — nothing to change,
   but also nothing gained by wiring it in until bank data carries a
