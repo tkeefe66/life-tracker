@@ -1018,18 +1018,29 @@ def _social_rows(rows):
 
 
 def _social_rows_with_uncertain(rows):
-    """Same as _social_rows, plus casting the derived `uncertain` column."""
+    """Same as _social_rows, plus casting the derived `uncertain` and
+    `is_date` columns."""
     out = _social_rows(rows)
     for r in out:
         r["uncertain"] = bool(r["uncertain"])
+        r["is_date"] = bool(r["is_date"])
     return out
+
+
+def _resolved_date_expr():
+    """Resolved date flag — user verdict wins over the title rule."""
+    return "COALESCE(user_is_date, is_date)"
+
+
+_RESOLVED_LOCATION = "COALESCE(NULLIF(user_location, ''), location)"
 
 
 def get_social_events_range(start_day, end_day):
     """Resolved-social rows in [start_day, end_day] by end_at (the "has this
     occurred" boundary — see app/scorecard.py's _social_counts). Excludes any
     row the user has marked `user_removed` ("didn't happen") — see the
-    calendar_events migration above."""
+    calendar_events migration above. Excludes resolved DATES — the social
+    floor means non-date social (2026-07-30 date-tracking spec, decision 4)."""
     p = _p()
     with _cursor() as c:
         c.execute(
@@ -1039,6 +1050,7 @@ def get_social_events_range(start_day, end_day):
                 FROM calendar_events
                 WHERE user_removed IS NOT TRUE
                   AND COALESCE(user_is_social, is_social) = {_social_true()}
+                  AND {_resolved_date_expr()} IS NOT TRUE
                   AND substr(end_at, 1, 10) >= {p} AND substr(end_at, 1, 10) <= {p}
                 ORDER BY start_at""",
             (start_day, end_day),
@@ -1047,8 +1059,11 @@ def get_social_events_range(start_day, end_day):
 
 
 def get_events_for_day(day):
-    """Detected/manual events for the Today/Day screen. Two kinds of row
-    qualify, both excluding `user_removed` ("didn't happen") events:
+    """Detected/manual events for the Today/Day screen. Three kinds of row
+    qualify, all excluding `user_removed` ("didn't happen") events —
+    resolved-social, uncertain, and resolved-DATE (dates are excluded from
+    social *counting* but must still show on their day, with `is_date` and
+    resolved `location` fields; 2026-07-30 date-tracking spec):
 
     1. Resolved-social rows (COALESCE(user_is_social, is_social) = true) —
        the pre-existing behavior.
@@ -1068,6 +1083,8 @@ def get_events_for_day(day):
             f"""SELECT gcal_event_id, COALESCE(user_title, title) AS title,
                        COALESCE(user_is_social, is_social) AS is_social, start_at, end_at,
                        source, amount,
+                       ({_resolved_date_expr()} IS TRUE) AS is_date,
+                       {_RESOLVED_LOCATION} AS location,
                        CASE WHEN user_is_social IS NULL AND user_removed IS NOT TRUE
                                  AND confidence IS NOT NULL AND confidence < {p}
                             THEN {social_true} ELSE {social_false} END AS uncertain
@@ -1077,11 +1094,33 @@ def get_events_for_day(day):
                   AND (
                         COALESCE(user_is_social, is_social) = {social_true}
                         OR (user_is_social IS NULL AND confidence IS NOT NULL AND confidence < {p})
+                        OR {_resolved_date_expr()} IS TRUE
                       )
                 ORDER BY start_at""",
             (AMBIGUOUS_CONFIDENCE, day, AMBIGUOUS_CONFIDENCE),
         )
         return _social_rows_with_uncertain(c.fetchall())
+
+
+def get_date_events_range(start_day, end_day):
+    """Resolved-date rows in [start_day, end_day] by end_at day — the same
+    'has this occurred' boundary social counting uses — excluding
+    user_removed. The dates series is unscored (not in METRICS); this feeds
+    the Insights dates panel and date-kind spend items only."""
+    p = _p()
+    with _cursor() as c:
+        c.execute(
+            f"""SELECT gcal_event_id, COALESCE(user_title, title) AS title,
+                       start_at, end_at, source, amount,
+                       {_RESOLVED_LOCATION} AS location
+                FROM calendar_events
+                WHERE user_removed IS NOT TRUE
+                  AND {_resolved_date_expr()} IS TRUE
+                  AND substr(end_at, 1, 10) >= {p} AND substr(end_at, 1, 10) <= {p}
+                ORDER BY start_at""",
+            (start_day, end_day),
+        )
+        return [dict(r) for r in c.fetchall()]
 
 
 def add_manual_social_event(event_id, title, start_at, end_at, amount=None,

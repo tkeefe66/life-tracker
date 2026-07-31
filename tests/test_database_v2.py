@@ -871,3 +871,62 @@ def test_manual_event_with_date_and_location(temp_db_path):
     assert bool(row["user_is_date"]) is True   # user-asserted, in the USER column
     assert row["is_date"] is None
     assert row["location"] == "Wine Bar"
+
+
+def _seed_date_event(db, ev_id="ev-date", title="Date night", day="2026-07-15",
+                     amount=60.0, location="Bar Dough"):
+    db.upsert_calendar_event(ev_id, title, f"{day}T19:00:00-06:00",
+                             f"{day}T21:00:00-06:00", location=location, is_date=True)
+    db.set_event_classification(ev_id, True, 0.9)  # AI also thought it social
+    if amount is not None:
+        db.set_event_overrides(ev_id, {"amount": amount})
+
+
+def test_social_range_excludes_resolved_dates(temp_db_path):
+    db = _db(temp_db_path)
+    _seed_date_event(db)
+    db.upsert_calendar_event("ev-plain", "Trivia", "2026-07-15T19:00:00-06:00",
+                             "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("ev-plain", True, 0.9)
+    titles = [e["title"] for e in db.get_social_events_range("2026-07-14", "2026-07-20")]
+    assert titles == ["Trivia"]
+    # user_is_date=False un-dates a rule-flagged event — back into social.
+    db.set_event_overrides("ev-date", {"user_is_date": False})
+    titles = [e["title"] for e in db.get_social_events_range("2026-07-14", "2026-07-20")]
+    assert sorted(titles) == ["Date night", "Trivia"]
+
+
+def test_events_for_day_includes_dates_with_fields(temp_db_path):
+    db = _db(temp_db_path)
+    _seed_date_event(db)
+    rows = db.get_events_for_day("2026-07-15")
+    assert len(rows) == 1
+    assert rows[0]["is_date"] is True
+    assert rows[0]["location"] == "Bar Dough"
+    # user_location wins over the gcal location.
+    db.set_event_overrides("ev-date", {"user_location": "Actually Sunken City"})
+    assert db.get_events_for_day("2026-07-15")[0]["location"] == "Actually Sunken City"
+
+
+def test_events_for_day_includes_nonsocial_date(temp_db_path):
+    # A date is shown on its day even if the AI said not-social with high
+    # confidence — resolved date is an independent inclusion reason.
+    db = _db(temp_db_path)
+    db.upsert_calendar_event("ev-ns", "Date — museum", "2026-07-15T14:00:00-06:00",
+                             "2026-07-15T16:00:00-06:00", is_date=True)
+    db.set_event_classification("ev-ns", False, 0.95)
+    rows = db.get_events_for_day("2026-07-15")
+    assert [r["gcal_event_id"] for r in rows] == ["ev-ns"]
+    assert rows[0]["is_date"] is True
+
+
+def test_get_date_events_range(temp_db_path):
+    db = _db(temp_db_path)
+    _seed_date_event(db)                                       # in range, then removed
+    _seed_date_event(db, ev_id="ev-date2", day="2026-07-25")   # outside range
+    db.add_manual_social_event("manual:d2", "Drinks", "2026-07-16T12:00:00",
+                               "2026-07-16T13:00:00", 40.0, location="Wine Bar", is_date=True)
+    db.set_event_overrides("ev-date", {"user_removed": True})  # didn't happen
+    rows = db.get_date_events_range("2026-07-14", "2026-07-20")
+    assert [r["gcal_event_id"] for r in rows] == ["manual:d2"]
+    assert rows[0]["location"] == "Wine Bar" and rows[0]["amount"] == 40.0
