@@ -753,3 +753,18 @@ def test_delete_expired_sessions_only_removes_past_ones(temp_db_path):
     db.delete_expired_sessions("2026-07-10T00:00:00")
     assert db.get_session("expired") is None
     assert db.get_session("still-valid") is not None
+
+
+# ── user_date (±1-day nudge) ──────────────────────────────────────────────────
+
+
+def test_user_date_columns_exist(temp_db_path):
+    # Migration adds a nullable user_date to both tables; a plain insert
+    # leaves it NULL and the range queries tolerate it.
+    db = _db(temp_db_path)
+    db.add_delivery_order("ud-col-1", "Uber Eats", "2026-07-15T12:00:00-06:00", "Order", 10.0)
+    with db._cursor() as c:
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(delivery_orders)").fetchall()]
+        assert "user_date" in cols
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(rides)").fetchall()]
+        assert "user_date" in cols

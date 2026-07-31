@@ -758,6 +758,24 @@ def _init_v2_tables():
             if "is_cancellation" not in cols:
                 c.execute("ALTER TABLE rides ADD COLUMN is_cancellation INTEGER")
 
+        # user_date: nullable TEXT ('YYYY-MM-DD') on delivery_orders and
+        # rides — the user's ±1-day nudge when the automatic night cutoff
+        # got it wrong. A USER column: the scan never reads or writes it
+        # (Override + Learning rule 3). Resolved as
+        # COALESCE(user_date, <effective date>) inside the range queries;
+        # NULL means "trust the automatic day", which is why moving an item
+        # back to its automatic day stores NULL rather than the date.
+        if USE_POSTGRES:
+            c.execute("ALTER TABLE delivery_orders ADD COLUMN IF NOT EXISTS user_date TEXT")
+            c.execute("ALTER TABLE rides ADD COLUMN IF NOT EXISTS user_date TEXT")
+        else:
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(delivery_orders)").fetchall()]
+            if "user_date" not in cols:
+                c.execute("ALTER TABLE delivery_orders ADD COLUMN user_date TEXT")
+            cols = [r["name"] for r in c.execute("PRAGMA table_info(rides)").fetchall()]
+            if "user_date" not in cols:
+                c.execute("ALTER TABLE rides ADD COLUMN user_date TEXT")
+
         # user_removed: nullable boolean on calendar_events — "this occurrence
         # didn't happen" (user_removed), split out from "this event type
         # isn't social" (user_is_social). See spec
