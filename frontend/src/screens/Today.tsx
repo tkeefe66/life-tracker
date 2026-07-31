@@ -25,6 +25,10 @@ interface SocialEvent {
   // purposes) but also carries the "social? Yes/No" ambiguity chip. See
   // docs/superpowers/specs/2026-07-30-social-classification-granularity-design.md.
   uncertain: boolean;
+  // Resolved date flag + place (2026-07-30 date-tracking spec). A date shows
+  // the "date" chip instead of "social" and is excluded from social counts.
+  is_date: boolean;
+  location: string | null;
 }
 
 interface Ride {
@@ -95,14 +99,19 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
   const [addingSocial, setAddingSocial] = useState(false);
   const [socialName, setSocialName] = useState("");
   const [socialAmount, setSocialAmount] = useState("");
+  const [socialLocation, setSocialLocation] = useState("");
+  const [socialIsDate, setSocialIsDate] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editIsSocial, setEditIsSocial] = useState(true);
   const [editAmount, setEditAmount] = useState("");
-  const [editLoaded, setEditLoaded] = useState<{ title: string; isSocial: boolean; amount: number | null }>({
-    title: "", isSocial: true, amount: null,
-  });
+  const [editIsDate, setEditIsDate] = useState(false);
+  const [editLocation, setEditLocation] = useState("");
+  const [editLoaded, setEditLoaded] = useState<{
+    title: string; isSocial: boolean; amount: number | null;
+    isDate: boolean; location: string | null;
+  }>({ title: "", isSocial: true, amount: null, isDate: false, location: null });
 
   // Detected social events the user just marked "Didn't happen" this
   // session, keyed by gcal_event_id. The day query filters resolved-social
@@ -184,6 +193,8 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
     setEditingId(null);
     setSocialName("");
     setSocialAmount("");
+    setSocialLocation("");
+    setSocialIsDate(false);
     setAddingSocial(true);
   };
 
@@ -194,7 +205,11 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
     if (!name) return;
     try {
       const amount = socialAmount.trim() === "" ? undefined : Number(socialAmount);
-      await apiSend("POST", "/social", { name, date: data.date, amount });
+      await apiSend("POST", "/social", {
+        name, date: data.date, amount,
+        location: socialLocation.trim() || undefined,
+        is_date: socialIsDate || undefined,
+      });
       setAddingSocial(false);
       refresh();
     } catch (e) {
@@ -208,7 +223,12 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
     setEditTitle(e.title);
     setEditIsSocial(e.is_social);
     setEditAmount(e.amount !== null ? String(e.amount) : "");
-    setEditLoaded({ title: e.title, isSocial: e.is_social, amount: e.amount });
+    setEditIsDate(e.is_date);
+    setEditLocation(e.location ?? "");
+    setEditLoaded({
+      title: e.title, isSocial: e.is_social, amount: e.amount,
+      isDate: e.is_date, location: e.location,
+    });
   };
 
   const cancelEditSocial = () => setEditingId(null);
@@ -224,9 +244,13 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
         loadedTitle: editLoaded.title,
         loadedIsSocial: editLoaded.isSocial,
         loadedAmount: editLoaded.amount,
+        loadedIsDate: editLoaded.isDate,
+        loadedLocation: editLoaded.location,
         title: editTitle,
         isSocial: editIsSocial,
         amountText: editAmount,
+        isDate: editIsDate,
+        locationText: editLocation,
       });
       if (Object.keys(patch).length > 0) {
         await apiSend("PATCH", `/social/${editingId}`, patch);
@@ -414,6 +438,8 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
       ? <StatusChip kind="removed" onUndo={() => undoDidntHappen(e)} />
       : e.uncertain
       ? <StatusChip kind="uncertain" onYes={() => resolveUncertain(e, true)} onNo={() => resolveUncertain(e, false)} />
+      : e.is_date
+      ? <StatusChip kind="date" />
       : <StatusChip kind="social" />;
 
     return {
@@ -456,6 +482,21 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
                   Counts as social
                 </label>
               )}
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={editIsDate}
+                  onChange={(ev) => setEditIsDate(ev.target.checked)}
+                />
+                Date
+              </label>
+              <input
+                type="text"
+                value={editLocation}
+                onChange={(ev) => setEditLocation(ev.target.value)}
+                placeholder="Where (optional)"
+                aria-label="Where"
+              />
               <input
                 className="field-num"
                 type="number"
@@ -604,6 +645,13 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
             autoFocus
           />
           <input
+            type="text"
+            value={socialLocation}
+            onChange={(ev) => setSocialLocation(ev.target.value)}
+            placeholder="Where (optional)"
+            aria-label="Where"
+          />
+          <input
             className="field-num"
             type="number"
             min="0"
@@ -613,6 +661,14 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
             placeholder="Cost (optional)"
             aria-label="Cost"
           />
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={socialIsDate}
+              onChange={(ev) => setSocialIsDate(ev.target.checked)}
+            />
+            Date
+          </label>
           <div className="row-actions">
             <button onClick={cancelAddSocial}>Cancel</button>
             <button className="primary" onClick={submitAddSocial}>Save</button>

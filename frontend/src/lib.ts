@@ -94,9 +94,13 @@ export interface SocialEditState {
   loadedTitle: string;
   loadedIsSocial: boolean;
   loadedAmount: number | null;
+  loadedIsDate: boolean;
+  loadedLocation: string | null;
   title: string;
   isSocial: boolean;
   amountText: string;
+  isDate: boolean;
+  locationText: string;
 }
 
 export interface SocialPatch {
@@ -104,6 +108,8 @@ export interface SocialPatch {
   is_social?: boolean;
   amount?: number | null;
   removed?: boolean;
+  is_date?: boolean | null;
+  location?: string | null;
 }
 
 /** Left-hand label for a spend-subtotal row: rides get a "rides" suffix,
@@ -350,6 +356,16 @@ export function buildSocialPatch(state: SocialEditState): SocialPatch {
   } else {
     const amount = Number(amountText);
     if (amount !== state.loadedAmount) patch.amount = amount;
+  }
+
+  if (state.isDate !== state.loadedIsDate) patch.is_date = state.isDate;
+
+  // Same emptied-field convention as amount: cleared text explicitly nulls
+  // the stored override rather than silently leaving it in place.
+  const locationText = state.locationText.trim();
+  const loadedLocation = state.loadedLocation ?? "";
+  if (locationText !== loadedLocation) {
+    patch.location = locationText === "" ? null : locationText;
   }
 
   return patch;

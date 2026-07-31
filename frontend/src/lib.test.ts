@@ -104,7 +104,10 @@ describe("weekRangeLabel", () => {
 import { buildSocialPatch, buildUncertainResolvePatch } from "./lib";
 
 describe("buildSocialPatch", () => {
-  const loaded = { loadedTitle: "Dinner", loadedIsSocial: true, loadedAmount: null };
+  const loaded = {
+    loadedTitle: "Dinner", loadedIsSocial: true, loadedAmount: null,
+    loadedIsDate: false, loadedLocation: null, isDate: false, locationText: "",
+  };
 
   it("sends nothing when the editor is saved without any change", () => {
     const patch = buildSocialPatch({ ...loaded, title: "Dinner", isSocial: true, amountText: "" });
@@ -127,7 +130,7 @@ describe("buildSocialPatch", () => {
   });
 
   it("sends amount: null (not omitted) when a stored cost is cleared", () => {
-    const withAmount = { loadedTitle: "Dinner", loadedIsSocial: true, loadedAmount: 300 };
+    const withAmount = { ...loaded, loadedAmount: 300 };
     const patch = buildSocialPatch({ ...withAmount, title: "Dinner", isSocial: true, amountText: "" });
     expect(patch).toEqual({ amount: null });
   });
@@ -138,7 +141,7 @@ describe("buildSocialPatch", () => {
   });
 
   it("omits amount when the typed value matches the loaded amount", () => {
-    const withAmount = { loadedTitle: "Dinner", loadedIsSocial: true, loadedAmount: 25 };
+    const withAmount = { ...loaded, loadedAmount: 25 };
     const patch = buildSocialPatch({ ...withAmount, title: "Dinner", isSocial: true, amountText: "25" });
     expect(patch.amount).toBeUndefined();
   });
@@ -693,5 +696,25 @@ describe("nudgeOptions", () => {
 describe("nudgeLabel", () => {
   it("formats a short month-day", () => {
     expect(nudgeLabel("2026-07-29")).toBe("Jul 29");
+  });
+});
+
+describe("buildSocialPatch date/location", () => {
+  const base = {
+    loadedTitle: "Dinner", loadedIsSocial: true, loadedAmount: null,
+    loadedIsDate: false, loadedLocation: null,
+    title: "Dinner", isSocial: true, amountText: "",
+    isDate: false, locationText: "",
+  };
+  it("emits is_date only when changed", () => {
+    expect(buildSocialPatch({ ...base, isDate: true })).toEqual({ is_date: true });
+    expect(buildSocialPatch(base)).toEqual({});
+  });
+  it("emits location only when changed, empty clears to null", () => {
+    expect(buildSocialPatch({ ...base, locationText: "Bar Dough" })).toEqual({ location: "Bar Dough" });
+    expect(buildSocialPatch({ ...base, loadedLocation: "Bar Dough", locationText: "" }))
+      .toEqual({ location: null });
+    expect(buildSocialPatch({ ...base, loadedLocation: "Bar Dough", locationText: "Bar Dough" }))
+      .toEqual({});
   });
 });
