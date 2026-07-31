@@ -430,6 +430,27 @@ button.quiet-btn::after {
 .filter-chip.on { background: var(--accent-soft); border-color: var(--accent); }
 
 /* ── Social event add/edit inline forms ── */
+/* Inline action strip under a delivery/ride Day log row (move-day nudge,
+   ride work toggle). Sibling of .social-form's expand-under-the-row pattern;
+   indented past the category icon so it reads as belonging to its row. */
+.day-log-actions {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 8px 40px;
+}
+.day-log-actions button {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+.day-log-actions button:hover,
+.day-log-actions button:active { background: var(--accent-soft); }
+
 .social-form {
   display: flex;
   flex-direction: column;

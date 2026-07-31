@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import { apiGet, apiSend } from "../api";
 import {
   addDays, buildSocialPatch, buildUncertainResolvePatch, categoryForKind, dayLogRowMeta,
-  isDimmed, mergeRemovedSocialEvents, mondayOf, orderDayLog, presentCategories, subtotalsFromDay,
-  targetLabel, weekRangeLabel, type DayLogCategory,
+  isDimmed, mergeRemovedSocialEvents, mondayOf, nudgeLabel, nudgeOptions, orderDayLog,
+  presentCategories, subtotalsFromDay, targetLabel, weekRangeLabel, type DayLogCategory,
 } from "../lib";
 import DayNav from "../components/DayNav";
 import DayLogRow from "../components/DayLogRow";
@@ -40,6 +40,10 @@ interface Ride {
   user_is_work: boolean | null;
   is_work: boolean;
   is_cancellation: boolean | null;
+  // Resolved day (user nudge wins) and the cutoff-only automatic day —
+  // the pair nudgeOptions needs to offer valid move targets.
+  day: string;
+  auto_day: string;
 }
 
 interface TodayData {
@@ -47,7 +51,10 @@ interface TodayData {
   gym: boolean;
   alcohol_level: number | null;
   substances: boolean;
-  deliveries: { service: string; subject: string; ordered_at: string; amount: number | null }[];
+  deliveries: {
+    id: number; service: string; subject: string; ordered_at: string;
+    amount: number | null; day: string; auto_day: string;
+  }[];
   social_events: SocialEvent[];
   rides: Ride[];
 }
@@ -109,9 +116,14 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
   // navigates to a different one.
   const [activeCategory, setActiveCategory] = useState<DayLogCategory | null>(null);
 
+  // One action strip open at a time, keyed "delivery:3" / "ride:7" — same
+  // per-day reset rule as the filter strip.
+  const [openStrip, setOpenStrip] = useState<string | null>(null);
+
   useEffect(() => {
     setRemoved({});
     setActiveCategory(null);
+    setOpenStrip(null);
   }, [data?.date]);
 
   const refresh = useCallback(() => {
@@ -277,9 +289,30 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
 
   const toggleRideWork = async (r: Ride) => {
     try {
-      // Tapping also teaches future classification — the API folds confirmed
-      // overrides back into the AI's examples on the next scan.
+      // Confirming also teaches future classification — the API folds
+      // confirmed overrides back into the AI's examples on the next scan.
       await apiSend("PATCH", `/rides/${r.id}`, { is_work: !r.is_work });
+      setOpenStrip(null);
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const moveDelivery = async (id: number, day: string) => {
+    try {
+      await apiSend("PATCH", `/deliveries/${id}`, { day });
+      setOpenStrip(null);
+      refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const moveRide = async (id: number, day: string) => {
+    try {
+      await apiSend("PATCH", `/rides/${id}`, { day });
+      setOpenStrip(null);
       refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -297,42 +330,73 @@ export default function Today({ initialDate, onConsumed }: Props = {}) {
   // (plus, for social events, its inline edit form).
   interface LogEntry { key: string; timeIso: string | null; category: DayLogCategory; node: ReactNode }
 
+  // Nudge buttons must never offer a future day; todayIso is set on first
+  // load (viewing a past day means it's already known), data.date is the
+  // safe fallback when the viewed day IS today.
+  const todayForNudge = todayIso ?? data.date;
+
+  const nudgeButtons = (autoDay: string, onMove: (day: string) => void) =>
+    nudgeOptions(autoDay, data.date, todayForNudge).map((day) => (
+      <button key={day} type="button" onClick={() => onMove(day)}>
+        {day < data.date ? "‹ " : ""}Move to {nudgeLabel(day)}{day > data.date ? " ›" : ""}
+      </button>
+    ));
+
   const deliveryEntries: LogEntry[] = data.deliveries.map((d) => {
     const category = categoryForKind("delivery");
+    const key = `delivery:${d.id}`;
     return {
-      key: `delivery:${d.ordered_at}`,
+      key,
       timeIso: d.ordered_at,
       category,
       node: (
-        <DayLogRow
-          key={`delivery:${d.ordered_at}`}
-          category={category}
-          name={`${d.service} order`}
-          meta={dayLogRowMeta(d.ordered_at, d.amount)}
-          dimmed={isDimmed(category, activeCategory)}
-        />
+        <div className="day-log-entry" key={key}>
+          <DayLogRow
+            category={category}
+            name={`${d.service} order`}
+            meta={dayLogRowMeta(d.ordered_at, d.amount)}
+            interactive
+            onClick={() => setOpenStrip(openStrip === key ? null : key)}
+            dimmed={isDimmed(category, activeCategory)}
+          />
+          {openStrip === key && (
+            <div className="day-log-actions">
+              {nudgeButtons(d.auto_day, (day) => moveDelivery(d.id, day))}
+            </div>
+          )}
+        </div>
       ),
     };
   });
 
   const rideEntries: LogEntry[] = data.rides.map((r) => {
     const category = categoryForKind("ride");
+    const key = `ride:${r.id}`;
     const unconfirmed = r.ai_is_work === true && r.user_is_work === null;
     const name = `${r.service} ${r.is_cancellation ? "cancellation fee" : "ride"}${unconfirmed ? " · work?" : ""}`;
     return {
-      key: `ride:${r.id}`,
+      key,
       timeIso: r.ride_time,
       category,
       node: (
-        <DayLogRow
-          key={`ride:${r.id}`}
-          category={category}
-          name={name}
-          meta={dayLogRowMeta(r.ride_time, r.amount)}
-          interactive
-          onClick={() => toggleRideWork(r)}
-          dimmed={isDimmed(category, activeCategory)}
-        />
+        <div className="day-log-entry" key={key}>
+          <DayLogRow
+            category={category}
+            name={name}
+            meta={dayLogRowMeta(r.ride_time, r.amount)}
+            interactive
+            onClick={() => setOpenStrip(openStrip === key ? null : key)}
+            dimmed={isDimmed(category, activeCategory)}
+          />
+          {openStrip === key && (
+            <div className="day-log-actions">
+              <button type="button" onClick={() => toggleRideWork(r)}>
+                {r.is_work ? "Mark as personal" : "Mark as work"}
+              </button>
+              {nudgeButtons(r.auto_day, (day) => moveRide(r.id, day))}
+            </div>
+          )}
+        </div>
       ),
     };
   });
