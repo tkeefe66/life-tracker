@@ -768,3 +768,45 @@ def test_user_date_columns_exist(temp_db_path):
         assert "user_date" in cols
         cols = [r["name"] for r in c.execute("PRAGMA table_info(rides)").fetchall()]
         assert "user_date" in cols
+
+
+def test_delivery_night_cutoff_buckets_previous_day(temp_db_path):
+    # 12:49 AM belongs to the previous day; the trailing -06:00 offset is
+    # wall-clock metadata, never a conversion instruction.
+    db = _db(temp_db_path)
+    db.add_delivery_order("cut-1", "Uber Eats", "2026-07-30T00:49:00-06:00", "Your order", 28.21)
+    rows = db.get_delivery_orders_range("2026-07-29", "2026-07-29")
+    assert len(rows) == 1
+    assert rows[0]["day"] == "2026-07-29"
+    assert rows[0]["auto_day"] == "2026-07-29"
+    assert db.get_delivery_orders_range("2026-07-30", "2026-07-30") == []
+
+
+def test_delivery_at_cutoff_stays_on_its_day(temp_db_path):
+    # 04:00 exactly is NOT before the cutoff.
+    db = _db(temp_db_path)
+    db.add_delivery_order("cut-2", "DoorDash", "2026-07-30T04:00:00-06:00", "Order", 12.0)
+    assert db.get_delivery_orders_range("2026-07-30", "2026-07-30")[0]["day"] == "2026-07-30"
+
+
+def test_delivery_user_date_wins_over_cutoff(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_delivery_order("cut-3", "Uber Eats", "2026-07-30T01:00:00-06:00", "Order", 15.0)
+    row = db.get_delivery_orders_range("2026-07-29", "2026-07-29")[0]
+    assert db.set_delivery_user_date(row["id"], "2026-07-30") is True
+    assert db.get_delivery_orders_range("2026-07-29", "2026-07-29") == []
+    got = db.get_delivery_orders_range("2026-07-30", "2026-07-30")[0]
+    assert got["day"] == "2026-07-30"
+    assert got["auto_day"] == "2026-07-29"   # automatic day still reported
+    # Clearing restores the automatic day.
+    db.set_delivery_user_date(row["id"], None)
+    assert db.get_delivery_orders_range("2026-07-29", "2026-07-29")[0]["day"] == "2026-07-29"
+
+
+def test_delivery_auto_day_helper(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_delivery_order("cut-4", "Uber Eats", "2026-07-30T02:00:00-06:00", "Order", 9.0)
+    row_id = db.get_delivery_orders_range("2026-07-29", "2026-07-29")[0]["id"]
+    assert db.get_delivery_auto_day(row_id) == "2026-07-29"
+    assert db.get_delivery_auto_day(999999) is None
+    assert db.set_delivery_user_date(999999, "2026-07-29") is False

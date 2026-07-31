@@ -902,15 +902,44 @@ def set_delivery_amount(order_id, amount):
 
 
 def get_delivery_orders_range(start_day, end_day):
+    """Buckets AND filters by the RESOLVED day: COALESCE(user_date, effective
+    date of ordered_at) — the night cutoff (_effective_date_expr) plus the
+    user's ±1-day nudge. Both the resolved `day` and the cutoff-only
+    `auto_day` are exposed so callers (and the UI's nudge affordance) never
+    re-derive the CASE logic. `ordered_at` itself is never rewritten."""
     p = _p()
+    eff = _effective_date_expr("ordered_at")
+    day_expr = f"COALESCE(user_date, {eff})"
     with _cursor() as c:
         c.execute(
-            f"""SELECT id, gmail_message_id, service, subject, ordered_at, amount FROM delivery_orders
-                WHERE substr(ordered_at, 1, 10) >= {p} AND substr(ordered_at, 1, 10) <= {p}
+            f"""SELECT id, gmail_message_id, service, subject, ordered_at, amount, user_date,
+                       {eff} AS auto_day, {day_expr} AS day
+                FROM delivery_orders
+                WHERE {day_expr} >= {p} AND {day_expr} <= {p}
                 ORDER BY ordered_at""",
             (start_day, end_day),
         )
         return [dict(r) for r in c.fetchall()]
+
+
+def get_delivery_auto_day(order_id):
+    """The order's automatic (cutoff-only) day, ignoring user_date — the
+    anchor the ±1 nudge validation measures against. None = unknown id."""
+    p = _p()
+    eff = _effective_date_expr("ordered_at")
+    with _cursor() as c:
+        c.execute(f"SELECT {eff} AS auto_day FROM delivery_orders WHERE id = {p}", (order_id,))
+        row = c.fetchone()
+        return row["auto_day"] if row else None
+
+
+def set_delivery_user_date(order_id, user_date):
+    """user_date=None clears the override. Returns False for an unknown id
+    so the route can 404."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE delivery_orders SET user_date = {p} WHERE id = {p}", (user_date, order_id))
+        return c.rowcount > 0
 
 
 # ── Calendar events ───────────────────────────────────────────────────────────
