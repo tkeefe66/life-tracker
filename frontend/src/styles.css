@@ -430,6 +430,19 @@ button.quiet-btn::after {
 .filter-chip.on { background: var(--accent-soft); border-color: var(--accent); }
 
 /* ── Social event add/edit inline forms ── */
+/* Dates panel on Insights (2026-07-30 date-tracking spec §6): unscored
+   series — stat row, per-week mini bars (no target line), top places.
+   Single-series bar in the UI accent, not a --chart-* token: no pairing
+   whose colorblind separation would need re-validating. */
+.dates-panel { display: flex; flex-direction: column; gap: 12px; }
+.dates-stats { display: flex; gap: 16px; font-size: 0.85rem; color: var(--ink-2); }
+.dates-stats strong { color: var(--ink); font-size: 1rem; }
+.dates-bars { width: 100%; height: auto; }
+.dates-bar { fill: var(--accent); }
+.dates-places { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dates-places li { display: flex; justify-content: space-between; gap: 12px; font-size: 0.85rem; }
+.dates-places .muted { color: var(--muted); white-space: nowrap; }
+
 /* Inline action strip under a delivery/ride Day log row (move-day nudge,
    ride work toggle). Sibling of .social-form's expand-under-the-row pattern;
    indented past the category icon so it reads as belonging to its row. */

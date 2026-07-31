@@ -1,16 +1,24 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
-import { targetLabel, weekRangeLabel } from "../lib";
+import { money, targetLabel, weekRangeLabel } from "../lib";
 import TrendChart from "../components/TrendChart";
 import WeekdayHeatmap from "../components/WeekdayHeatmap";
 
 interface Metric { label: string; count: number; target: number; direction: string; hit: boolean }
 interface Card { week_start: string; metrics: Record<string, Metric> }
+interface DatesSummary {
+  weekly: { week_start: string; count: number }[];
+  count: number;
+  total_spend: number;
+  avg_spend: number;
+  top_places: { place: string; count: number; spend: number }[];
+}
 interface InsightsData {
   weeks: Card[];
   streaks: Record<string, number>;
   weekday_counts: Record<string, number[]>;
   noticings: string[];
+  dates: DatesSummary;
 }
 interface Reflection { week_start: string; text: string }
 
@@ -126,6 +134,62 @@ export default function Insights() {
               ))}
             </>
           )}
+        </>
+      )}
+
+      {/* Unscored dates series (2026-07-30 date-tracking spec §6): hidden
+          entirely at zero — a secondary surface never nags. Not gated on
+          hasAnyData: dates aren't a METRICS entry, so a week of only dates
+          should still show this panel. */}
+      {insights && insights.dates.count > 0 && (
+        <>
+          <h2 className="section-label">Dates · last 8 weeks</h2>
+          <div className="dates-panel">
+            <div className="dates-stats">
+              <div><strong>{insights.dates.count}</strong> dates</div>
+              <div><strong>{money(insights.dates.total_spend)}</strong> total</div>
+              <div><strong>{money(insights.dates.avg_spend)}</strong> avg</div>
+            </div>
+            <svg
+              className="dates-bars"
+              viewBox="0 0 360 48"
+              role="img"
+              aria-label={`Dates per week, last ${insights.dates.weekly.length} weeks`}
+              preserveAspectRatio="xMidYMid meet"
+            >
+              {(() => {
+                const weekly = insights.dates.weekly;
+                const max = Math.max(1, ...weekly.map((w) => w.count));
+                const bw = 356 / weekly.length;
+                return weekly.map((w, i) => {
+                  const h = (w.count / max) * 40;
+                  return (
+                    <rect
+                      key={w.week_start}
+                      x={2 + i * bw + 1}
+                      y={44 - h}
+                      width={Math.max(bw - 2, 1)}
+                      height={Math.max(h, w.count > 0 ? 2 : 0)}
+                      rx="1.5"
+                      className="dates-bar"
+                    />
+                  );
+                });
+              })()}
+            </svg>
+            {insights.dates.top_places.length > 0 && (
+              <ul className="dates-places">
+                {insights.dates.top_places.map((p) => (
+                  <li key={p.place}>
+                    <span>{p.place}</span>
+                    <span className="muted">
+                      {p.count}×{p.spend > 0 ? ` · ${money(p.spend)}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </>
       )}
       {insights && !hasAnyData(insights) && (
