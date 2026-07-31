@@ -236,3 +236,62 @@ def test_week_days_groups_delivery_by_resolved_day(temp_db_path):
     by_date = {d["date"]: d for d in out["days"]}
     assert any(i["kind"] == "delivery" for i in by_date["2026-07-29"]["items"])
     assert not any(i["kind"] == "delivery" for i in by_date["2026-07-30"]["items"])
+
+
+def _seed_date(db, ev_id, day, amount, location):
+    db.upsert_calendar_event(ev_id, "Date night", f"{day}T19:00:00-06:00",
+                             f"{day}T21:00:00-06:00", location=location, is_date=True)
+    db.set_event_classification(ev_id, True, 0.9)
+    if amount is not None:
+        db.set_event_overrides(ev_id, {"amount": amount})
+
+
+def test_scorecard_date_spend_separated_from_social(temp_db_path):
+    import database as db
+    from app.scorecard import scorecard_for_week
+    db.seed_default_targets()
+    _seed_date(db, "sd1", "2026-07-15", 60.0, "Bar Dough")
+    db.upsert_calendar_event("sp1", "Trivia", "2026-07-15T19:00:00-06:00",
+                             "2026-07-15T21:00:00-06:00")
+    db.set_event_classification("sp1", True, 0.9)
+    db.set_event_overrides("sp1", {"amount": 20.0})
+    card = scorecard_for_week(date(2026, 7, 13))
+    assert card["metrics"]["social"]["count"] == 1          # the date doesn't count
+    assert card["social_spend"] == 20.0                     # or spend
+    assert card["dates_spend"] == 60.0
+    rows = {(r["kind"], r["service"]): r["amount"] for r in card["spend_by_service"]}
+    assert rows[("date", "Dates")] == 60.0
+    assert rows[("social", "Social")] == 20.0
+
+
+def test_week_days_date_items(temp_db_path):
+    import database as db
+    from app.scorecard import week_days
+    db.seed_default_targets()
+    _seed_date(db, "sd2", "2026-07-15", 60.0, "Bar Dough")
+    out = week_days(date(2026, 7, 13))
+    day = next(d for d in out["days"] if d["date"] == "2026-07-15")
+    kinds = [i["kind"] for i in day["items"]]
+    assert kinds == ["date"]
+    assert day["total"] == 60.0
+
+
+def test_insights_dates_block(temp_db_path):
+    import datetime as dt
+    import metrics
+    import database as db
+    from app.scorecard import insights
+    db.seed_default_targets()
+    # A day inside a completed recent week, so the 8-week insights window
+    # is guaranteed to contain all three seeds.
+    monday = metrics.week_bounds(dt.date.today())[0] - timedelta(weeks=2)
+    _seed_date(db, "si1", monday.isoformat(), 60.0, "Bar Dough")
+    _seed_date(db, "si2", (monday + timedelta(days=2)).isoformat(), 30.0, "Bar Dough")
+    _seed_date(db, "si3", (monday + timedelta(days=3)).isoformat(), None, "Museum")
+    out = insights(12)["dates"]
+    assert out["count"] == 3
+    assert out["total_spend"] == 90.0
+    assert out["avg_spend"] == 45.0                          # 90 / 2 dates WITH amounts
+    assert out["top_places"][0] == {"place": "Bar Dough", "count": 2, "spend": 90.0}
+    assert out["top_places"][1] == {"place": "Museum", "count": 1, "spend": 0}
+    assert sum(w["count"] for w in out["weekly"]) == 3

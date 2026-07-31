@@ -56,9 +56,10 @@ def _personal_rides(rides: list) -> list:
     return [r for r in rides if not r.get("user_is_work")]
 
 
-def _spend_by_service(orders: list, rides: list, social_spend: float) -> list:
-    """Per-service spend rows (kind: delivery | ride | social), zero/None amounts
-    dropped, each rounded to 2dp, sorted by amount descending."""
+def _spend_by_service(orders: list, rides: list, social_spend: float, dates_spend: float = 0.0) -> list:
+    """Per-service spend rows (kind: delivery | ride | social | date),
+    zero/None amounts dropped, each rounded to 2dp, sorted by amount
+    descending."""
     by_service: dict = {}
     for o in orders:
         by_service[("delivery", o["service"])] = by_service.get(("delivery", o["service"]), 0) + (o["amount"] or 0)
@@ -66,6 +67,8 @@ def _spend_by_service(orders: list, rides: list, social_spend: float) -> list:
         by_service[("ride", r["service"])] = by_service.get(("ride", r["service"]), 0) + (r["amount"] or 0)
     if social_spend:
         by_service[("social", "Social")] = social_spend
+    if dates_spend:
+        by_service[("date", "Dates")] = dates_spend
 
     rows = [
         {"kind": kind, "service": service, "amount": round(amount, 2)}
@@ -83,10 +86,13 @@ def scorecard_for_week(week_start: date) -> dict:
     card["delivery_spend"] = round(sum(o["amount"] or 0 for o in orders), 2)
     social = [e for e in db.get_social_events_range(ws.isoformat(), we.isoformat()) if _social_counts(e)]
     card["social_spend"] = round(sum(e["amount"] or 0 for e in social), 2)
+    dates = [e for e in db.get_date_events_range(ws.isoformat(), we.isoformat()) if _social_counts(e)]
+    card["dates_count"] = len(dates)
+    card["dates_spend"] = round(sum(e["amount"] or 0 for e in dates), 2)
     rides = _personal_rides(db.get_rides_range(ws.isoformat(), we.isoformat()))
     card["rides_count"] = len(rides)
     card["rides_spend"] = round(sum(r["amount"] or 0 for r in rides), 2)
-    card["spend_by_service"] = _spend_by_service(orders, rides, card["social_spend"])
+    card["spend_by_service"] = _spend_by_service(orders, rides, card["social_spend"], card["dates_spend"])
     return card
 
 
@@ -116,6 +122,45 @@ def _date_lists(start: date, end: date) -> dict:
     }
 
 
+def _dates_summary(weeks: int) -> dict:
+    """Unscored dates series for the Insights panel (2026-07-30 spec):
+    weekly counts (completed weeks + current, oldest-first), totals, and
+    top places by resolved location. avg_spend divides by dates that HAVE
+    an amount — a date with no recorded cost shouldn't drag the average."""
+    this_monday = metrics.week_bounds(_local_today())[0]
+    week_starts = [this_monday - timedelta(weeks=i) for i in range(weeks - 1, -1, -1)]
+    window_start = week_starts[0].isoformat()
+    window_end = metrics.week_bounds(week_starts[-1])[1].isoformat()
+    dates = [e for e in db.get_date_events_range(window_start, window_end) if _social_counts(e)]
+
+    weekly = []
+    for ws in week_starts:
+        we = metrics.week_bounds(ws)[1]
+        n = sum(1 for e in dates if ws.isoformat() <= e["end_at"][:10] <= we.isoformat())
+        weekly.append({"week_start": ws.isoformat(), "count": n})
+
+    with_amount = [e for e in dates if e["amount"]]
+    total = round(sum(e["amount"] for e in with_amount), 2)
+    places: dict = {}
+    for e in dates:
+        place = (e["location"] or "").strip()
+        if not place:
+            continue
+        c, s = places.get(place, (0, 0.0))
+        places[place] = (c + 1, s + (e["amount"] or 0))
+    top_places = [{"place": p, "count": c, "spend": round(s, 2)}
+                  for p, (c, s) in places.items()]
+    top_places.sort(key=lambda r: (r["count"], r["spend"]), reverse=True)
+
+    return {
+        "weekly": weekly,
+        "count": len(dates),
+        "total_spend": total,
+        "avg_spend": round(total / len(with_amount), 2) if with_amount else 0,
+        "top_places": top_places[:5],
+    }
+
+
 def insights(weeks: int) -> dict:
     hist = history(weeks)
     series = {k: [w["metrics"][k]["count"] for w in hist["weeks"]] for k in metrics.METRICS}
@@ -126,6 +171,7 @@ def insights(weeks: int) -> dict:
         "streaks": hist["streaks"],
         "weekday_counts": {k: metrics.weekday_counts(v) for k, v in dates.items()},
         "noticings": metrics.noticings(dates, series),
+        "dates": _dates_summary(PATTERN_WEEKS),
     }
 
 
@@ -151,6 +197,7 @@ def spend(weeks: int) -> dict:
     orders = db.get_delivery_orders_range(window_start, window_end)
     rides = _personal_rides(db.get_rides_range(window_start, window_end))
     social = [e for e in db.get_social_events_range(window_start, window_end) if _social_counts(e)]
+    dates = [e for e in db.get_date_events_range(window_start, window_end) if _social_counts(e)]
 
     weeks_out = []
     by_service: dict = {}
@@ -163,12 +210,15 @@ def spend(weeks: int) -> dict:
         week_orders = [o for o in orders if ws_iso <= o["day"] <= we_iso]
         week_rides = [r for r in rides if ws_iso <= r["day"] <= we_iso]
         week_social = [e for e in social if ws_iso <= e["end_at"][:10] <= we_iso]
+        week_dates = [e for e in dates if ws_iso <= e["end_at"][:10] <= we_iso]
         delivery_total = round(sum(o["amount"] or 0 for o in week_orders), 2)
         rides_total = round(sum(r["amount"] or 0 for r in week_rides), 2)
         social_raw = sum(e["amount"] or 0 for e in week_social)
+        dates_raw = sum(e["amount"] or 0 for e in week_dates)
         weeks_out.append({
             "week_start": ws_iso, "delivery": delivery_total,
             "rides": rides_total, "social": round(social_raw, 2),
+            "dates": round(dates_raw, 2),
         })
         for o in week_orders:
             key = ("delivery", o["service"])
@@ -182,6 +232,9 @@ def spend(weeks: int) -> dict:
             # total above — delivery/rides do the same, and rounding twice
             # can drift the by_service Total a cent from the hero total.
             by_service[key] = by_service.get(key, 0) + social_raw
+        if dates_raw:
+            key = ("date", "Dates")
+            by_service[key] = by_service.get(key, 0) + dates_raw
 
     by_service_out = [
         {"kind": kind, "service": service, "amount": round(amount, 2)}
@@ -204,6 +257,10 @@ def spend(weeks: int) -> dict:
         if e["amount"]:
             items.append({"kind": "social", "service": "Social",
                           "label": e["title"], "at": e["end_at"], "amount": round(e["amount"], 2)})
+    for e in dates:
+        if e["amount"]:
+            items.append({"kind": "date", "service": "Dates",
+                          "label": e["title"], "at": e["end_at"], "amount": round(e["amount"], 2)})
     items.sort(key=lambda i: i["at"], reverse=True)
 
     return {"weeks": weeks_out, "by_service": by_service_out, "items": items[:SPEND_ITEMS_CAP]}
@@ -221,6 +278,7 @@ def week_days(week_start: date) -> dict:
     orders = db.get_delivery_orders_range(start, end)
     rides = db.get_rides_range(start, end)
     social = [e for e in db.get_social_events_range(start, end) if _social_counts(e)]
+    dates = [e for e in db.get_date_events_range(start, end) if _social_counts(e)]
     personal_ride_ids = {r["id"] for r in _personal_rides(rides)}
 
     days = []
@@ -253,6 +311,12 @@ def week_days(week_start: date) -> dict:
             if e["end_at"][:10] == d_iso:
                 amount = e["amount"] or 0
                 items.append({"kind": "social", "service": "Social", "label": e["title"],
+                              "at": e["end_at"], "amount": round(amount, 2), "is_work": False})
+                day_total += amount
+        for e in dates:
+            if e["end_at"][:10] == d_iso:
+                amount = e["amount"] or 0
+                items.append({"kind": "date", "service": "Dates", "label": e["title"],
                               "at": e["end_at"], "amount": round(amount, 2), "is_work": False})
                 day_total += amount
         items.sort(key=lambda i: i["at"])

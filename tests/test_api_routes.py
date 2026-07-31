@@ -115,7 +115,7 @@ def test_insights_shape_and_weekday_counts(temp_db_path):
     past = (datetime.date.today() - datetime.timedelta(days=10)).isoformat()
     client.post("/api/checkins", json={"type": "gym", "date": past})
     ins = client.get("/api/insights?weeks=12").json()
-    assert set(ins.keys()) == {"weeks", "streaks", "weekday_counts", "noticings"}
+    assert set(ins.keys()) == {"weeks", "streaks", "weekday_counts", "noticings", "dates"}
     assert len(ins["weeks"]) == 12
     assert sum(ins["weekday_counts"]["gym"]) == 1
     assert isinstance(ins["noticings"], list)
@@ -587,8 +587,8 @@ def test_spend_weeks_series_oldest_first_including_zero_weeks(temp_db_path):
     weeks = body["weeks"]
     expected_starts = [(this_monday - datetime.timedelta(weeks=i)).isoformat() for i in (3, 2, 1, 0)]
     assert [w["week_start"] for w in weeks] == expected_starts
-    assert weeks[0] == {"week_start": expected_starts[0], "delivery": 15.0, "rides": 0, "social": 0}
-    assert weeks[1] == {"week_start": expected_starts[1], "delivery": 0, "rides": 0, "social": 0}
+    assert weeks[0] == {"week_start": expected_starts[0], "delivery": 15.0, "rides": 0, "social": 0, "dates": 0}
+    assert weeks[1] == {"week_start": expected_starts[1], "delivery": 0, "rides": 0, "social": 0, "dates": 0}
     assert weeks[2]["delivery"] == 20.0
     assert weeks[3]["week_start"] == expected_starts[3]  # in-progress current week, still present
 
