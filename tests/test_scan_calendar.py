@@ -88,3 +88,30 @@ def test_scan_passes_classification_examples_to_each_call(temp_db_path, monkeypa
     for examples in received:
         assert examples is not None
         assert any(e["title"] == "Taco Tuesday" for e in examples)
+
+
+def test_scan_stores_location_and_date_flag(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import scan_calendar
+
+    events = [
+        {"event_id": "evd1", "title": "Date night", "start_datetime": "2026-07-15T19:00:00-06:00",
+         "end_datetime": "2026-07-15T21:00:00-06:00", "description": "", "location": "Bar Dough",
+         "attendees": []},
+        {"event_id": "evd2", "title": "Trivia", "start_datetime": "2026-07-16T19:00:00-06:00",
+         "end_datetime": "2026-07-16T21:00:00-06:00", "description": "", "location": "",
+         "attendees": []},
+    ]
+    monkeypatch.setattr(scan_calendar.calendar_service, "get_events_range", lambda days_back: events)
+    monkeypatch.setattr(scan_calendar.google_auth, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        scan_calendar.ai_metrics, "classify_social_event",
+        lambda title, desc, loc, att, examples=None: {"is_social": True, "confidence": 0.9},
+    )
+
+    scan_calendar.run()
+
+    ev1 = db.get_event("evd1")
+    assert bool(ev1["is_date"]) is True and ev1["location"] == "Bar Dough"
+    ev2 = db.get_event("evd2")
+    assert not ev2["is_date"]

@@ -6,6 +6,7 @@ import pytz
 
 import ai_metrics
 import database as db
+import metrics
 from config import TIMEZONE
 from services import calendar_service, google_auth
 from services.safe_status import GOOGLE_NOT_CONFIGURED, safe_status
@@ -32,6 +33,8 @@ def run():
             db.upsert_calendar_event(
                 ev["event_id"], ev["title"], ev["start_datetime"], ev["end_datetime"],
                 recurring_event_id=ev.get("recurring_event_id"),
+                location=ev.get("location") or None,
+                is_date=metrics.title_is_date(ev["title"]),
             )
             if db.event_needs_classification(ev["event_id"]):
                 result = ai_metrics.classify_social_event(
