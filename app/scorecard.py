@@ -111,7 +111,7 @@ def _date_lists(start: date, end: date) -> dict:
         "gym": [c["date"] for c in checkins if c["type"] == "gym"],
         "alcohol": [c["date"] for c in checkins if c["type"] == "alcohol"],
         "substances": [c["date"] for c in checkins if c["type"] == "substances"],
-        "delivery": [o["ordered_at"][:10] for o in db.get_delivery_orders_range(s, e)],
+        "delivery": [o["day"] for o in db.get_delivery_orders_range(s, e)],
         "social": [ev["end_at"][:10] for ev in social],
     }
 
@@ -157,12 +157,11 @@ def spend(weeks: int) -> dict:
     for ws in week_starts:
         we = metrics.week_bounds(ws)[1]
         ws_iso, we_iso = ws.isoformat(), we.isoformat()
-        week_orders = [o for o in orders if ws_iso <= o["ordered_at"][:10] <= we_iso]
-        # Regrouped by effective date (night cutoff), not raw ride_time[:10] —
-        # get_rides_range already filtered the outer window this way; this
-        # per-week split inside that window must agree, or a late-night ride
-        # near a week boundary would land in the wrong week's total.
-        week_rides = [r for r in rides if ws_iso <= metrics.effective_date(r["ride_time"]).isoformat() <= we_iso]
+        # Per-week split on the SQL-resolved day (night cutoff + user nudge) —
+        # must agree with the range queries' outer filter, or an item near a
+        # week boundary would land in the wrong week's total.
+        week_orders = [o for o in orders if ws_iso <= o["day"] <= we_iso]
+        week_rides = [r for r in rides if ws_iso <= r["day"] <= we_iso]
         week_social = [e for e in social if ws_iso <= e["end_at"][:10] <= we_iso]
         delivery_total = round(sum(o["amount"] or 0 for o in week_orders), 2)
         rides_total = round(sum(r["amount"] or 0 for r in week_rides), 2)
@@ -235,16 +234,15 @@ def week_days(week_start: date) -> dict:
         items = []
         day_total = 0.0
         for o in orders:
-            if o["ordered_at"][:10] == d_iso:
+            if o["day"] == d_iso:
                 amount = o["amount"] or 0
                 items.append({"kind": "delivery", "service": o["service"], "label": o["subject"],
                               "at": o["ordered_at"], "amount": round(amount, 2), "is_work": False})
                 day_total += amount
         for r in rides:
-            # Grouped by effective date (night cutoff) via the resolved TRUE
-            # ride time, not raw ride_at[:10] — see metrics.effective_date and
+            # Grouped by the SQL-resolved day — cutoff + user nudge, see
             # database.get_rides_range.
-            if metrics.effective_date(r["ride_time"]).isoformat() == d_iso:
+            if r["day"] == d_iso:
                 amount = r["amount"] or 0
                 is_work = r["id"] not in personal_ride_ids
                 items.append({"kind": "ride", "service": r["service"], "label": r["subject"],

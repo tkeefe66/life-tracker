@@ -213,3 +213,26 @@ def test_spend_windows_ride_into_previous_week_across_night_cutoff(temp_db_path,
     assert by_week["2026-07-13"] == 9.0  # week containing the 19th (Sunday)
     assert by_week["2026-07-20"] == 0.0  # week containing the 20th (Monday) — not double-counted
     assert out["items"][0]["at"] == "2026-07-19T23:00"  # true ride time, not raw ride_at
+
+
+def test_monday_1am_delivery_counts_previous_week(temp_db_path):
+    # A Monday 01:00 order counts in the PREVIOUS week (as its Sunday), not
+    # the week starting that Monday — regression lock on the night cutoff
+    # flowing through counts_for_week's ranged query.
+    import database as db
+    from app.scorecard import counts_for_week
+    db.seed_default_targets()
+    db.add_delivery_order("wk-1", "Uber Eats", "2026-07-27T01:00:00-06:00", "Order", 20.0)
+    assert counts_for_week(date(2026, 7, 20))["delivery"] == 1
+    assert counts_for_week(date(2026, 7, 27))["delivery"] == 0
+
+
+def test_week_days_groups_delivery_by_resolved_day(temp_db_path):
+    import database as db
+    from app.scorecard import week_days
+    db.seed_default_targets()
+    db.add_delivery_order("wk-2", "Uber Eats", "2026-07-30T00:49:00-06:00", "Order", 28.21)
+    out = week_days(date(2026, 7, 27))
+    by_date = {d["date"]: d for d in out["days"]}
+    assert any(i["kind"] == "delivery" for i in by_date["2026-07-29"]["items"])
+    assert not any(i["kind"] == "delivery" for i in by_date["2026-07-30"]["items"])
