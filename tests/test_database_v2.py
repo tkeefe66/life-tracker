@@ -810,3 +810,25 @@ def test_delivery_auto_day_helper(temp_db_path):
     assert db.get_delivery_auto_day(row_id) == "2026-07-29"
     assert db.get_delivery_auto_day(999999) is None
     assert db.set_delivery_user_date(999999, "2026-07-29") is False
+
+
+def test_ride_user_date_wins_over_cutoff(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_ride("rud-1", "Uber", "2026-07-30T02:34:00-06:00",
+                "2026-07-30T02:34:00", "Your trip", 27.82)
+    row = db.get_rides_range("2026-07-29", "2026-07-29")[0]
+    assert row["day"] == "2026-07-29" and row["auto_day"] == "2026-07-29"
+    assert db.set_ride_user_date(row["id"], "2026-07-30") is True
+    assert db.get_rides_range("2026-07-29", "2026-07-29") == []
+    got = db.get_rides_range("2026-07-30", "2026-07-30")[0]
+    assert got["day"] == "2026-07-30" and got["auto_day"] == "2026-07-29"
+
+
+def test_ride_auto_day_helper(temp_db_path):
+    db = _db(temp_db_path)
+    db.add_ride("rud-2", "Uber", "2026-07-30T02:00:00-06:00",
+                "2026-07-30T02:00:00", "Your trip", 10.0)
+    ride_id = db.get_rides_range("2026-07-29", "2026-07-29")[0]["id"]
+    assert db.get_ride_auto_day(ride_id) == "2026-07-29"
+    assert db.get_ride_auto_day(999999) is None
+    assert db.set_ride_user_date(999999, "2026-07-29") is False

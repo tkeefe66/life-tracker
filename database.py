@@ -1312,20 +1312,43 @@ def get_rides_range(start_day, end_day):
     `ride_at` itself is never rewritten — the row still carries it unchanged
     (see set_ride_amount) — but the resolved true timestamp is also exposed
     as `ride_time` so callers can display/group by it without recomputing the
-    CASE logic in Python."""
+    CASE logic in Python. `user_date`, the ±1-day nudge, wins over the
+    computed effective date; `auto_day` reports the cutoff-only day."""
     p = _p()
     ts_expr = _ride_true_ts_expr()
     eff_date_expr = _effective_date_expr(ts_expr)
+    day_expr = f"COALESCE(user_date, {eff_date_expr})"
     with _cursor() as c:
         c.execute(
             f"""SELECT id, service, ride_at, ride_key, subject, amount, ai_is_work, ai_confidence,
-                       user_is_work, is_cancellation, {ts_expr} AS ride_time
+                       user_is_work, is_cancellation, user_date, {ts_expr} AS ride_time,
+                       {eff_date_expr} AS auto_day, {day_expr} AS day
                 FROM rides
-                WHERE {eff_date_expr} >= {p} AND {eff_date_expr} <= {p}
+                WHERE {day_expr} >= {p} AND {day_expr} <= {p}
                 ORDER BY {ts_expr}""",
             (start_day, end_day),
         )
         return _ride_bool_rows(c.fetchall())
+
+
+def get_ride_auto_day(ride_id):
+    """The ride's automatic (cutoff-only) day from its TRUE timestamp,
+    ignoring user_date — the anchor for ±1 nudge validation. None = unknown id."""
+    p = _p()
+    eff = _effective_date_expr(_ride_true_ts_expr())
+    with _cursor() as c:
+        c.execute(f"SELECT {eff} AS auto_day FROM rides WHERE id = {p}", (ride_id,))
+        row = c.fetchone()
+        return row["auto_day"] if row else None
+
+
+def set_ride_user_date(ride_id, user_date):
+    """user_date=None clears the override. Returns False for an unknown id
+    so the route can 404."""
+    p = _p()
+    with _cursor(write=True) as c:
+        c.execute(f"UPDATE rides SET user_date = {p} WHERE id = {p}", (user_date, ride_id))
+        return c.rowcount > 0
 
 
 def get_ride_examples(limit=10):
