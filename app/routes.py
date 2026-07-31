@@ -247,8 +247,36 @@ def get_deliveries(days: int = 60):
     ]}
 
 
+def _validated_user_date(auto_day: str, requested_day: str) -> Optional[str]:
+    """Shared PATCH-body validation for the ±1-day nudge: parse, then apply
+    the pure rule (metrics.nudge_user_date). Raises HTTPException(400) with
+    an actionable message."""
+    try:
+        requested = datetime.date.fromisoformat(requested_day)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="day must be YYYY-MM-DD")
+    try:
+        return metrics.nudge_user_date(datetime.date.fromisoformat(auto_day), requested, _local_today())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class DeliveryPatch(BaseModel):
+    day: str
+
+
+@router.patch("/deliveries/{order_id}")
+def patch_delivery(order_id: int, body: DeliveryPatch):
+    auto = db.get_delivery_auto_day(order_id)
+    if auto is None:
+        raise HTTPException(status_code=404, detail="order not found")
+    db.set_delivery_user_date(order_id, _validated_user_date(auto, body.day))
+    return {"ok": True}
+
+
 class RidePatch(BaseModel):
-    is_work: bool
+    is_work: Optional[bool] = None
+    day: Optional[str] = None
 
 
 @router.get("/rides")
@@ -271,8 +299,19 @@ def get_rides(days: int = 60):
 
 @router.patch("/rides/{ride_id}")
 def patch_ride(ride_id: int, body: RidePatch):
-    if not db.set_ride_work_override(ride_id, body.is_work):
-        raise HTTPException(status_code=404, detail="ride not found")
+    provided = body.model_fields_set
+    if not provided:
+        raise HTTPException(status_code=400, detail="nothing to update: send is_work and/or day")
+    if "day" in provided:
+        auto = db.get_ride_auto_day(ride_id)
+        if auto is None:
+            raise HTTPException(status_code=404, detail="ride not found")
+        db.set_ride_user_date(ride_id, _validated_user_date(auto, body.day))
+    if "is_work" in provided:
+        if body.is_work is None:
+            raise HTTPException(status_code=400, detail="is_work must be true or false")
+        if not db.set_ride_work_override(ride_id, body.is_work):
+            raise HTTPException(status_code=404, detail="ride not found")
     return {"ok": True}
 
 

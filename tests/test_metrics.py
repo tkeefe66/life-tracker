@@ -132,3 +132,19 @@ def test_noticings_caps_at_three_and_prioritizes():
 
 def test_noticings_silent_on_sparse_data():
     assert noticings({"gym": ["2026-07-20"]}, {"gym": [1, 1]}) == []
+
+
+def test_nudge_user_date():
+    import pytest
+    from metrics import nudge_user_date
+    today = date(2026, 7, 30)
+    auto = date(2026, 7, 29)
+    # ±1 stores the date; the auto day itself clears (None).
+    assert nudge_user_date(auto, date(2026, 7, 30), today) == "2026-07-30"
+    assert nudge_user_date(auto, date(2026, 7, 28), today) == "2026-07-28"
+    assert nudge_user_date(auto, auto, today) is None
+    # Out of range and future are rejected.
+    with pytest.raises(ValueError):
+        nudge_user_date(auto, date(2026, 7, 27), today)
+    with pytest.raises(ValueError):
+        nudge_user_date(date(2026, 7, 30), date(2026, 7, 31), today)

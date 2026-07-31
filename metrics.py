@@ -44,6 +44,21 @@ def effective_date(ts: str) -> date:
     return day
 
 
+def nudge_user_date(auto_day, requested, today):
+    """Value to store in `user_date` for a ±1-day nudge: None clears the
+    override (requested == the automatic day), an ISO string stores it
+    (requested is exactly one day off the automatic day). Anything else —
+    including any future day — raises ValueError. Pure: the caller supplies
+    `today` so this stays clock-free."""
+    if requested > today:
+        raise ValueError("cannot move an item into the future")
+    if requested == auto_day:
+        return None
+    if abs((requested - auto_day).days) == 1:
+        return requested.isoformat()
+    raise ValueError("day must be within one day of the automatic day")
+
+
 def is_hit(direction, count, target):
     return count <= target if direction == "ceiling" else count >= target
 

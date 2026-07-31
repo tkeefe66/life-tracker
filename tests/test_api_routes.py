@@ -1210,3 +1210,60 @@ def test_bank_investments_not_configured_and_error_paths(temp_db_path, monkeypat
     monkeypatch.setattr(simplefin_service, "fetch_accounts", boom)
     r = client.get("/api/bank/investments")
     assert r.status_code == 503 and r.json()["detail"] == "error: unreachable"
+
+
+# ── Day nudge (PATCH /deliveries/{id}, PATCH /rides/{id} day) ─────────────────
+# Seeds are relative to the real today (same convention as the future-date
+# checkin tests above): an order/ride at 01:00 today auto-buckets to
+# yesterday, so nudging it to today is valid and never a future date.
+
+
+def test_patch_delivery_day_nudge(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    today = datetime.date.today().isoformat()
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    db.add_delivery_order("api-1", "Uber Eats", f"{today}T01:00:00-06:00", "Order", 15.0)
+    row = db.get_delivery_orders_range(yesterday, yesterday)[0]
+    r = client.patch(f"/api/deliveries/{row['id']}", json={"day": today})
+    assert r.status_code == 200
+    assert db.get_delivery_orders_range(today, today)[0]["day"] == today
+    # Moving back to the automatic day clears the override (user_date NULL).
+    r = client.patch(f"/api/deliveries/{row['id']}", json={"day": yesterday})
+    assert r.status_code == 200
+    back = db.get_delivery_orders_range(yesterday, yesterday)[0]
+    assert back["day"] == yesterday and back["user_date"] is None
+
+
+def test_patch_delivery_day_validation(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    today = datetime.date.today().isoformat()
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    three_back = (datetime.date.today() - datetime.timedelta(days=3)).isoformat()
+    tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+    db.add_delivery_order("api-2", "Uber Eats", f"{today}T01:00:00-06:00", "Order", 15.0)
+    row = db.get_delivery_orders_range(yesterday, yesterday)[0]
+    assert client.patch(f"/api/deliveries/{row['id']}", json={"day": three_back}).status_code == 400
+    assert client.patch(f"/api/deliveries/{row['id']}", json={"day": tomorrow}).status_code == 400
+    assert client.patch(f"/api/deliveries/{row['id']}", json={"day": "not-a-date"}).status_code == 400
+    assert client.patch("/api/deliveries/999999", json={"day": yesterday}).status_code == 404
+
+
+def test_patch_ride_day_and_work(temp_db_path):
+    client = _client(temp_db_path)
+    import database as db
+    today = datetime.date.today().isoformat()
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    db.add_ride("api-r1", "Uber", f"{today}T02:34:00-06:00",
+                f"{today}T02:34:00", "Your trip", 27.82)
+    ride = db.get_rides_range(yesterday, yesterday)[0]
+    # day alone
+    assert client.patch(f"/api/rides/{ride['id']}", json={"day": today}).status_code == 200
+    assert db.get_rides_range(today, today)[0]["day"] == today
+    # is_work alone still works (back-compat)
+    assert client.patch(f"/api/rides/{ride['id']}", json={"is_work": True}).status_code == 200
+    assert db.get_rides_range(today, today)[0]["user_is_work"] is True
+    # empty body is a 400, unknown id a 404
+    assert client.patch(f"/api/rides/{ride['id']}", json={}).status_code == 400
+    assert client.patch("/api/rides/999999", json={"day": yesterday}).status_code == 404
