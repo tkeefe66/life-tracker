@@ -673,3 +673,25 @@ describe("isDimmed", () => {
     expect(isDimmed("transport", "transport")).toBe(false);
   });
 });
+
+import { nudgeLabel, nudgeOptions } from "./lib";
+
+describe("nudgeOptions", () => {
+  it("offers auto±1 minus the current day, no future", () => {
+    // Row on its automatic day: both neighbors offered, none in the future.
+    expect(nudgeOptions("2026-07-29", "2026-07-29", "2026-07-30"))
+      .toEqual(["2026-07-28", "2026-07-30"]);
+    // Same, but "tomorrow" would be the future — only the previous day offered.
+    expect(nudgeOptions("2026-07-30", "2026-07-30", "2026-07-30"))
+      .toEqual(["2026-07-29"]);
+    // Row already nudged forward: moving back (to auto-1 or auto) offered.
+    expect(nudgeOptions("2026-07-29", "2026-07-30", "2026-07-30"))
+      .toEqual(["2026-07-28", "2026-07-29"]);
+  });
+});
+
+describe("nudgeLabel", () => {
+  it("formats a short month-day", () => {
+    expect(nudgeLabel("2026-07-29")).toBe("Jul 29");
+  });
+});

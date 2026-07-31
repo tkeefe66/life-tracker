@@ -60,6 +60,21 @@ export function addDays(iso: string, delta: number): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
+/** Valid day-nudge targets for a Day log row: the automatic day and its two
+ * neighbors (the server's ±1 bound; landing on the automatic day clears the
+ * override), minus the day the row currently sits on, minus the future.
+ * ISO strings compare lexicographically, so <= is a real date compare. */
+export function nudgeOptions(autoDay: string, viewedDay: string, todayIso: string): string[] {
+  return [addDays(autoDay, -1), autoDay, addDays(autoDay, 1)]
+    .filter((d) => d !== viewedDay && d <= todayIso);
+}
+
+/** Short label for a nudge button: "Jul 29". */
+export function nudgeLabel(iso: string): string {
+  const d = parseDay(iso);
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+
 export function mondayOf(iso: string): string {
   const d = parseDay(iso);
   return addDays(iso, -((d.getDay() + 6) % 7));
