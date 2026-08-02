@@ -231,18 +231,18 @@ function moneyGrouped(amount: number): string {
 }
 
 /** "Of that, the things you're tracking" sentence (spec §5.4): the tracked
- * (delivery/rides/social) share of the whole-account bank total, stated as
- * prose rather than a gauge. `spent === 0` means there is nothing to be a
+ * (delivery/rides/social/dates) share of the whole-account bank total, stated
+ * as prose rather than a gauge. `spent === 0` means there is nothing to be a
  * share of, so the sentence is suppressed entirely rather than reading
  * "$0 of the $0 above." */
 export function trackedShareSentence(tracked: number, spent: number): string {
   if (spent === 0) return "";
-  return `Delivery, rides and social are ${moneyGrouped(tracked)} of the ${moneyGrouped(spent)} above.`;
+  return `Delivery, rides, social and dates are ${moneyGrouped(tracked)} of the ${moneyGrouped(spent)} above.`;
 }
 
 interface SubtotalDelivery { service: string; amount: number | null }
 interface SubtotalRide { service: string; amount: number | null; user_is_work: boolean | null }
-interface SubtotalSocialEvent { amount: number | null; end_at?: string }
+interface SubtotalSocialEvent { amount: number | null; end_at?: string; is_date?: boolean }
 interface SubtotalDay {
   deliveries: SubtotalDelivery[];
   rides: SubtotalRide[];
@@ -277,7 +277,11 @@ export function subtotalsFromDay(day: SubtotalDay, now: number = Date.now()): Sp
   }
   for (const e of day.social_events) {
     if (e.end_at !== undefined && new Date(e.end_at).getTime() > now) continue;
-    add("social", "Social", e.amount);
+    // Dates ride in the same social_events payload but are their own spend
+    // kind everywhere else (backend _spend_by_service) — "Spent today" must
+    // agree with Week/Money, not lump them under Social.
+    if (e.is_date) add("date", "Dates", e.amount);
+    else add("social", "Social", e.amount);
   }
 
   return Array.from(sums.values())
@@ -286,7 +290,7 @@ export function subtotalsFromDay(day: SubtotalDay, now: number = Date.now()): Sp
 }
 
 export interface DayItem {
-  kind: "delivery" | "ride" | "social";
+  kind: "delivery" | "ride" | "social" | "date";
   service: string;
   label: string;
   at: string;
@@ -323,6 +327,10 @@ export function dayChips(day: Day): Chip[] {
   const chips: Chip[] = [];
   if (day.gym) chips.push({ label: "Gym", tone: "accent" });
   if (day.items.some((i) => i.kind === "social")) chips.push({ label: "Social", tone: "accent" });
+  // Without this, a date-only day has items but zero chips, which WeekDays
+  // renders as "Work travel" — the only other items-but-no-chips case.
+  const dateCount = day.items.filter((i) => i.kind === "date").length;
+  if (dateCount > 0) chips.push({ label: dateCount === 1 ? "Date" : `${dateCount} dates`, tone: "accent" });
   if (day.alcohol_level != null) chips.push({ label: `Alcohol ${day.alcohol_level}`, tone: "over" });
   if (day.substances) chips.push({ label: "Substances", tone: "over" });
 

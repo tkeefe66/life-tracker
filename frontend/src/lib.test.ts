@@ -453,13 +453,13 @@ describe("signedPct", () => {
 describe("trackedShareSentence", () => {
   it("states the tracked share of total bank spending", () => {
     expect(trackedShareSentence(120, 3400)).toBe(
-      "Delivery, rides and social are $120 of the $3,400 above."
+      "Delivery, rides, social and dates are $120 of the $3,400 above."
     );
   });
 
   it("renders a real zero tracked amount, not an empty string", () => {
     expect(trackedShareSentence(0, 3400)).toBe(
-      "Delivery, rides and social are $0 of the $3,400 above."
+      "Delivery, rides, social and dates are $0 of the $3,400 above."
     );
   });
 
@@ -716,5 +716,31 @@ describe("buildSocialPatch date/location", () => {
       .toEqual({ location: null });
     expect(buildSocialPatch({ ...base, loadedLocation: "Bar Dough", locationText: "Bar Dough" }))
       .toEqual({});
+  });
+});
+
+describe("dates in day subtotals and week chips", () => {
+  it("splits date spend out of Social in Spent today", () => {
+    const rows = subtotalsFromDay({
+      deliveries: [],
+      rides: [],
+      social_events: [
+        { amount: 20, end_at: "2026-07-15T21:00:00", is_date: false },
+        { amount: 60, end_at: "2026-07-15T22:00:00", is_date: true },
+      ],
+    }, new Date("2026-07-16T12:00:00").getTime());
+    expect(rows).toEqual([
+      { kind: "date", service: "Dates", amount: 60 },
+      { kind: "social", service: "Social", amount: 20 },
+    ]);
+  });
+
+  it("gives a date-only day a chip so WeekDays never shows 'Work travel'", () => {
+    const day: Day = {
+      date: "2026-07-15", gym: false, alcohol_level: null, substances: false,
+      total: 60,
+      items: [{ kind: "date", service: "Dates", label: "Date night", at: "x", amount: 60, is_work: false }],
+    };
+    expect(dayChips(day)).toEqual([{ label: "Date", tone: "accent" }]);
   });
 });

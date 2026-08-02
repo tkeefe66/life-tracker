@@ -36,10 +36,11 @@ const MOVEMENT_FLOWS: { flow: string }[] = [
   { flow: "investment" },
 ];
 
-const LEGEND: { key: "delivery" | "rides" | "social"; label: string; token: string }[] = [
+const LEGEND: { key: "delivery" | "rides" | "social" | "dates"; label: string; token: string }[] = [
   { key: "delivery", label: "Delivery", token: "var(--chart-delivery)" },
   { key: "rides", label: "Rides", token: "var(--chart-rides)" },
   { key: "social", label: "Social", token: "var(--chart-social)" },
+  { key: "dates", label: "Dates", token: "var(--chart-dates)" },
 ];
 
 // How long an answered row lingers in its queue before actually being removed.
@@ -379,7 +380,7 @@ export default function Money() {
                 <p className="trend-caption">
                   {weekRangeLabel(selectedTrackedPoint.week_start)} · Delivery{" "}
                   {money(selectedTrackedPoint.delivery)} · Rides {money(selectedTrackedPoint.rides)} ·
-                  {" "}Social {money(selectedTrackedPoint.social)}
+                  {" "}Social {money(selectedTrackedPoint.social)} · Dates {money(selectedTrackedPoint.dates)}
                   {selectedTrackedWeek === trackedSpend.weeks.length - 1 && " · In progress"}
                 </p>
               )}

@@ -1,6 +1,6 @@
 import { money, weekRangeLabel } from "../lib";
 
-export interface SpendWeekPoint { week_start: string; delivery: number; rides: number; social: number }
+export interface SpendWeekPoint { week_start: string; delivery: number; rides: number; social: number; dates: number }
 interface Props {
   weeks: SpendWeekPoint[];
   onSelect?: (index: number) => void;
@@ -13,17 +13,18 @@ const PLOT_LEFT = 2, PLOT_RIGHT = VB_W - 2;
 const AXIS_Y = 80;
 const SEG_GAP = 2;
 
-// Stack order bottom → top: delivery, rides, social.
+// Stack order bottom → top: delivery, rides, social, dates.
 const CATS: { key: keyof Omit<SpendWeekPoint, "week_start">; cls: string }[] = [
   { key: "delivery", cls: "spend-seg-delivery" },
   { key: "rides", cls: "spend-seg-rides" },
   { key: "social", cls: "spend-seg-social" },
+  { key: "dates", cls: "spend-seg-dates" },
 ];
 
 export default function SpendChart({ weeks, onSelect }: Props) {
   if (weeks.length === 0) return null;
 
-  const totals = weeks.map((w) => w.delivery + w.rides + w.social);
+  const totals = weeks.map((w) => w.delivery + w.rides + w.social + w.dates);
   const max = Math.max(...totals, 1) * 1.15; // headroom so the tallest bar isn't flush with the top
   const bw = (PLOT_RIGHT - PLOT_LEFT) / weeks.length;
   const lastIndex = weeks.length - 1;

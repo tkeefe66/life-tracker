@@ -22,6 +22,11 @@
   --chart-delivery: oklch(50% 0.185 277);
   --chart-rides: oklch(56% 0.135 60);
   --chart-social: oklch(55% 0.11 175);
+  /* dates (gold): validated 2026-08-02 with the dataviz six-checks script
+     against delivery/rides/social on both surfaces — all PASS (CVD worst
+     adjacent ΔE 11.3, normal 16.8, contrast ≥3:1). Yellow chosen because
+     yellow-vs-teal survives red-green CVD where pink/magenta collapsed. */
+  --chart-dates: oklch(48% 0.145 90);
   /* alias of --chart-delivery's validated values -- see spec §7. Do not
      substitute a new hue without running the six-check validation against
      both surfaces. */
@@ -67,6 +72,8 @@
     --chart-delivery: oklch(63% 0.17 277);
     --chart-rides: oklch(62% 0.14 60);
     --chart-social: oklch(64% 0.10 175);
+    /* dates: dark's own validated step (CVD 11.0, normal 15.2, ≥3:1). */
+    --chart-dates: oklch(66% 0.12 90);
     /* alias of --chart-delivery's validated values -- see spec §7. Do not
        substitute a new hue without running the six-check validation against
        both surfaces. */
@@ -886,6 +893,7 @@ button.quiet-btn::after {
 .spend-seg-delivery { fill: var(--chart-delivery); }
 .spend-seg-rides { fill: var(--chart-rides); }
 .spend-seg-social { fill: var(--chart-social); }
+.spend-seg-dates { fill: var(--chart-dates); }
 .spend-seg-bank { fill: var(--chart-bank); }
 .spend-baseline { stroke: var(--line); stroke-width: 1; }
 .spend-axis { font-size: 9px; fill: var(--muted); }
