@@ -1363,10 +1363,27 @@ def _set_status_and_alert(status: str) -> None:
     The message is built only from `status`, which is always a closed-set
     value from services/safe_status.py -- never str(exception). A pg_dump or
     S3 failure can carry DATABASE_URL or the S3 credentials in its message,
-    and a Telegram push is an outbound path like any other."""
+    and a Telegram push is an outbound path like any other.
+
+    First observation (`previous is None`) is special-cased -- see the inline
+    comment. A first success is not a recovery, and a deploy that never opted
+    into backups is not a failure; but a first run that genuinely errors does
+    still alert."""
     previous = db.get_setting("backup_last_status")
     db.set_setting("backup_last_status", status)
     if previous == status:
+        return
+    if previous is None and status in ("ok", NOT_CONFIGURED):
+        # First observation ever, on a deploy that has never recorded a status.
+        # "ok" here is a FIRST SUCCESS, not a recovery — announcing "recovered"
+        # would imply a failure that never happened. NOT_CONFIGURED here means
+        # the deploy simply never opted into backups, which CLAUDE.md documents
+        # as a clean no-op rather than a fault, so calling it FAILED is a false
+        # alarm. A first observation that is a REAL error still alerts below —
+        # a backup that has never once worked is exactly what the user needs
+        # to hear about. Note "ok" -> NOT_CONFIGURED still alerts: that means
+        # working backups just went dark, which is the silent failure this
+        # whole task exists to catch.
         return
     if status == "ok":
         notify_background("On Track: database backup recovered — latest run succeeded.")
