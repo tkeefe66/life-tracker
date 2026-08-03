@@ -930,3 +930,25 @@ def test_get_date_events_range(temp_db_path):
     rows = db.get_date_events_range("2026-07-14", "2026-07-20")
     assert [r["gcal_event_id"] for r in rows] == ["manual:d2"]
     assert rows[0]["location"] == "Wine Bar" and rows[0]["amount"] == 40.0
+
+
+def test_dump_table_refuses_a_table_outside_the_allowlist(temp_db_path):
+    import database as db
+    import pytest
+
+    with pytest.raises(ValueError):
+        db.dump_table("bank_transactions")
+
+
+def test_drop_table_refuses_a_table_outside_the_allowlist(temp_db_path):
+    import database as db
+    import pytest
+
+    with pytest.raises(ValueError):
+        db.drop_table("bank_transactions")
+
+
+def test_dump_table_returns_rows_for_an_allowlisted_table(temp_db_path):
+    import database as db
+
+    assert db.dump_table("people") == []  # empty but readable
