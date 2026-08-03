@@ -1987,13 +1987,21 @@ the exceptions."
 
 **Interfaces:** `cache_control_for_path("/api/x")` changes return from `None` to `"no-store, private"`.
 
-- [ ] **Step 1: Find the existing test**
+- [ ] **Step 1: Find ALL the existing assertions — there are two, and grepping the function name finds only one**
 
 ```bash
-grep -rn "cache_control_for_path" tests/
+grep -rn "cache_control_for_path" tests/          # finds the pure-function test
+grep -rn "cache-control\|Cache-Control" tests/    # finds the full-stack test too
 ```
 
-There is an existing assertion that `/api/*` returns `None`. It **must** be updated, not deleted — the policy is still being asserted, just with a different value.
+Two pre-existing tests assert the old behavior:
+
+1. `test_cache_control_for_path_pure_function` — asserts `cache_control_for_path("/api/…") is None`.
+2. `test_api_responses_get_no_cache_control_header` — a full-stack `client.get("/api/health")` asserting `"cache-control" not in resp.headers`. **This one does not mention the function by name, so the first grep misses it.**
+
+Both must be updated, not deleted — the policy is still being asserted, just with a different value.
+
+The second test also needs **renaming**: `test_api_responses_get_no_cache_control_header` becomes a lie the moment the header exists. Rename it to `test_api_responses_are_explicitly_uncacheable` and give it a docstring explaining why the policy is explicit rather than absent. Do not add a *second* full-stack test alongside it — that produces two identical tests that can only ever fail together.
 
 - [ ] **Step 2: Update the test and add one**
 
@@ -2003,14 +2011,22 @@ Change the existing `assert cache_control_for_path("/api/whatever") is None` to:
     assert cache_control_for_path("/api/whatever") == "no-store, private"
 ```
 
-And append an integration assertion to `tests/test_api_auth.py`:
+And rename the full-stack test, updating its assertion in place rather than adding a new one beside it:
 
 ```python
 def test_api_responses_are_explicitly_uncacheable(temp_db_path):
+    """The policy is stated, not merely absent. Leaving the header off relied
+    on browsers not disk-caching fetch() responses by default — true today,
+    but an implicit assumption, and these responses carry bank transactions."""
     client = _client(temp_db_path)
     resp = client.get("/api/health")
     assert resp.headers["Cache-Control"] == "no-store, private"
 ```
+
+Keep the pure-function test too — it and this one cover genuinely different
+layers (the decision vs. the middleware actually applying it). What you must
+not end up with is two full-stack tests making the same request and the same
+assertion.
 
 - [ ] **Step 3: Run to verify they fail**
 
