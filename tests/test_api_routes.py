@@ -1329,3 +1329,72 @@ def test_reflection_prompt_sees_no_date_content(temp_db_path, monkeypatch):
     assert client.post("/api/reflection").status_code == 200
     assert "bar dough" not in captured["blob"]
     assert "date night" not in captured["blob"]
+
+
+def test_logout_all_invalidates_every_session(temp_db_path):
+    # Two independent app instances ("devices") sharing the same SQLite DB —
+    # sessions live in the sessions table, so a revocation triggered from one
+    # instance must be visible to the other. That cross-instance visibility
+    # is exactly the property this test exists to prove.
+    phone = _client(temp_db_path)
+    laptop = _client(temp_db_path)
+
+    assert phone.get("/api/settings").status_code == 200
+    assert laptop.get("/api/settings").status_code == 200
+
+    assert laptop.post("/api/logout-all").status_code == 200
+
+    # Both devices are now signed out — including the one that never asked.
+    # That is the entire point: this is the "my cookie leaked" button.
+    assert phone.get("/api/settings").status_code == 401
+    assert laptop.get("/api/settings").status_code == 401
+
+
+def test_logout_all_requires_authentication(temp_db_path):
+    # Not using _client(temp_db_path) here: that helper logs in automatically,
+    # and this test specifically needs a client that never has.
+    from app.api import create_app
+
+    client = TestClient(create_app(), base_url="https://testserver")
+    assert client.post("/api/logout-all").status_code == 401
+
+
+# ── Bank: label and nickname length caps (Task 10) ────────────────────────────
+
+def test_bank_label_rejects_an_oversized_label(temp_db_path):
+    client = _client(temp_db_path)
+
+    resp = client.post("/api/bank/label", json={"payee": "Acme", "label": "x" * 300})
+    assert resp.status_code == 422  # LabelPatch is a pydantic model -- Field(max_length=...) rejects
+
+
+def test_bank_label_accepts_a_normal_length_label(temp_db_path):
+    import database as db
+
+    client = _client(temp_db_path)
+    db.upsert_bank_account("acct-lbl", "Checking", "WF", "checking")
+    acct = next(a for a in db.get_bank_accounts() if a["simplefin_id"] == "acct-lbl")
+    db.upsert_bank_transaction("t-lbl", acct["id"], "2026-07-20", "2026-07-20",
+                               -50.0, "DESC", "Kroger", "", None)
+
+    resp = client.post("/api/bank/label", json={"simplefin_id": "t-lbl", "label": "x" * 50})
+    assert resp.status_code == 200
+    assert resp.json()["label"] == "x" * 50
+
+
+def test_bank_account_nickname_rejects_an_oversized_nickname(temp_db_path):
+    client = _client(temp_db_path)
+
+    resp = client.post("/api/bank/accounts/acct-1/nickname", json={"nickname": "x" * 300})
+    assert resp.status_code == 400  # hand-validated dict route, matches the isinstance check above it
+
+
+def test_bank_account_nickname_accepts_a_normal_length_nickname(temp_db_path):
+    import database as db
+
+    client = _client(temp_db_path)
+    db.upsert_bank_account("acct-nick", "Checking", "WF", "checking")
+
+    resp = client.post("/api/bank/accounts/acct-nick/nickname", json={"nickname": "x" * 50})
+    assert resp.status_code == 200
+    assert resp.json()["nickname"] == "x" * 50

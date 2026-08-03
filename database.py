@@ -21,6 +21,15 @@ logger = logging.getLogger(__name__)
 
 USE_POSTGRES = bool(DATABASE_URL)
 
+# The v1 archive tables — read by no v2 code path. The ONLY tables
+# dump_table/drop_table will touch, so a bug or a bad argument can never
+# reach a live v2 table.
+_DUMPABLE_TABLES = frozenset({
+    "life_log_entries", "people", "life_log_people", "activity_log",
+    "habits", "habit_logs", "categories", "conversation_state",
+    "accomplishments", "weekly_focus", "later_items",
+})
+
 # ── Connection helpers ────────────────────────────────────────────────────────
 
 @contextmanager
@@ -1481,6 +1490,15 @@ def delete_expired_sessions(now_iso):
         c.execute(f"DELETE FROM sessions WHERE expires_at <= {p}", (now_iso,))
 
 
+def delete_all_sessions():
+    """Revoke every session on every device. Single-user app, so this is the
+    "my cookie may have leaked" button — there is no other remediation, since
+    sessions are deliberately independent of APP_PASSWORD and rotating the
+    password therefore does not invalidate an issued cookie."""
+    with _cursor(write=True) as c:
+        c.execute("DELETE FROM sessions")
+
+
 # ── Bank accounts & transactions ──────────────────────────────────────────────
 # The sync job may overwrite everything SimpleFIN reports, but never `role`
 # (user-set) or `user_flow` (user override). Same Override + Learning pattern as
@@ -1953,3 +1971,34 @@ def get_all_bank_transactions():
     with _cursor() as c:
         c.execute(f"{_BANK_TXN_SELECT} ORDER BY t.posted, t.simplefin_id")
         return _bank_txn_rows(c.fetchall())
+
+
+def dump_table(table):
+    """Return every row of `table` as a list of dicts. Used only by
+    scripts/drop_v1_archive.py to export the v1 archive before dropping it.
+
+    `table` is interpolated into the SQL because table names cannot be
+    parameterized. It is validated against a hardcoded allowlist first —
+    never pass a caller-supplied value here."""
+    if table not in _DUMPABLE_TABLES:
+        raise ValueError(f"refusing to dump unknown table: {table}")
+    with _cursor() as c:
+        c.execute(f"SELECT * FROM {table}")
+        # dict(r), not dict(zip(columns, row)): psycopg2's RealDictCursor
+        # already returns dict-like rows, and iterating one yields its keys
+        # (not values) since it's a dict subclass — zip(columns, row) would
+        # silently pair every column name with itself on Postgres. dict(r)
+        # is the pattern used everywhere else in this file and works for
+        # both sqlite3.Row and RealDictRow.
+        return [dict(r) for r in c.fetchall()]
+
+
+def drop_table(table):
+    """Permanently drop `table`. Used only by scripts/drop_v1_archive.py.
+
+    Same allowlist guard as dump_table — this is the only DROP in the entire
+    codebase and it must stay reachable from exactly one one-off script."""
+    if table not in _DUMPABLE_TABLES:
+        raise ValueError(f"refusing to drop unknown table: {table}")
+    with _cursor(write=True) as c:
+        c.execute(f"DROP TABLE IF EXISTS {table}")

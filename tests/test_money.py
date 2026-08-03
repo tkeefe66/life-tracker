@@ -724,10 +724,17 @@ def test_breakdown_rows_returns_vendor_rows_newest_first(temp_db_path):
     import database as db
     from app import scorecard
     import app.money as money
+    import metrics
 
     acct = _account(db)
     today = scorecard._local_today()
-    d0, d1 = today.isoformat(), (today - timedelta(days=1)).isoformat()
+    # Both dates must land inside the SAME Mon-Sun week as the weeks=1 query
+    # window, or the older row falls into the previous week and vanishes from
+    # the result. Deriving them from the week's start rather than from "today
+    # minus one day" is what makes this hold on a Monday too -- it did not,
+    # and this test failed every Monday and passed the other six days.
+    week_start, _ = metrics.week_bounds(today)
+    d1, d0 = week_start.isoformat(), (week_start + timedelta(days=1)).isoformat()
     _vendor_txn(db, "a1", acct["id"], d1, -30.0, "Amazon")
     _vendor_txn(db, "a2", acct["id"], d0, -20.0, "Amazon")
     _vendor_txn(db, "a3", acct["id"], d0, 5.0, "Amazon", user_flow="refund")

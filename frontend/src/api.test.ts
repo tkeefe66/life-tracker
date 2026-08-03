@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiGet, login, LockedOutError, logout, onUnauthorized, UnauthorizedError } from "./api";
+import { apiGet, login, LockedOutError, logout, logoutAll, onUnauthorized, UnauthorizedError } from "./api";
 
 describe("login", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -50,6 +50,29 @@ describe("logout", () => {
   it("never throws even if the request fails — the client always treats logout as done", async () => {
     fetchMock.mockRejectedValue(new Error("network down"));
     await expect(logout()).resolves.toBeUndefined();
+  });
+});
+
+describe("logoutAll", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("POSTs to /api/logout-all so every session is revoked", async () => {
+    await logoutAll();
+    expect(fetchMock).toHaveBeenCalledWith("/api/logout-all", { method: "POST" });
+  });
+
+  it("never throws even if the request fails — the client always treats sign-out as done", async () => {
+    fetchMock.mockRejectedValueOnce(new Error("network"));
+    await expect(logoutAll()).resolves.toBeUndefined();
   });
 });
 

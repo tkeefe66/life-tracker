@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiSend, logout } from "../api";
+import { apiGet, apiSend, logout, logoutAll } from "../api";
 import { targetLabel } from "../lib";
 
 interface Target { direction: string; value: number }
@@ -97,6 +97,16 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
 
   const signOut = async () => {
     await logout();
+    onLoggedOut();
+  };
+
+  const signOutEverywhere = async () => {
+    // Confirm because this is destructive and effectively irreversible: it
+    // kills sessions on devices the user may not have in hand, and the only
+    // way back is re-entering the password on each one. It sits directly
+    // below the ordinary Sign out button, so a misclick is plausible.
+    if (!window.confirm("Sign out on every device? You'll need to log in again everywhere.")) return;
+    await logoutAll();
     onLoggedOut();
   };
 
@@ -313,6 +323,10 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
         <div className="row">
           <span className="grow">Sign out</span>
           <button type="button" onClick={signOut}>Sign out</button>
+        </div>
+        <div className="row">
+          <span className="grow">Sign out everywhere</span>
+          <button type="button" onClick={signOutEverywhere}>Sign out everywhere</button>
         </div>
       </div>
     </div>

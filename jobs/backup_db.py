@@ -31,6 +31,7 @@ import pytz
 
 import database as db
 from config import (
+    BACKUP_ENCRYPTION_KEY,
     BACKUP_S3_ACCESS_KEY,
     BACKUP_S3_BUCKET,
     BACKUP_S3_ENDPOINT,
@@ -45,6 +46,7 @@ from config import (
     TIMEZONE,
 )
 from services.safe_status import NOT_CONFIGURED, PG_DUMP_VERSION_MISMATCH, safe_status
+from services.telegram_notify import notify_background
 
 logger = logging.getLogger(__name__)
 
@@ -264,30 +266,128 @@ def _prune_old_backups() -> None:
         client.delete_object(Bucket=BACKUP_S3_BUCKET, Key=obj["Key"])
 
 
+def _set_status_and_alert(status: str) -> None:
+    """Writes backup_last_status and notifies only when it CHANGES.
+
+    The job runs daily, so alerting on every failing run would send a message
+    every day for as long as the failure persists. Transitions are what carry
+    information: ok -> error means something just broke, error -> ok means it
+    just healed.
+
+    The message is built only from `status`, which is always a closed-set
+    value from services/safe_status.py -- never str(exception). A pg_dump or
+    S3 failure can carry DATABASE_URL or the S3 credentials in its message,
+    and a Telegram push is an outbound path like any other."""
+    previous = db.get_setting("backup_last_status")
+    db.set_setting("backup_last_status", status)
+    if previous == status:
+        return
+    if previous is None and status in ("ok", NOT_CONFIGURED):
+        # First observation ever (fresh deploy, backup_last_status never
+        # written before). "ok" here is a first success, not a recovery from
+        # a failure that never happened -- there is nothing to announce.
+        # NOT_CONFIGURED here means the deploy never opted into backups,
+        # which CLAUDE.md documents as a clean no-op, not a fault. A first
+        # observation that IS a real error still falls through and alerts --
+        # that one the user does need to hear about. Do not collapse this
+        # back to a plain `previous == status` check.
+        return
+    if status == "ok":
+        notify_background("On Track: database backup recovered — latest run succeeded.")
+    else:
+        notify_background(
+            f"On Track: database backup FAILED (status: {status}). "
+            f"SimpleFIN only keeps 90 days, so a prolonged gap is unrecoverable."
+        )
+
+
+def _is_encryption_configured() -> bool:
+    return bool(BACKUP_ENCRYPTION_KEY)
+
+
+def _safe_unlink(path: str) -> None:
+    """Removes `path`, swallowing OSError instead of letting it propagate.
+
+    Used for the two temp-file cleanups in run()'s finally block, which must
+    stay independent: if removing one file raises (permission problem,
+    external deletion, filesystem hiccup), that must not abort removal of
+    the other. Without this, an exception unlinking tmp_path would leave
+    enc_path behind too -- orphaning the plaintext dump (the entire
+    database) alongside its own ciphertext, silently, in /tmp forever."""
+    try:
+        os.unlink(path)
+    except OSError as e:
+        logger.warning("Failed to remove temp backup file %s: %s", path, e)
+
+
+def _encrypt_file(src_path: str, dst_path: str) -> None:
+    """Fernet-encrypts src_path to dst_path.
+
+    Protects against compromise of the B2 bucket or its access key ALONE --
+    not Railway compromise, since the key itself lives in a Railway env var
+    and an attacker with Railway access already has the database. That is
+    the honest scope: B2 credentials and Railway credentials are separate
+    blast radii, and this closes only the former.
+
+    Fernet loads the whole payload into memory. A dump is ~390 KB, so that is
+    fine -- but if this database ever grows into the hundreds of megabytes,
+    switch to a streaming cipher rather than raising the memory ceiling.
+
+    Lazy import so an un-configured deploy never needs cryptography installed
+    to boot, matching how _s3_client() defers boto3."""
+    from cryptography.fernet import Fernet
+
+    with open(src_path, "rb") as f:
+        plaintext = f.read()
+    token = Fernet(BACKUP_ENCRYPTION_KEY.encode()).encrypt(plaintext)
+    with open(dst_path, "wb") as f:
+        f.write(token)
+
+
 def run():
     if not _using_postgres():
         logger.info("Backup skipped: not using PostgreSQL (local SQLite dev)")
         return
     if not _is_configured():
         logger.warning("Backup skipped: BACKUP_S3_* env vars not fully set")
-        db.set_setting("backup_last_status", NOT_CONFIGURED)
+        _set_status_and_alert(NOT_CONFIGURED)
         return
     try:
         stamp = datetime.datetime.now(pytz.timezone(TIMEZONE)).strftime("%Y%m%dT%H%M%S")
-        key = f"{BACKUP_PREFIX}{stamp}.dump"
+        encrypting = _is_encryption_configured()
+        if not encrypting:
+            logger.warning(
+                "BACKUP_ENCRYPTION_KEY unset — uploading an UNENCRYPTED dump. "
+                "Backups still run because a gap is unrecoverable, but the "
+                "dump is protected only by the bucket's own access control."
+            )
+        suffix = ".dump.enc" if encrypting else ".dump"
+        key = f"{BACKUP_PREFIX}{stamp}{suffix}"
         fd, tmp_path = tempfile.mkstemp(suffix=".dump")
         os.close(fd)
+        enc_path = tmp_path + ".enc"
         try:
             _dump_to_file(tmp_path)
+            # Plausibility is checked on the PLAINTEXT dump: MIN_DUMP_BYTES is
+            # calibrated against pg_dump's own header/TOC overhead, and
+            # ciphertext size would not carry that meaning.
             _assert_dump_is_plausible(tmp_path)
-            _upload(tmp_path, key)
+            if encrypting:
+                _encrypt_file(tmp_path, enc_path)
+                _upload(enc_path, key)
+            else:
+                _upload(tmp_path, key)
             if not _verify_uploaded(key):
                 raise BackupUnverifiedError(f"Uploaded key not found in post-upload listing: {key}")
             _prune_old_backups()
         finally:
-            os.unlink(tmp_path)
+            # Two independent removals -- see _safe_unlink's docstring for why
+            # a failure on one must not skip the other.
+            _safe_unlink(tmp_path)
+            if os.path.exists(enc_path):
+                _safe_unlink(enc_path)
         db.set_setting("backup_last_run", _now_iso())
-        db.set_setting("backup_last_status", "ok")
+        _set_status_and_alert("ok")
         logger.info("Backup uploaded: %s", key)
     except BackupVersionMismatchError as e:
         # Checked before the generic Exception handler below so this gets a
@@ -295,8 +395,8 @@ def run():
         # safe_status()'s generic "error: see logs".
         logger.exception("Backup failed: pg_dump version mismatch")
         db.set_setting("backup_last_run", _now_iso())
-        db.set_setting("backup_last_status", PG_DUMP_VERSION_MISMATCH)
+        _set_status_and_alert(PG_DUMP_VERSION_MISMATCH)
     except Exception as e:
         logger.exception("Backup failed")
         db.set_setting("backup_last_run", _now_iso())
-        db.set_setting("backup_last_status", safe_status(e))
+        _set_status_and_alert(safe_status(e))

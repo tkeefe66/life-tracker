@@ -44,6 +44,13 @@ export async function logout(): Promise<void> {
   await fetch("/api/logout", { method: "POST" }).catch(() => {});
 }
 
+// Deliberately mirrors logout(): swallow failures and always resolve. The
+// caller returns to the login screen either way -- a sign-out that appears to
+// fail is worse than one that already succeeded server-side.
+export async function logoutAll(): Promise<void> {
+  await fetch("/api/logout-all", { method: "POST" }).catch(() => {});
+}
+
 export function apiGet<T>(path: string): Promise<T> {
   return fetch(`/api${path}`).then((r) => handle<T>(r));
 }

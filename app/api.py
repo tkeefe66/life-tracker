@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 
 import database as db
 from app.auth import create_session, has_valid_session, set_session_cookie, verify_password
+from app.limits import MAX_BODY_BYTES, BodySizeLimitMiddleware
+from services.telegram_notify import notify_background
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,20 @@ FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "frame-ancestors 'none'",
+    # style-src allows 'unsafe-inline' because React writes inline style
+    # attributes; script-src deliberately does NOT, which is the directive
+    # that actually matters. img-src allows data: for inline SVG/icon URIs.
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "font-src 'self'; "
+        "base-uri 'none'; "
+        "form-action 'none'; "
+        "frame-ancestors 'none'"
+    ),
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "same-origin",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
@@ -29,8 +44,12 @@ def cache_control_for_path(path: str) -> Optional[str]:
     """Cache-Control decision for a response path — a pure function so the
     policy is unit-testable without spinning up the ASGI app.
 
-    - `/api/*`: left alone entirely (returns None) — API responses must never
-      pick up the static-asset caching rules below.
+    - `/api/*`: `no-store, private`. These responses carry bank transactions,
+      health check-ins, and calendar contents. Leaving the header absent
+      relied on browsers not disk-caching fetch() responses by default —
+      true today, but an implicit assumption rather than a stated policy,
+      and any intermediary treating "no header" as cacheable would be free
+      to store financial data.
     - `/assets/*`: vite content-hashes these filenames on every build, so a
       given URL's content never changes — safe to cache for a year and mark
       immutable.
@@ -43,7 +62,7 @@ def cache_control_for_path(path: str) -> Optional[str]:
       re-fetch. `no-store` would throw that away for no benefit.
     """
     if path.startswith("/api/"):
-        return None
+        return "no-store, private"
     if path.startswith("/assets/"):
         return "public, max-age=31536000, immutable"
     return "no-cache"
@@ -125,6 +144,17 @@ def _record_login_failure() -> None:
         extra = count - LOCKOUT_THRESHOLD
         seconds = min(LOCKOUT_BASE_SECONDS * (2 ** extra), LOCKOUT_MAX_SECONDS)
         db.set_setting(LOGIN_LOCKED_UNTIL_KEY, _iso(now + datetime.timedelta(seconds=seconds)))
+        if count == LOCKOUT_THRESHOLD:
+            # Only on the crossing. Past the threshold every further guess
+            # would otherwise send its own message, turning a sustained
+            # attack into a notification flood. Background thread because
+            # this runs under _LOGIN_LOCK — see notify_background's docstring.
+            # The attempted password is deliberately absent from the text.
+            notify_background(
+                f"On Track: login locked after {count} failed attempts. "
+                f"If this wasn't you, rotate APP_PASSWORD and use "
+                f"Settings -> Sign out everywhere."
+            )
 
 
 def _record_login_success() -> None:
@@ -139,6 +169,12 @@ class LoginBody(BaseModel):
 
 def create_app(lifespan=None) -> FastAPI:
     app = FastAPI(title="On Track", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+
+    # Registered BEFORE the security_headers decorator below, which means
+    # security_headers ends up OUTSIDE it in the middleware stack (Starlette
+    # makes the most recently added middleware outermost). That ordering is
+    # deliberate: a 413 still gets the standard security headers.
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_BODY_BYTES)
 
     @app.middleware("http")
     async def security_headers(request, call_next):

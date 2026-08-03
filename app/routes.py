@@ -17,10 +17,28 @@ from services.simplefin_service import SimpleFinError
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
+# Length caps for free-text user fields, shared across routes below. Kept
+# near the top (rather than beside their first use) so a reader isn't left
+# wondering whether a constant referenced early in the file is defined yet --
+# module-level constants resolve at call time, so placement doesn't change
+# behavior, only readability.
+MAX_NOTE_LEN = 500
+MAX_LABEL_LEN = 200
+
 
 @router.post("/logout")
 def post_logout(request: Request, response: Response):
     auth_logout(request.cookies.get(COOKIE_NAME, ""))
+    response.delete_cookie(COOKIE_NAME)
+    return {"ok": True}
+
+
+@router.post("/logout-all")
+def post_logout_all(response: Response):
+    """Revokes every session, including the caller's own. Sits behind the
+    router-level require_auth like everything else, so only someone already
+    holding a valid session can trigger it."""
+    db.delete_all_sessions()
     response.delete_cookie(COOKIE_NAME)
     return {"ok": True}
 
@@ -380,6 +398,8 @@ def set_bank_account_nickname(simplefin_id: str, body: dict):
     nickname = (body or {}).get("nickname")
     if nickname is not None and not isinstance(nickname, str):
         raise HTTPException(status_code=400, detail="nickname must be a string")
+    if nickname is not None and len(nickname) > MAX_LABEL_LEN:
+        raise HTTPException(status_code=400, detail=f"nickname too long (max {MAX_LABEL_LEN} chars)")
     if not db.set_bank_account_nickname(simplefin_id, nickname):
         raise HTTPException(status_code=404, detail="unknown account")
     return {"ok": True, "simplefin_id": simplefin_id,
@@ -434,9 +454,6 @@ def get_bank_investments():
 MAX_BULK_FLOW_IDS = 200
 
 
-MAX_NOTE_LEN = 500
-
-
 class FlowPatch(BaseModel):
     flow: Optional[str] = None
     # Omitted, or explicit JSON null, both mean "leave the stored note
@@ -452,7 +469,7 @@ class FlowPatch(BaseModel):
 class LabelPatch(BaseModel):
     simplefin_id: Optional[str] = None
     payee: Optional[str] = None
-    label: Optional[str] = None
+    label: Optional[str] = Field(default=None, max_length=MAX_LABEL_LEN)
     no_label: Optional[bool] = None
 
 

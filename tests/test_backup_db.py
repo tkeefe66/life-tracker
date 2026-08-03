@@ -6,6 +6,18 @@ plan's testing note ("do not test the actual upload")."""
 import pytest
 
 
+def _raise_dump_error(path):
+    from jobs.backup_db import BackupDumpError
+    raise BackupDumpError("pg_dump exited with status 1")
+
+
+def _write_plausible_dump(path):
+    """Writes a file comfortably over MIN_DUMP_BYTES so
+    _assert_dump_is_plausible passes."""
+    with open(path, "wb") as f:
+        f.write(b"x" * 4096)
+
+
 def test_backup_skipped_when_sqlite(temp_db_path, monkeypatch):
     import database as db
     from jobs import backup_db
@@ -472,3 +484,258 @@ def test_prune_is_a_noop_when_under_retention(monkeypatch):
     backup_db._prune_old_backups()
 
     assert deleted == []
+
+
+# ── Task 7: alert on backup status transitions ────────────────────────────
+
+def test_alert_fires_when_backup_status_goes_from_ok_to_error(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "ok")
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", _raise_dump_error)
+
+    backup_db.run()
+
+    assert len(sent) == 1
+    assert "backup" in sent[0].lower()
+
+
+def test_alert_does_not_repeat_while_the_failure_persists(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "ok")
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", _raise_dump_error)
+
+    backup_db.run()
+    backup_db.run()
+    backup_db.run()
+
+    assert len(sent) == 1  # one alert for the transition, not one per run
+
+
+def test_alert_fires_on_recovery_back_to_ok(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "error: see logs")
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", lambda path: _write_plausible_dump(path))
+    monkeypatch.setattr(backup_db, "_upload", lambda *a, **k: None)
+    monkeypatch.setattr(backup_db, "_verify_uploaded", lambda key: True)
+    monkeypatch.setattr(backup_db, "_prune_old_backups", lambda: None)
+
+    backup_db.run()
+
+    assert len(sent) == 1
+    assert "recover" in sent[0].lower() or "ok" in sent[0].lower()
+
+
+def test_alert_never_contains_exception_text(temp_db_path, monkeypatch):
+    """The redaction boundary applies to notifications too -- a pg_dump or S3
+    error can embed DATABASE_URL or the S3 credentials in its message."""
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "ok")
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+
+    def _raise_with_secret(path):
+        raise RuntimeError("postgres://user:SENTINELSECRET@host:5432/railway")
+
+    monkeypatch.setattr(backup_db, "_dump_to_file", _raise_with_secret)
+
+    backup_db.run()
+
+    assert sent
+    assert "SENTINELSECRET" not in " ".join(sent)
+
+
+# ── Task 7 fix round 1: first-observation matrix (previous is None) ───────
+#
+# backup_last_status is unset on a fresh deploy, so db.get_setting returns
+# None. A plain `previous == status` inequality can't tell "first observation
+# ever" apart from "the status genuinely changed" -- both a first success
+# and a never-opted-into-backups deploy would otherwise read as a
+# transition and send a false alert.
+
+def test_first_successful_run_sends_no_alert(temp_db_path, monkeypatch):
+    """Fresh deploy, backup_last_status never set. First run succeeds. This
+    is a first success, not a recovery from a failure that never happened --
+    nothing should be announced."""
+    import database as db
+    from jobs import backup_db
+
+    assert db.get_setting("backup_last_status") is None
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", lambda path: _write_plausible_dump(path))
+    monkeypatch.setattr(backup_db, "_upload", lambda *a, **k: None)
+    monkeypatch.setattr(backup_db, "_verify_uploaded", lambda key: True)
+    monkeypatch.setattr(backup_db, "_prune_old_backups", lambda: None)
+
+    backup_db.run()
+
+    assert sent == []
+    assert db.get_setting("backup_last_status") == "ok"
+
+
+def test_first_run_with_backups_unconfigured_sends_no_alert(temp_db_path, monkeypatch):
+    """Fresh deploy, BACKUP_S3_* never set. Never opting into backups is a
+    documented clean no-op (CLAUDE.md), not a fault -- must not alert as if
+    it were a failure."""
+    import database as db
+    from jobs import backup_db
+
+    assert db.get_setting("backup_last_status") is None
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: False)
+
+    backup_db.run()
+
+    assert sent == []
+    assert db.get_setting("backup_last_status") == "error: not configured"
+
+
+def test_first_run_that_fails_still_alerts(temp_db_path, monkeypatch):
+    """Fresh deploy, backup_last_status never set, and the very first run
+    genuinely fails. Unlike the first-success and never-configured cases,
+    this IS something the user needs to hear about."""
+    import database as db
+    from jobs import backup_db
+
+    assert db.get_setting("backup_last_status") is None
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", _raise_dump_error)
+
+    backup_db.run()
+
+    assert len(sent) == 1
+    assert "backup" in sent[0].lower()
+
+
+def test_alert_fires_when_backups_go_dark_from_ok(temp_db_path, monkeypatch):
+    """Backups were working (status "ok") and then the deploy loses its
+    BACKUP_S3_* configuration. This is the silent-failure case the whole
+    task exists to catch, and it must still alert even though the new
+    status is NOT_CONFIGURED rather than a hard error."""
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "ok")
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: False)
+
+    backup_db.run()
+
+    assert len(sent) == 1
+    assert db.get_setting("backup_last_status") == "error: not configured"
+
+
+# ── Task 8: encrypt the dump before upload ────────────────────────────────
+
+def test_dump_is_encrypted_before_upload_when_a_key_is_set(temp_db_path, monkeypatch, tmp_path):
+    from cryptography.fernet import Fernet
+    from jobs import backup_db
+
+    key = Fernet.generate_key().decode()
+    monkeypatch.setattr(backup_db, "BACKUP_ENCRYPTION_KEY", key)
+
+    plaintext = tmp_path / "plain.dump"
+    plaintext.write_bytes(b"PGDMP-sentinel-payload")
+    ciphertext = tmp_path / "plain.dump.enc"
+
+    backup_db._encrypt_file(str(plaintext), str(ciphertext))
+
+    raw = ciphertext.read_bytes()
+    assert b"PGDMP-sentinel-payload" not in raw          # actually encrypted
+    assert Fernet(key.encode()).decrypt(raw) == b"PGDMP-sentinel-payload"  # and reversible
+
+
+def test_uploaded_key_ends_in_enc_when_encryption_is_on(temp_db_path, monkeypatch):
+    from cryptography.fernet import Fernet
+    from jobs import backup_db
+
+    key = Fernet.generate_key().decode()
+    monkeypatch.setattr(backup_db, "BACKUP_ENCRYPTION_KEY", key)
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", _write_plausible_dump)
+    monkeypatch.setattr(backup_db, "_verify_uploaded", lambda key: True)
+    monkeypatch.setattr(backup_db, "_prune_old_backups", lambda: None)
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: None)
+
+    uploaded = []
+
+    def _fake_upload(path, upload_key):
+        # Read the CONTENTS here, inside the mock: run()'s finally block
+        # deletes both temp files as soon as run() returns, so this is the
+        # only point at which the bytes that were actually "uploaded" can
+        # still be inspected.
+        with open(path, "rb") as f:
+            uploaded.append((upload_key, f.read()))
+
+    monkeypatch.setattr(backup_db, "_upload", _fake_upload)
+
+    backup_db.run()
+
+    assert len(uploaded) == 1
+    key_used, contents = uploaded[0]
+    assert key_used.endswith(".dump.enc")
+    # A key-only assertion isn't enough: a regression that uploads the
+    # PLAINTEXT temp file under the correctly ".enc"-suffixed key would still
+    # pass it -- a backup labelled encrypted that isn't, the worst failure
+    # this feature could have. So assert the uploaded bytes are actually
+    # Fernet ciphertext: not the plaintext dump (_write_plausible_dump fills
+    # it with b"x" * 4096) and decryptable back to that exact plaintext.
+    assert not contents.startswith(b"xxxx")
+    assert Fernet(key.encode()).decrypt(contents) == b"x" * 4096
+
+
+def test_backup_still_runs_unencrypted_when_no_key_is_set(temp_db_path, monkeypatch):
+    """A missing key must not stop backups -- a gap is unrecoverable, an
+    unencrypted dump is not."""
+    from jobs import backup_db
+
+    monkeypatch.setattr(backup_db, "BACKUP_ENCRYPTION_KEY", "")
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", _write_plausible_dump)
+    monkeypatch.setattr(backup_db, "_verify_uploaded", lambda key: True)
+    monkeypatch.setattr(backup_db, "_prune_old_backups", lambda: None)
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: None)
+
+    uploaded = []
+    monkeypatch.setattr(backup_db, "_upload", lambda path, key: uploaded.append(key))
+
+    backup_db.run()
+
+    import database as db
+    assert len(uploaded) == 1
+    assert uploaded[0].endswith(".dump")
+    assert not uploaded[0].endswith(".enc")
+    assert db.get_setting("backup_last_status") == "ok"

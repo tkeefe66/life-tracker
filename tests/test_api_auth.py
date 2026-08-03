@@ -46,7 +46,12 @@ def test_security_headers_present(temp_db_path):
     client = _client(temp_db_path)
     resp = client.get("/api/health")
     assert resp.headers["x-frame-options"] == "DENY"
-    assert resp.headers["content-security-policy"] == "frame-ancestors 'none'"
+    # Pin the directives that matter rather than the whole string, since the
+    # policy is a multi-directive value that may gain entries over time.
+    csp = resp.headers["content-security-policy"]
+    assert "frame-ancestors 'none'" in csp
+    assert "script-src 'self'" in csp
+    assert "'unsafe-inline'" not in csp.split("script-src")[1].split(";")[0]
     assert resp.headers["x-content-type-options"] == "nosniff"
     assert resp.headers["referrer-policy"] == "same-origin"
     assert "max-age=31536000" in resp.headers["strict-transport-security"]
@@ -59,12 +64,15 @@ def test_security_headers_present(temp_db_path):
 # Cache-Control, so browsers heuristically cached it and kept requesting the
 # previous deploy's content-hashed asset filenames until a hard refresh.
 
-def test_api_responses_get_no_cache_control_header(temp_db_path):
-    """/api/* must be left exactly as it was — no caching header added here,
-    regardless of the static-asset policy below."""
+def test_api_responses_are_explicitly_uncacheable(temp_db_path):
+    """/api/* states `no-store, private` explicitly rather than leaving the
+    header absent. An absent header relied on browsers not disk-caching
+    fetch() responses by default — an implicit assumption, not a stated
+    policy — and these responses carry bank transactions, health check-ins,
+    and calendar contents."""
     client = _client(temp_db_path)
     resp = client.get("/api/health")
-    assert "cache-control" not in resp.headers
+    assert resp.headers["cache-control"] == "no-store, private"
 
 
 def test_cache_control_for_path_pure_function():
@@ -73,8 +81,8 @@ def test_cache_control_for_path_pure_function():
     to pin the policy without depending on a built frontend."""
     from app.api import cache_control_for_path
 
-    assert cache_control_for_path("/api/targets") is None
-    assert cache_control_for_path("/api/health") is None
+    assert cache_control_for_path("/api/targets") == "no-store, private"
+    assert cache_control_for_path("/api/health") == "no-store, private"
     assert cache_control_for_path("/assets/index-abc123.js") == "public, max-age=31536000, immutable"
     assert cache_control_for_path("/assets/index-abc123.css") == "public, max-age=31536000, immutable"
     assert cache_control_for_path("/") == "no-cache"
@@ -448,3 +456,108 @@ def test_abandoned_attack_heals_after_30_minutes_of_inactivity(temp_db_path, mon
 
     # The owner's very next correct-password attempt succeeds immediately.
     assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
+
+
+def test_oversized_login_body_is_rejected_with_413(temp_db_path):
+    client = _client(temp_db_path)
+    resp = client.post("/api/login", json={"password": "x" * 200_000})
+    assert resp.status_code == 413
+
+
+def test_oversized_body_still_carries_security_headers(temp_db_path):
+    client = _client(temp_db_path)
+    resp = client.post("/api/login", json={"password": "x" * 200_000})
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_normal_login_body_is_unaffected_by_the_cap(temp_db_path):
+    client = _client(temp_db_path)
+    assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
+
+
+def test_chunked_oversized_body_is_rejected_with_413(temp_db_path):
+    """httpx sends a generator body as Transfer-Encoding: chunked with no
+    Content-Length, so this is the only test that exercises the streaming
+    counter through the real FastAPI stack rather than the fast path."""
+    client = _client(temp_db_path)
+
+    def body():
+        yield b'{"password":"'
+        for _ in range(25):
+            yield b"x" * 8192
+        yield b'"}'
+
+    resp = client.post("/api/login", content=body(),
+                       headers={"content-type": "application/json"})
+    assert resp.status_code == 413
+
+
+# ── Task 6: Telegram alert on lockout crossing ─────────────────────────────────
+
+def test_alert_fires_when_the_lockout_threshold_is_crossed(temp_db_path, monkeypatch):
+    from app import api
+
+    sent = []
+    monkeypatch.setattr(api, "notify_background", lambda text: sent.append(text))
+    client = _client(temp_db_path)
+
+    for _ in range(api.LOCKOUT_THRESHOLD):
+        client.post("/api/login", json={"password": "nope"})
+
+    assert len(sent) == 1
+    assert "lock" in sent[0].lower()
+
+
+def test_alert_does_not_repeat_on_every_failure_past_the_threshold(temp_db_path, monkeypatch):
+    """Must drive the failures from a client holding a valid session cookie.
+
+    A session-less client gets short-circuited by the login route's lockout
+    pre-check (`if already_locked and not has_valid_session(request): raise
+    429`) the moment it's already locked out — that raises BEFORE
+    verify_password and before _record_login_failure run again, so `count`
+    never advances past the threshold and the `count == LOCKOUT_THRESHOLD`
+    guard is never re-entered. A session-holding device is the one exemption
+    to that pre-check (M2a — see test_wrong_password_from_a_valid_session_
+    still_counts_toward_lockout): its wrong passwords keep being recorded
+    and `count` keeps climbing past the threshold on every attempt, which is
+    exactly the path where "only on the crossing" is load-bearing. Without a
+    session here, this test cannot distinguish `count == LOCKOUT_THRESHOLD`
+    from `count >= LOCKOUT_THRESHOLD`."""
+    from app import api
+
+    sent = []
+    monkeypatch.setattr(api, "notify_background", lambda text: sent.append(text))
+    client = _client(temp_db_path)
+    assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
+
+    for _ in range(api.LOCKOUT_THRESHOLD + 3):
+        client.post("/api/login", json={"password": "nope"})
+
+    assert len(sent) == 1  # the crossing only, not one per guess
+
+
+def test_no_alert_below_the_threshold(temp_db_path, monkeypatch):
+    from app import api
+
+    sent = []
+    monkeypatch.setattr(api, "notify_background", lambda text: sent.append(text))
+    client = _client(temp_db_path)
+
+    for _ in range(api.LOCKOUT_THRESHOLD - 1):
+        client.post("/api/login", json={"password": "nope"})
+
+    assert sent == []
+
+
+def test_alert_never_contains_the_attempted_password(temp_db_path, monkeypatch):
+    from app import api
+
+    sent = []
+    monkeypatch.setattr(api, "notify_background", lambda text: sent.append(text))
+    client = _client(temp_db_path)
+
+    for _ in range(api.LOCKOUT_THRESHOLD):
+        client.post("/api/login", json={"password": "sentinel-guess-value"})
+
+    assert sent
+    assert "sentinel-guess-value" not in " ".join(sent)
