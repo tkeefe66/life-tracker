@@ -20,7 +20,20 @@ FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "frame-ancestors 'none'",
+    # style-src allows 'unsafe-inline' because React writes inline style
+    # attributes; script-src deliberately does NOT, which is the directive
+    # that actually matters. img-src allows data: for inline SVG/icon URIs.
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "font-src 'self'; "
+        "base-uri 'none'; "
+        "form-action 'none'; "
+        "frame-ancestors 'none'"
+    ),
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "same-origin",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",

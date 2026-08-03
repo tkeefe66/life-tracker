@@ -46,7 +46,12 @@ def test_security_headers_present(temp_db_path):
     client = _client(temp_db_path)
     resp = client.get("/api/health")
     assert resp.headers["x-frame-options"] == "DENY"
-    assert resp.headers["content-security-policy"] == "frame-ancestors 'none'"
+    # Pin the directives that matter rather than the whole string, since the
+    # policy is a multi-directive value that may gain entries over time.
+    csp = resp.headers["content-security-policy"]
+    assert "frame-ancestors 'none'" in csp
+    assert "script-src 'self'" in csp
+    assert "'unsafe-inline'" not in csp.split("script-src")[1].split(";")[0]
     assert resp.headers["x-content-type-options"] == "nosniff"
     assert resp.headers["referrer-policy"] == "same-origin"
     assert "max-age=31536000" in resp.headers["strict-transport-security"]
