@@ -326,8 +326,10 @@ class _EchoApp:
 
     def __init__(self):
         self.body = b""
+        self.called = False
 
     async def __call__(self, scope, receive, send):
+        self.called = True
         while True:
             message = await receive()
             self.body += message.get("body", b"")
@@ -357,7 +359,9 @@ async def test_oversized_content_length_is_rejected_before_the_app_runs():
     sent = await _collect(middleware, scope, [])
 
     assert sent[0]["status"] == 413
-    assert downstream.body == b""  # the app never saw a single byte
+    # `called`, not `body`: on the fast path the app is never invoked at all,
+    # so asserting body == b"" would pass trivially and prove nothing.
+    assert downstream.called is False
 
 
 @pytest.mark.asyncio
@@ -435,16 +439,36 @@ Content-Length cannot evade the cap.
 import logging
 from typing import Optional
 
+from fastapi import HTTPException
+
 logger = logging.getLogger(__name__)
 
 # Every JSON body this app accepts is a handful of short fields — the largest
-# is a 500-character bank note. 64 KB is far above any legitimate request and
-# far below anything that threatens the process.
+# is a 500-character bank note. The biggest legitimate body is the bulk flow
+# apply (MAX_BULK_FLOW_IDS = 200 ids), measured at 5-27 KB depending on id
+# length. 64 KB is comfortably above that and far below anything that
+# threatens the process.
 MAX_BODY_BYTES = 64 * 1024
 
 
-class _BodyTooLarge(Exception):
-    """Internal signal raised from the receive wrapper. Never escapes __call__."""
+class _BodyTooLarge(HTTPException):
+    """Raised from the receive wrapper when a streamed body exceeds the cap.
+
+    Subclasses HTTPException deliberately. FastAPI's body reader wraps
+    `await request.body()` in `except Exception -> HTTPException(400, "There
+    was an error parsing the body")`, so a plain Exception raised from inside
+    receive() gets caught and converted there — the chunked path would answer
+    400 instead of 413, indistinguishable from malformed JSON, and the
+    `except _BodyTooLarge` clause below would be dead code. FastAPI re-raises
+    HTTPException untouched, so this base class is what makes both the
+    Content-Length path and the chunked path answer 413.
+
+    This was found in review after the first implementation shipped a plain
+    Exception and 614 green tests failed to catch it — every integration test
+    sent a Content-Length, so none exercised the streaming path."""
+
+    def __init__(self):
+        super().__init__(status_code=413, detail="Request body too large")
 
 
 def declared_content_length(headers) -> Optional[int]:
@@ -502,12 +526,17 @@ class BodySizeLimitMiddleware:
         try:
             await self.app(scope, counting_receive, tracking_send)
         except _BodyTooLarge:
-            # Only safe to write our own response if the app hasn't begun one.
-            # It won't have: it is still waiting on the body it never finished
-            # receiving. The guard is here so a future streaming route that
-            # responds early can't produce a malformed double-response.
+            # Fallback only. In practice FastAPI's own HTTPException handler
+            # answers first (see the _BodyTooLarge docstring), so this fires
+            # only for a reader that bypasses FastAPI's body machinery.
+            # Re-raise rather than swallow when a response has already begun:
+            # writing a second http.response.start would be malformed, and a
+            # silent return would leave the server with a truncated response
+            # and no logged cause.
             if not response_started:
                 await self._reject(send)
+            else:
+                raise
 
     async def _reject(self, send) -> None:
         body = b'{"detail":"Request body too large"}'
@@ -576,6 +605,27 @@ def test_oversized_body_still_carries_security_headers(temp_db_path):
 def test_normal_login_body_is_unaffected_by_the_cap(temp_db_path):
     client = _client(temp_db_path)
     assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
+
+
+def test_chunked_oversized_body_is_rejected_with_413(temp_db_path):
+    """The only test that exercises the streaming counter through the real
+    FastAPI stack. httpx sends a generator body as Transfer-Encoding: chunked
+    with no Content-Length, so the fast path cannot fire.
+
+    This test is why _BodyTooLarge subclasses HTTPException: without that, the
+    chunked path answers 400 ("error parsing the body") instead of 413, and
+    every other test here still passes because they all send a Content-Length."""
+    client = _client(temp_db_path)
+
+    def body():
+        yield b'{"password":"'
+        for _ in range(25):
+            yield b"x" * 8192
+        yield b'"}'
+
+    resp = client.post("/api/login", content=body(),
+                       headers={"content-type": "application/json"})
+    assert resp.status_code == 413
 ```
 
 Note the existing `test_login_rejects_oversized_password` (a 201-character password expecting `422`) must still pass — 201 bytes is far under the 64 KB cap, so Pydantic still handles it. If it now returns 413, the cap is set wrong.
