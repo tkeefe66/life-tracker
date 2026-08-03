@@ -59,18 +59,15 @@ def test_security_headers_present(temp_db_path):
 # Cache-Control, so browsers heuristically cached it and kept requesting the
 # previous deploy's content-hashed asset filenames until a hard refresh.
 
-def test_api_responses_get_no_cache_control_header(temp_db_path):
-    """/api/* now states its cache policy explicitly instead of relying on the
-    header being absent — updated alongside cache_control_for_path (task 11)."""
+def test_api_responses_are_explicitly_uncacheable(temp_db_path):
+    """/api/* states `no-store, private` explicitly rather than leaving the
+    header absent. An absent header relied on browsers not disk-caching
+    fetch() responses by default — an implicit assumption, not a stated
+    policy — and these responses carry bank transactions, health check-ins,
+    and calendar contents."""
     client = _client(temp_db_path)
     resp = client.get("/api/health")
     assert resp.headers["cache-control"] == "no-store, private"
-
-
-def test_api_responses_are_explicitly_uncacheable(temp_db_path):
-    client = _client(temp_db_path)
-    resp = client.get("/api/health")
-    assert resp.headers["Cache-Control"] == "no-store, private"
 
 
 def test_cache_control_for_path_pure_function():
