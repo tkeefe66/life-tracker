@@ -976,20 +976,44 @@ Then next to the existing `signOut` handler (around line 98), add:
 
 ```ts
   const signOutEverywhere = async () => {
+    // Confirm because this is destructive and effectively irreversible: it
+    // kills sessions on devices the user may not have in hand, and the only
+    // way back is re-entering the password on each one. It sits directly
+    // below the ordinary Sign out button, so a misclick is plausible.
+    if (!window.confirm("Sign out on every device? You'll need to log in again everywhere.")) return;
     await logoutAll();
     onLoggedOut();
   };
 ```
 
-Then render a second button beside the existing sign-out button. Find the JSX that renders the current sign-out control and add a sibling immediately after it, matching that element's existing className exactly — do not invent new styles or touch `styles.css`:
+This is the first and only `window.confirm` in `frontend/src` — deliberate, because
+this is the only destructive control on the screen.
+
+Then add a sibling row. The existing Account section reads:
 
 ```tsx
-        <button className="<SAME_CLASSNAME_AS_THE_EXISTING_SIGN_OUT_BUTTON>" onClick={signOutEverywhere}>
-          Sign out everywhere
-        </button>
+      <h2 className="section-label">Account</h2>
+      <div className="group">
+        <div className="row">
+          <span className="grow">Sign out</span>
+          <button type="button" onClick={signOut}>Sign out</button>
+        </div>
+      </div>
 ```
 
-Replace the placeholder with the real class name you find in the file. If the existing button has no className, give the new one none either.
+Note the existing button has **no className at all**. Add a sibling row inside the
+same `<div className="group">`, with matching label/button text (every other row in
+this file pairs identical text — the explanatory sentence lives in the confirm
+dialog, not the label):
+
+```tsx
+        <div className="row">
+          <span className="grow">Sign out everywhere</span>
+          <button type="button" onClick={signOutEverywhere}>Sign out everywhere</button>
+        </div>
+```
+
+Do not add a className, do not add new CSS, do not touch `styles.css`.
 
 - [ ] **Step 5: Run the tests and the build**
 
@@ -1000,14 +1024,11 @@ Expected: both PASS. `npm run build` runs `tsc --noEmit` first, so a type error 
 
 - [ ] **Step 6: Look at it**
 
-There is no component test framework in this repo (`CLAUDE.md` says so explicitly) — components are verified by `tsc --noEmit` + `vite build` plus a manual look. Run the app and confirm the button renders sensibly next to the existing one:
+There is no component test framework in this repo (`CLAUDE.md` says so explicitly) — components are verified by `tsc --noEmit` + `vite build` plus a manual look.
 
-```bash
-source venv/bin/activate && uvicorn main:app --reload --port 8080   # terminal 1
-cd frontend && npm run dev                                          # terminal 2
-```
+**The manual look cannot be done against a local dev server.** The session cookie is set with `Secure` (`app/auth.py:19`), so a real browser will not send it over plain HTTP and login does not work locally. Do not burn time fighting this.
 
-Log in, open Settings, confirm both buttons appear and are visually consistent. Then click "Sign out everywhere" and confirm you land back on the login screen.
+Do the static verification instead — `npm test -- --run`, `npm run build`, and read the rendered JSX — and record that the visual check is outstanding and must happen on a deploy. The same limitation applies to Task 12's CSP check.
 
 - [ ] **Step 7: Commit**
 
