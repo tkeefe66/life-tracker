@@ -56,7 +56,27 @@
       "mcp__railway__update_service",
       "Skill(impeccable)",
       "Skill(artifact-design)",
-      "Artifact"
+      "Artifact",
+      "Skill(claude-in-chrome)",
+      "mcp__claude_ai_Gmail__search_threads",
+      "Skill(dataviz)",
+      "Bash(railway status *)",
+      "mcp__railway__whoami",
+      "mcp__railway__list_tcp_proxies",
+      "Bash(mkdir -p ~/.claude/skills/secure-webapp-foundations ~/.claude/skills/adversarial-security-audit)",
+      "Read(//Users/tomkeefe/.claude/skills/**)",
+      "mcp__railway__list_deployments",
+      "Bash(cp /Users/tomkeefe/.claude/CLAUDE.md /private/tmp/claude-501/-Users-tomkeefe-Code-Apps-weekly-updates/8264bd0f-8f9d-44bf-b8fc-dda3cd9b9990/scratchpad/CLAUDE.md.bak)",
+      "Bash(cp /private/tmp/claude-501/-Users-tomkeefe-Code-Apps-weekly-updates/8264bd0f-8f9d-44bf-b8fc-dda3cd9b9990/scratchpad/CLAUDE.md.new /Users/tomkeefe/.claude/CLAUDE.md)",
+      "mcp__railway__list_services",
+      "Bash(railway deployment *)",
+      "Skill(update-config)",
+      "mcp__claude_ai_Google_Calendar__list_events",
+      "Skill(claude-md-management:revise-claude-md)",
+      "mcp__railway__list_projects",
+      "mcp__railway__environment_status",
+      "mcp__railway__list_domains",
+      "WebFetch(domain:crt.sh)"
     ]
   }
 }
