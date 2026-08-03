@@ -2235,6 +2235,10 @@ EXPORT_DIR = os.path.expanduser("~/.on-track/v1-archive")
 
 def _export() -> str:
     os.makedirs(EXPORT_DIR, mode=0o700, exist_ok=True)
+    # mode= is a documented no-op when the directory already exists, so every
+    # run after the first would silently skip it. scripts/simplefin_snapshot.py
+    # handles the same situation the same way.
+    os.chmod(EXPORT_DIR, 0o700)
     stamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
     path = os.path.join(EXPORT_DIR, f"v1-archive-{stamp}.json")
 
@@ -2303,8 +2307,14 @@ def dump_table(table):
         raise ValueError(f"refusing to dump unknown table: {table}")
     with _cursor() as c:
         c.execute(f"SELECT * FROM {table}")
-        columns = [d[0] for d in c.description]
-        return [dict(zip(columns, row)) for row in c.fetchall()]
+        # `dict(r)`, NOT `dict(zip(columns, row))`. On Postgres the cursor
+        # yields RealDictRow, a dict subclass — iterating it produces KEYS,
+        # so zip() would pair column names against column names and export
+        # {"id": "id", ...}: total silent data loss, discovered only against
+        # production, during the one irreversible operation this exists to
+        # gate. dict(r) is the pattern every other row-returning function in
+        # this file already uses, and is correct for sqlite3.Row too.
+        return [dict(r) for r in c.fetchall()]
 
 
 def drop_table(table):
