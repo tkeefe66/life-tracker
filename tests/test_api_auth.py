@@ -60,11 +60,17 @@ def test_security_headers_present(temp_db_path):
 # previous deploy's content-hashed asset filenames until a hard refresh.
 
 def test_api_responses_get_no_cache_control_header(temp_db_path):
-    """/api/* must be left exactly as it was — no caching header added here,
-    regardless of the static-asset policy below."""
+    """/api/* now states its cache policy explicitly instead of relying on the
+    header being absent — updated alongside cache_control_for_path (task 11)."""
     client = _client(temp_db_path)
     resp = client.get("/api/health")
-    assert "cache-control" not in resp.headers
+    assert resp.headers["cache-control"] == "no-store, private"
+
+
+def test_api_responses_are_explicitly_uncacheable(temp_db_path):
+    client = _client(temp_db_path)
+    resp = client.get("/api/health")
+    assert resp.headers["Cache-Control"] == "no-store, private"
 
 
 def test_cache_control_for_path_pure_function():
@@ -73,8 +79,8 @@ def test_cache_control_for_path_pure_function():
     to pin the policy without depending on a built frontend."""
     from app.api import cache_control_for_path
 
-    assert cache_control_for_path("/api/targets") is None
-    assert cache_control_for_path("/api/health") is None
+    assert cache_control_for_path("/api/targets") == "no-store, private"
+    assert cache_control_for_path("/api/health") == "no-store, private"
     assert cache_control_for_path("/assets/index-abc123.js") == "public, max-age=31536000, immutable"
     assert cache_control_for_path("/assets/index-abc123.css") == "public, max-age=31536000, immutable"
     assert cache_control_for_path("/") == "no-cache"

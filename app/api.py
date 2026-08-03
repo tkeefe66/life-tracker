@@ -31,8 +31,12 @@ def cache_control_for_path(path: str) -> Optional[str]:
     """Cache-Control decision for a response path — a pure function so the
     policy is unit-testable without spinning up the ASGI app.
 
-    - `/api/*`: left alone entirely (returns None) — API responses must never
-      pick up the static-asset caching rules below.
+    - `/api/*`: `no-store, private`. These responses carry bank transactions,
+      health check-ins, and calendar contents. Leaving the header absent
+      relied on browsers not disk-caching fetch() responses by default —
+      true today, but an implicit assumption rather than a stated policy,
+      and any intermediary treating "no header" as cacheable would be free
+      to store financial data.
     - `/assets/*`: vite content-hashes these filenames on every build, so a
       given URL's content never changes — safe to cache for a year and mark
       immutable.
@@ -45,7 +49,7 @@ def cache_control_for_path(path: str) -> Optional[str]:
       re-fetch. `no-store` would throw that away for no benefit.
     """
     if path.startswith("/api/"):
-        return None
+        return "no-store, private"
     if path.startswith("/assets/"):
         return "public, max-age=31536000, immutable"
     return "no-cache"
