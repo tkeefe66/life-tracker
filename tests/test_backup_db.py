@@ -564,3 +564,93 @@ def test_alert_never_contains_exception_text(temp_db_path, monkeypatch):
 
     assert sent
     assert "SENTINELSECRET" not in " ".join(sent)
+
+
+# ── Task 7 fix round 1: first-observation matrix (previous is None) ───────
+#
+# backup_last_status is unset on a fresh deploy, so db.get_setting returns
+# None. A plain `previous == status` inequality can't tell "first observation
+# ever" apart from "the status genuinely changed" -- both a first success
+# and a never-opted-into-backups deploy would otherwise read as a
+# transition and send a false alert.
+
+def test_first_successful_run_sends_no_alert(temp_db_path, monkeypatch):
+    """Fresh deploy, backup_last_status never set. First run succeeds. This
+    is a first success, not a recovery from a failure that never happened --
+    nothing should be announced."""
+    import database as db
+    from jobs import backup_db
+
+    assert db.get_setting("backup_last_status") is None
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", lambda path: _write_plausible_dump(path))
+    monkeypatch.setattr(backup_db, "_upload", lambda *a, **k: None)
+    monkeypatch.setattr(backup_db, "_verify_uploaded", lambda key: True)
+    monkeypatch.setattr(backup_db, "_prune_old_backups", lambda: None)
+
+    backup_db.run()
+
+    assert sent == []
+    assert db.get_setting("backup_last_status") == "ok"
+
+
+def test_first_run_with_backups_unconfigured_sends_no_alert(temp_db_path, monkeypatch):
+    """Fresh deploy, BACKUP_S3_* never set. Never opting into backups is a
+    documented clean no-op (CLAUDE.md), not a fault -- must not alert as if
+    it were a failure."""
+    import database as db
+    from jobs import backup_db
+
+    assert db.get_setting("backup_last_status") is None
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: False)
+
+    backup_db.run()
+
+    assert sent == []
+    assert db.get_setting("backup_last_status") == "error: not configured"
+
+
+def test_first_run_that_fails_still_alerts(temp_db_path, monkeypatch):
+    """Fresh deploy, backup_last_status never set, and the very first run
+    genuinely fails. Unlike the first-success and never-configured cases,
+    this IS something the user needs to hear about."""
+    import database as db
+    from jobs import backup_db
+
+    assert db.get_setting("backup_last_status") is None
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", _raise_dump_error)
+
+    backup_db.run()
+
+    assert len(sent) == 1
+    assert "backup" in sent[0].lower()
+
+
+def test_alert_fires_when_backups_go_dark_from_ok(temp_db_path, monkeypatch):
+    """Backups were working (status "ok") and then the deploy loses its
+    BACKUP_S3_* configuration. This is the silent-failure case the whole
+    task exists to catch, and it must still alert even though the new
+    status is NOT_CONFIGURED rather than a hard error."""
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "ok")
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: False)
+
+    backup_db.run()
+
+    assert len(sent) == 1
+    assert db.get_setting("backup_last_status") == "error: not configured"

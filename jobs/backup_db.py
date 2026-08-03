@@ -281,6 +281,16 @@ def _set_status_and_alert(status: str) -> None:
     db.set_setting("backup_last_status", status)
     if previous == status:
         return
+    if previous is None and status in ("ok", NOT_CONFIGURED):
+        # First observation ever (fresh deploy, backup_last_status never
+        # written before). "ok" here is a first success, not a recovery from
+        # a failure that never happened -- there is nothing to announce.
+        # NOT_CONFIGURED here means the deploy never opted into backups,
+        # which CLAUDE.md documents as a clean no-op, not a fault. A first
+        # observation that IS a real error still falls through and alerts --
+        # that one the user does need to hear about. Do not collapse this
+        # back to a plain `previous == status` check.
+        return
     if status == "ok":
         notify_background("On Track: database backup recovered — latest run succeeded.")
     else:
