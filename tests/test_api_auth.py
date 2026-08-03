@@ -501,11 +501,26 @@ def test_alert_fires_when_the_lockout_threshold_is_crossed(temp_db_path, monkeyp
 
 
 def test_alert_does_not_repeat_on_every_failure_past_the_threshold(temp_db_path, monkeypatch):
+    """Must drive the failures from a client holding a valid session cookie.
+
+    A session-less client gets short-circuited by the login route's lockout
+    pre-check (`if already_locked and not has_valid_session(request): raise
+    429`) the moment it's already locked out — that raises BEFORE
+    verify_password and before _record_login_failure run again, so `count`
+    never advances past the threshold and the `count == LOCKOUT_THRESHOLD`
+    guard is never re-entered. A session-holding device is the one exemption
+    to that pre-check (M2a — see test_wrong_password_from_a_valid_session_
+    still_counts_toward_lockout): its wrong passwords keep being recorded
+    and `count` keeps climbing past the threshold on every attempt, which is
+    exactly the path where "only on the crossing" is load-bearing. Without a
+    session here, this test cannot distinguish `count == LOCKOUT_THRESHOLD`
+    from `count >= LOCKOUT_THRESHOLD`."""
     from app import api
 
     sent = []
     monkeypatch.setattr(api, "notify_background", lambda text: sent.append(text))
     client = _client(temp_db_path)
+    assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
 
     for _ in range(api.LOCKOUT_THRESHOLD + 3):
         client.post("/api/login", json={"password": "nope"})
