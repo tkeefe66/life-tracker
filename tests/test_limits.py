@@ -31,8 +31,10 @@ class _EchoApp:
 
     def __init__(self):
         self.body = b""
+        self.called = False
 
     async def __call__(self, scope, receive, send):
+        self.called = True
         while True:
             message = await receive()
             self.body += message.get("body", b"")
@@ -62,6 +64,7 @@ async def test_oversized_content_length_is_rejected_before_the_app_runs():
     sent = await _collect(middleware, scope, [])
 
     assert sent[0]["status"] == 413
+    assert downstream.called is False  # the app never ran at all
     assert downstream.body == b""  # the app never saw a single byte
 
 

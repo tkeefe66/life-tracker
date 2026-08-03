@@ -16,6 +16,8 @@ Content-Length cannot evade the cap.
 import logging
 from typing import Optional
 
+from fastapi import HTTPException
+
 logger = logging.getLogger(__name__)
 
 # Every JSON body this app accepts is a handful of short fields — the largest
@@ -24,8 +26,15 @@ logger = logging.getLogger(__name__)
 MAX_BODY_BYTES = 64 * 1024
 
 
-class _BodyTooLarge(Exception):
-    """Internal signal raised from the receive wrapper. Never escapes __call__."""
+class _BodyTooLarge(HTTPException):
+    """Raised from the receive wrapper. Subclasses HTTPException because
+    FastAPI's body reader wraps `await request.body()` in
+    `except Exception -> HTTPException(400)` but re-raises HTTPException
+    untouched -- without this base class a chunked oversized body surfaces
+    as a misleading 400 instead of a 413."""
+
+    def __init__(self):
+        super().__init__(status_code=413, detail="Request body too large")
 
 
 def declared_content_length(headers) -> Optional[int]:
@@ -89,6 +98,12 @@ class BodySizeLimitMiddleware:
             # responds early can't produce a malformed double-response.
             if not response_started:
                 await self._reject(send)
+            else:
+                # A response already started, so we can't send our own —
+                # but silently swallowing here would leave the client with a
+                # truncated response and no logged cause. Re-raise so the
+                # failure surfaces instead of vanishing.
+                raise
 
     async def _reject(self, send) -> None:
         body = b'{"detail":"Request body too large"}'

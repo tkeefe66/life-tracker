@@ -465,3 +465,20 @@ def test_oversized_body_still_carries_security_headers(temp_db_path):
 def test_normal_login_body_is_unaffected_by_the_cap(temp_db_path):
     client = _client(temp_db_path)
     assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
+
+
+def test_chunked_oversized_body_is_rejected_with_413(temp_db_path):
+    """httpx sends a generator body as Transfer-Encoding: chunked with no
+    Content-Length, so this is the only test that exercises the streaming
+    counter through the real FastAPI stack rather than the fast path."""
+    client = _client(temp_db_path)
+
+    def body():
+        yield b'{"password":"'
+        for _ in range(25):
+            yield b"x" * 8192
+        yield b'"}'
+
+    resp = client.post("/api/login", content=body(),
+                       headers={"content-type": "application/json"})
+    assert resp.status_code == 413
