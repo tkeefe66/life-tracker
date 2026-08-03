@@ -305,6 +305,21 @@ def _is_encryption_configured() -> bool:
     return bool(BACKUP_ENCRYPTION_KEY)
 
 
+def _safe_unlink(path: str) -> None:
+    """Removes `path`, swallowing OSError instead of letting it propagate.
+
+    Used for the two temp-file cleanups in run()'s finally block, which must
+    stay independent: if removing one file raises (permission problem,
+    external deletion, filesystem hiccup), that must not abort removal of
+    the other. Without this, an exception unlinking tmp_path would leave
+    enc_path behind too -- orphaning the plaintext dump (the entire
+    database) alongside its own ciphertext, silently, in /tmp forever."""
+    try:
+        os.unlink(path)
+    except OSError as e:
+        logger.warning("Failed to remove temp backup file %s: %s", path, e)
+
+
 def _encrypt_file(src_path: str, dst_path: str) -> None:
     """Fernet-encrypts src_path to dst_path.
 
@@ -366,9 +381,11 @@ def run():
                 raise BackupUnverifiedError(f"Uploaded key not found in post-upload listing: {key}")
             _prune_old_backups()
         finally:
-            os.unlink(tmp_path)
+            # Two independent removals -- see _safe_unlink's docstring for why
+            # a failure on one must not skip the other.
+            _safe_unlink(tmp_path)
             if os.path.exists(enc_path):
-                os.unlink(enc_path)
+                _safe_unlink(enc_path)
         db.set_setting("backup_last_run", _now_iso())
         _set_status_and_alert("ok")
         logger.info("Backup uploaded: %s", key)

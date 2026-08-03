@@ -680,7 +680,8 @@ def test_uploaded_key_ends_in_enc_when_encryption_is_on(temp_db_path, monkeypatc
     from cryptography.fernet import Fernet
     from jobs import backup_db
 
-    monkeypatch.setattr(backup_db, "BACKUP_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    key = Fernet.generate_key().decode()
+    monkeypatch.setattr(backup_db, "BACKUP_ENCRYPTION_KEY", key)
     monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
     monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
     monkeypatch.setattr(backup_db, "_dump_to_file", _write_plausible_dump)
@@ -689,12 +690,30 @@ def test_uploaded_key_ends_in_enc_when_encryption_is_on(temp_db_path, monkeypatc
     monkeypatch.setattr(backup_db, "notify_background", lambda text: None)
 
     uploaded = []
-    monkeypatch.setattr(backup_db, "_upload", lambda path, key: uploaded.append(key))
+
+    def _fake_upload(path, upload_key):
+        # Read the CONTENTS here, inside the mock: run()'s finally block
+        # deletes both temp files as soon as run() returns, so this is the
+        # only point at which the bytes that were actually "uploaded" can
+        # still be inspected.
+        with open(path, "rb") as f:
+            uploaded.append((upload_key, f.read()))
+
+    monkeypatch.setattr(backup_db, "_upload", _fake_upload)
 
     backup_db.run()
 
     assert len(uploaded) == 1
-    assert uploaded[0].endswith(".dump.enc")
+    key_used, contents = uploaded[0]
+    assert key_used.endswith(".dump.enc")
+    # A key-only assertion isn't enough: a regression that uploads the
+    # PLAINTEXT temp file under the correctly ".enc"-suffixed key would still
+    # pass it -- a backup labelled encrypted that isn't, the worst failure
+    # this feature could have. So assert the uploaded bytes are actually
+    # Fernet ciphertext: not the plaintext dump (_write_plausible_dump fills
+    # it with b"x" * 4096) and decryptable back to that exact plaintext.
+    assert not contents.startswith(b"xxxx")
+    assert Fernet(key.encode()).decrypt(contents) == b"x" * 4096
 
 
 def test_backup_still_runs_unencrypted_when_no_key_is_set(temp_db_path, monkeypatch):

@@ -36,17 +36,22 @@ every encrypted backup down with it, at the exact moment backups matter most.
 2. Download and decrypt the dump you want. This script (and its --keep flag)
    only ever fetches the NEWEST key under on-track-backups/ -- there is no
    flag to reach an older one. If "the newest backup is the bad one" is why
-   you're reading this runbook, list and fetch an older key manually first:
+   you're reading this runbook, list and fetch an older key manually first.
+   Run this from the REPO ROOT -- the sys.path.insert(0, '.') below is what
+   lets `from config import ...` resolve, the same way this script itself
+   does at import time (see the sys.path.insert near the top of this file):
 
        python -c "
-       import boto3
-       c = boto3.client('s3', endpoint_url=BACKUP_S3_ENDPOINT,
-                         aws_access_key_id=BACKUP_S3_ACCESS_KEY,
-                         aws_secret_access_key=BACKUP_S3_SECRET_KEY)
-       for o in c.list_objects_v2(Bucket=BACKUP_S3_BUCKET,
-                                   Prefix='on-track-backups/')['Contents']:
-           print(o['Key'])
-       "
+import sys; sys.path.insert(0, '.')
+from config import BACKUP_S3_ENDPOINT, BACKUP_S3_ACCESS_KEY, BACKUP_S3_SECRET_KEY, BACKUP_S3_BUCKET
+import boto3
+c = boto3.client('s3', endpoint_url=BACKUP_S3_ENDPOINT,
+                  aws_access_key_id=BACKUP_S3_ACCESS_KEY,
+                  aws_secret_access_key=BACKUP_S3_SECRET_KEY)
+for o in c.list_objects_v2(Bucket=BACKUP_S3_BUCKET,
+                            Prefix='on-track-backups/')['Contents']:
+    print(o['Key'])
+"
        # then, with the chosen key:
        #   c.download_file(BACKUP_S3_BUCKET, '<chosen-key>', '/tmp/restore.dump[.enc]')
        #   if the key ends in .enc, decrypt it the same way _decrypt() does --

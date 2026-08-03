@@ -21,10 +21,12 @@ import datetime
 import json
 import os
 import sys
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import database as db  # noqa: E402
+from config import DATABASE_PATH, DATABASE_URL  # noqa: E402
 
 V1_TABLES = [
     "life_log_entries",
@@ -41,6 +43,20 @@ V1_TABLES = [
 ]
 
 EXPORT_DIR = os.path.expanduser("~/.on-track/v1-archive")
+
+
+def _target_description():
+    """Returns (engine, description) for the ACTIVE target, read straight from
+    config -- never a default the operator might be assuming. Mirrors
+    cleardb.py's helper of the same name: DATABASE_URL is environment-driven,
+    so an operator whose shell points somewhere unexpected must see exactly
+    where these DROPs are about to land before the confirmation prompt."""
+    if db.USE_POSTGRES:
+        parsed = urlparse(DATABASE_URL)
+        host = parsed.hostname or "(unknown host)"
+        database = (parsed.path or "").lstrip("/") or "(unknown database)"
+        return "PostgreSQL", f"{host}/{database}"
+    return "SQLite", DATABASE_PATH
 
 
 def _export() -> str:
@@ -84,7 +100,9 @@ def main() -> None:
         print("looks complete before running with --export-and-drop.")
         return
 
-    print("\nAbout to PERMANENTLY DROP these tables from the live database.")
+    engine, target = _target_description()
+    print(f"\nTarget: {engine} — {target}")
+    print("About to PERMANENTLY DROP these tables from the live database above.")
     print("This cannot be undone except by restoring the export above.")
     confirm = input("Type DROP to proceed: ")
     if confirm != "DROP":
