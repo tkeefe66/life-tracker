@@ -6,6 +6,18 @@ plan's testing note ("do not test the actual upload")."""
 import pytest
 
 
+def _raise_dump_error(path):
+    from jobs.backup_db import BackupDumpError
+    raise BackupDumpError("pg_dump exited with status 1")
+
+
+def _write_plausible_dump(path):
+    """Writes a file comfortably over MIN_DUMP_BYTES so
+    _assert_dump_is_plausible passes."""
+    with open(path, "wb") as f:
+        f.write(b"x" * 4096)
+
+
 def test_backup_skipped_when_sqlite(temp_db_path, monkeypatch):
     import database as db
     from jobs import backup_db
@@ -472,3 +484,83 @@ def test_prune_is_a_noop_when_under_retention(monkeypatch):
     backup_db._prune_old_backups()
 
     assert deleted == []
+
+
+# ── Task 7: alert on backup status transitions ────────────────────────────
+
+def test_alert_fires_when_backup_status_goes_from_ok_to_error(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "ok")
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", _raise_dump_error)
+
+    backup_db.run()
+
+    assert len(sent) == 1
+    assert "backup" in sent[0].lower()
+
+
+def test_alert_does_not_repeat_while_the_failure_persists(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "ok")
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", _raise_dump_error)
+
+    backup_db.run()
+    backup_db.run()
+    backup_db.run()
+
+    assert len(sent) == 1  # one alert for the transition, not one per run
+
+
+def test_alert_fires_on_recovery_back_to_ok(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "error: see logs")
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", lambda path: _write_plausible_dump(path))
+    monkeypatch.setattr(backup_db, "_upload", lambda *a, **k: None)
+    monkeypatch.setattr(backup_db, "_verify_uploaded", lambda key: True)
+    monkeypatch.setattr(backup_db, "_prune_old_backups", lambda: None)
+
+    backup_db.run()
+
+    assert len(sent) == 1
+    assert "recover" in sent[0].lower() or "ok" in sent[0].lower()
+
+
+def test_alert_never_contains_exception_text(temp_db_path, monkeypatch):
+    """The redaction boundary applies to notifications too -- a pg_dump or S3
+    error can embed DATABASE_URL or the S3 credentials in its message."""
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "ok")
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+
+    def _raise_with_secret(path):
+        raise RuntimeError("postgres://user:SENTINELSECRET@host:5432/railway")
+
+    monkeypatch.setattr(backup_db, "_dump_to_file", _raise_with_secret)
+
+    backup_db.run()
+
+    assert sent
+    assert "SENTINELSECRET" not in " ".join(sent)

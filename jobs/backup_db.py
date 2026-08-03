@@ -45,6 +45,7 @@ from config import (
     TIMEZONE,
 )
 from services.safe_status import NOT_CONFIGURED, PG_DUMP_VERSION_MISMATCH, safe_status
+from services.telegram_notify import notify_background
 
 logger = logging.getLogger(__name__)
 
@@ -264,13 +265,38 @@ def _prune_old_backups() -> None:
         client.delete_object(Bucket=BACKUP_S3_BUCKET, Key=obj["Key"])
 
 
+def _set_status_and_alert(status: str) -> None:
+    """Writes backup_last_status and notifies only when it CHANGES.
+
+    The job runs daily, so alerting on every failing run would send a message
+    every day for as long as the failure persists. Transitions are what carry
+    information: ok -> error means something just broke, error -> ok means it
+    just healed.
+
+    The message is built only from `status`, which is always a closed-set
+    value from services/safe_status.py -- never str(exception). A pg_dump or
+    S3 failure can carry DATABASE_URL or the S3 credentials in its message,
+    and a Telegram push is an outbound path like any other."""
+    previous = db.get_setting("backup_last_status")
+    db.set_setting("backup_last_status", status)
+    if previous == status:
+        return
+    if status == "ok":
+        notify_background("On Track: database backup recovered — latest run succeeded.")
+    else:
+        notify_background(
+            f"On Track: database backup FAILED (status: {status}). "
+            f"SimpleFIN only keeps 90 days, so a prolonged gap is unrecoverable."
+        )
+
+
 def run():
     if not _using_postgres():
         logger.info("Backup skipped: not using PostgreSQL (local SQLite dev)")
         return
     if not _is_configured():
         logger.warning("Backup skipped: BACKUP_S3_* env vars not fully set")
-        db.set_setting("backup_last_status", NOT_CONFIGURED)
+        _set_status_and_alert(NOT_CONFIGURED)
         return
     try:
         stamp = datetime.datetime.now(pytz.timezone(TIMEZONE)).strftime("%Y%m%dT%H%M%S")
@@ -287,7 +313,7 @@ def run():
         finally:
             os.unlink(tmp_path)
         db.set_setting("backup_last_run", _now_iso())
-        db.set_setting("backup_last_status", "ok")
+        _set_status_and_alert("ok")
         logger.info("Backup uploaded: %s", key)
     except BackupVersionMismatchError as e:
         # Checked before the generic Exception handler below so this gets a
@@ -295,8 +321,8 @@ def run():
         # safe_status()'s generic "error: see logs".
         logger.exception("Backup failed: pg_dump version mismatch")
         db.set_setting("backup_last_run", _now_iso())
-        db.set_setting("backup_last_status", PG_DUMP_VERSION_MISMATCH)
+        _set_status_and_alert(PG_DUMP_VERSION_MISMATCH)
     except Exception as e:
         logger.exception("Backup failed")
         db.set_setting("backup_last_run", _now_iso())
-        db.set_setting("backup_last_status", safe_status(e))
+        _set_status_and_alert(safe_status(e))
