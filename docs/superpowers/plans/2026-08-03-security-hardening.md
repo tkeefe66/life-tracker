@@ -1079,11 +1079,25 @@ def test_alert_fires_when_the_lockout_threshold_is_crossed(temp_db_path, monkeyp
 
 
 def test_alert_does_not_repeat_on_every_failure_past_the_threshold(temp_db_path, monkeypatch):
+    """Drives the extra failures from a client that HOLDS A VALID SESSION, and
+    that detail is the whole test.
+
+    A session-less client is short-circuited by the lockout pre-check in the
+    login route (`if already_locked and not has_valid_session(request)`), which
+    raises 429 before `_record_login_failure` runs again — so `count` never
+    climbs past the threshold and `count == LOCKOUT_THRESHOLD` versus
+    `count >= LOCKOUT_THRESHOLD` becomes indistinguishable. An earlier version
+    of this test used a session-less client and passed under BOTH, verified by
+    mutation. The session-cookie exemption is the only path that re-enters the
+    branch with count > threshold, so it is the only path that can lock it."""
     from app import api
 
     sent = []
     monkeypatch.setattr(api, "notify_background", lambda text: sent.append(text))
     client = _client(temp_db_path)
+
+    # Establish a real session first — this is what buys the pre-check exemption.
+    assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
 
     for _ in range(api.LOCKOUT_THRESHOLD + 3):
         client.post("/api/login", json={"password": "nope"})
@@ -1185,7 +1199,17 @@ Expected: PASS (4 tests)
 
 - [ ] **Step 6: Run the full suite**
 
-Run: `pytest tests/ -v`
+**First, prove the repeat test is not vacuous — MANDATORY.** Mutate `app/api.py` from `count == LOCKOUT_THRESHOLD` to `count >= LOCKOUT_THRESHOLD`, re-run the alert tests, and confirm the repeat test now FAILS. Then revert and confirm it passes again. If it still passes under the mutation, the test cannot detect the regression it exists to prevent — that is exactly what happened on the first attempt at this task.
+
+Set a fresh `PYTHONPYCACHEPREFIX` per mutation run. macOS caches bytecode outside the tree, so a same-size edit within the same second silently reuses the stale `.pyc` and a real mutation looks like it had no effect:
+
+```bash
+PYTHONPYCACHEPREFIX=/tmp/pycache-mut1 venv/bin/pytest tests/test_api_auth.py -k alert -v
+```
+
+Then `git diff app/api.py` to confirm the mutation is fully reverted before committing.
+
+Then run: `venv/bin/pytest tests/ -q`
 Expected: PASS. Pay attention to the pre-existing lockout tests in `tests/test_api_auth.py` — they run real failed logins, and if `notify_background` is not stubbed there it will spawn threads that no-op (Telegram is unconfigured under test, so `notify` logs a warning and returns False). That is harmless, but if any test asserts on log output it may need adjusting.
 
 - [ ] **Step 7: Commit**
