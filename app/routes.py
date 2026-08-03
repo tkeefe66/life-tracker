@@ -25,6 +25,16 @@ def post_logout(request: Request, response: Response):
     return {"ok": True}
 
 
+@router.post("/logout-all")
+def post_logout_all(response: Response):
+    """Revokes every session, including the caller's own. Sits behind the
+    router-level require_auth like everything else, so only someone already
+    holding a valid session can trigger it."""
+    db.delete_all_sessions()
+    response.delete_cookie(COOKIE_NAME)
+    return {"ok": True}
+
+
 class CheckinBody(BaseModel):
     type: Literal["gym", "alcohol", "substances"]
     date: Optional[str] = None

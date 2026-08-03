@@ -1329,3 +1329,31 @@ def test_reflection_prompt_sees_no_date_content(temp_db_path, monkeypatch):
     assert client.post("/api/reflection").status_code == 200
     assert "bar dough" not in captured["blob"]
     assert "date night" not in captured["blob"]
+
+
+def test_logout_all_invalidates_every_session(temp_db_path):
+    # Two independent app instances ("devices") sharing the same SQLite DB —
+    # sessions live in the sessions table, so a revocation triggered from one
+    # instance must be visible to the other. That cross-instance visibility
+    # is exactly the property this test exists to prove.
+    phone = _client(temp_db_path)
+    laptop = _client(temp_db_path)
+
+    assert phone.get("/api/settings").status_code == 200
+    assert laptop.get("/api/settings").status_code == 200
+
+    assert laptop.post("/api/logout-all").status_code == 200
+
+    # Both devices are now signed out — including the one that never asked.
+    # That is the entire point: this is the "my cookie leaked" button.
+    assert phone.get("/api/settings").status_code == 401
+    assert laptop.get("/api/settings").status_code == 401
+
+
+def test_logout_all_requires_authentication(temp_db_path):
+    # Not using _client(temp_db_path) here: that helper logs in automatically,
+    # and this test specifically needs a client that never has.
+    from app.api import create_app
+
+    client = TestClient(create_app(), base_url="https://testserver")
+    assert client.post("/api/logout-all").status_code == 401

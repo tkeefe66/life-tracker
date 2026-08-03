@@ -1481,6 +1481,15 @@ def delete_expired_sessions(now_iso):
         c.execute(f"DELETE FROM sessions WHERE expires_at <= {p}", (now_iso,))
 
 
+def delete_all_sessions():
+    """Revoke every session on every device. Single-user app, so this is the
+    "my cookie may have leaked" button — there is no other remediation, since
+    sessions are deliberately independent of APP_PASSWORD and rotating the
+    password therefore does not invalidate an issued cookie."""
+    with _cursor(write=True) as c:
+        c.execute("DELETE FROM sessions")
+
+
 # ── Bank accounts & transactions ──────────────────────────────────────────────
 # The sync job may overwrite everything SimpleFIN reports, but never `role`
 # (user-set) or `user_flow` (user override). Same Override + Learning pattern as
