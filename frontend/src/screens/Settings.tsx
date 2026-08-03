@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiSend, logout } from "../api";
+import { apiGet, apiSend, logout, logoutAll } from "../api";
 import { targetLabel } from "../lib";
 
 interface Target { direction: string; value: number }
@@ -97,6 +97,11 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
 
   const signOut = async () => {
     await logout();
+    onLoggedOut();
+  };
+
+  const signOutEverywhere = async () => {
+    await logoutAll();
     onLoggedOut();
   };
 
@@ -313,6 +318,10 @@ export default function Settings({ onLoggedOut }: { onLoggedOut: () => void }) {
         <div className="row">
           <span className="grow">Sign out</span>
           <button type="button" onClick={signOut}>Sign out</button>
+        </div>
+        <div className="row">
+          <span className="grow">Sign out on all devices</span>
+          <button type="button" onClick={signOutEverywhere}>Sign out everywhere</button>
         </div>
       </div>
     </div>
