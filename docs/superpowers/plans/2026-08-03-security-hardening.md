@@ -93,7 +93,8 @@ These are project rules. Violating one is a plan failure even if the tests pass.
 - **Money formatting, chart colors, and UI tokens are out of scope.** Do not touch `frontend/src/styles.css`.
 - **Tests only exercise the SQLite path.** Postgres DDL is verified by deploying, not by tests.
 - **Python 3.11 in production** (`nixpacks.toml` → `python311`, `.python-version` → `3.11`). The codebase still uses `Optional[int]` rather than `int | None` throughout — match the surrounding style rather than modernizing it, since that is a repo-wide convention and not a version constraint.
-- **Dependency versions set by this plan (Task 2):** `fastapi==0.136.3`, `starlette>=1.3.1`, `cryptography>=42.0.0`.
+- **Dependency versions set by this plan (Task 2):** `fastapi==0.136.3`, `starlette==1.3.1`, `cryptography>=42.0.0`.
+- **Pin direct dependencies with `==`.** `requirements.txt` uses exact pins throughout, and `nixpacks.toml` runs a fresh `pip install -r requirements.txt` on every deploy with no lockfile committed — so a `>=` floor lets an unverified release reach production between deploys. If you ever have a genuine reason to use a floor, the comment must say why.
 - **Always run Python tools as `venv/bin/<tool>`**, never bare. See the environment section above.
 - **Commit message prefix:** every task commits as `sec(N): <summary>` where N is the task number, so a later agent can resume from `git log`.
 
@@ -610,7 +611,7 @@ package versions have conflicting dependencies.
 ERROR: ResolutionImpossible
 ```
 
-The lowest fastapi that accepts a patched starlette is **0.134.0**. This task therefore bumps fastapi as well, to `0.136.3` — chosen because it is a released version verified to resolve cleanly with `starlette 1.3.1`. The user approved this larger scope on 2026-08-03.
+The lowest fastapi that accepts a patched starlette is **0.133.0** — that release dropped the `starlette<1.0.0` cap. (An earlier revision of this plan said 0.134.0; that was wrong, caught in review and corrected. Verified by resolver: 0.132.0 → ResolutionImpossible, 0.133.0 → resolves.) This task therefore bumps fastapi as well, to `0.136.3` — chosen because it is a current release verified to resolve cleanly with `starlette 1.3.1`. The user approved this larger scope on 2026-08-03.
 
 **Files:**
 - Modify: `requirements.txt`
@@ -642,11 +643,14 @@ Replace the `fastapi` line and add a `starlette` line, so the top of the file be
 ```
 # starlette is pinned explicitly rather than left to fastapi's floor: fastapi
 # 0.128.8 resolved to starlette 0.52.1, which carries seven advisories
-# including a Host-header path-desync bug. fastapi<0.134.0 cannot accept a
+# including a Host-header path-desync bug. fastapi<0.133.0 cannot accept a
 # patched starlette at all (pip reports ResolutionImpossible), so the fastapi
 # bump here is a prerequisite for the starlette fix, not an unrelated upgrade.
+# Pinned exactly, like every other line here: nixpacks reinstalls from this
+# file on every deploy and no lockfile is committed, so a >= floor would let
+# an unverified starlette reach production between deploys.
 fastapi==0.136.3
-starlette>=1.3.1
+starlette==1.3.1
 pydantic==2.13.4
 ```
 
@@ -659,7 +663,7 @@ venv/bin/pip install -r requirements.txt
 venv/bin/pip list | grep -iE "^(fastapi|starlette) "
 ```
 
-Expected: `fastapi 0.136.3` and `starlette` at 1.3.1 or higher. If pip reports any resolution conflict, **stop and report it** — do not hand-pick different versions to force it through.
+Expected: `fastapi 0.136.3` and `starlette 1.3.1` exactly. If pip reports any resolution conflict, **stop and report it** — do not hand-pick different versions to force it through.
 
 - [ ] **Step 3: Run the full suite**
 
@@ -687,7 +691,7 @@ Expected: `app imported OK` with no traceback. An import-time failure here is ex
 
 ```bash
 git add requirements.txt
-git commit -m "sec(2): bump fastapi to 0.136.3 and pin starlette>=1.3.1
+git commit -m "sec(2): bump fastapi to 0.136.3 and pin starlette==1.3.1
 
 Production resolved to starlette 0.52.1 with seven open advisories. None are
 reachable from this app's code today, but fastapi==0.128.8 cannot accept a
