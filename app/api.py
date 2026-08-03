@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 import database as db
 from app.auth import create_session, has_valid_session, set_session_cookie, verify_password
 from app.limits import MAX_BODY_BYTES, BodySizeLimitMiddleware
+from services.telegram_notify import notify_background
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,17 @@ def _record_login_failure() -> None:
         extra = count - LOCKOUT_THRESHOLD
         seconds = min(LOCKOUT_BASE_SECONDS * (2 ** extra), LOCKOUT_MAX_SECONDS)
         db.set_setting(LOGIN_LOCKED_UNTIL_KEY, _iso(now + datetime.timedelta(seconds=seconds)))
+        if count == LOCKOUT_THRESHOLD:
+            # Only on the crossing. Past the threshold every further guess
+            # would otherwise send its own message, turning a sustained
+            # attack into a notification flood. Background thread because
+            # this runs under _LOGIN_LOCK — see notify_background's docstring.
+            # The attempted password is deliberately absent from the text.
+            notify_background(
+                f"On Track: login locked after {count} failed attempts. "
+                f"If this wasn't you, rotate APP_PASSWORD and use "
+                f"Settings -> Sign out everywhere."
+            )
 
 
 def _record_login_success() -> None:

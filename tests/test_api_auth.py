@@ -482,3 +482,59 @@ def test_chunked_oversized_body_is_rejected_with_413(temp_db_path):
     resp = client.post("/api/login", content=body(),
                        headers={"content-type": "application/json"})
     assert resp.status_code == 413
+
+
+# ── Task 6: Telegram alert on lockout crossing ─────────────────────────────────
+
+def test_alert_fires_when_the_lockout_threshold_is_crossed(temp_db_path, monkeypatch):
+    from app import api
+
+    sent = []
+    monkeypatch.setattr(api, "notify_background", lambda text: sent.append(text))
+    client = _client(temp_db_path)
+
+    for _ in range(api.LOCKOUT_THRESHOLD):
+        client.post("/api/login", json={"password": "nope"})
+
+    assert len(sent) == 1
+    assert "lock" in sent[0].lower()
+
+
+def test_alert_does_not_repeat_on_every_failure_past_the_threshold(temp_db_path, monkeypatch):
+    from app import api
+
+    sent = []
+    monkeypatch.setattr(api, "notify_background", lambda text: sent.append(text))
+    client = _client(temp_db_path)
+
+    for _ in range(api.LOCKOUT_THRESHOLD + 3):
+        client.post("/api/login", json={"password": "nope"})
+
+    assert len(sent) == 1  # the crossing only, not one per guess
+
+
+def test_no_alert_below_the_threshold(temp_db_path, monkeypatch):
+    from app import api
+
+    sent = []
+    monkeypatch.setattr(api, "notify_background", lambda text: sent.append(text))
+    client = _client(temp_db_path)
+
+    for _ in range(api.LOCKOUT_THRESHOLD - 1):
+        client.post("/api/login", json={"password": "nope"})
+
+    assert sent == []
+
+
+def test_alert_never_contains_the_attempted_password(temp_db_path, monkeypatch):
+    from app import api
+
+    sent = []
+    monkeypatch.setattr(api, "notify_background", lambda text: sent.append(text))
+    client = _client(temp_db_path)
+
+    for _ in range(api.LOCKOUT_THRESHOLD):
+        client.post("/api/login", json={"password": "sentinel-guess-value"})
+
+    assert sent
+    assert "sentinel-guess-value" not in " ".join(sent)
