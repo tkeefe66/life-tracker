@@ -20,3 +20,4 @@ pytz==2024.1
 anthropic==0.118.0
 psycopg2-binary==2.9.12
 boto3==1.42.97
+cryptography==50.0.0

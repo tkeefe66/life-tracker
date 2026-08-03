@@ -31,6 +31,7 @@ import pytz
 
 import database as db
 from config import (
+    BACKUP_ENCRYPTION_KEY,
     BACKUP_S3_ACCESS_KEY,
     BACKUP_S3_BUCKET,
     BACKUP_S3_ENDPOINT,
@@ -300,6 +301,34 @@ def _set_status_and_alert(status: str) -> None:
         )
 
 
+def _is_encryption_configured() -> bool:
+    return bool(BACKUP_ENCRYPTION_KEY)
+
+
+def _encrypt_file(src_path: str, dst_path: str) -> None:
+    """Fernet-encrypts src_path to dst_path.
+
+    Protects against compromise of the B2 bucket or its access key ALONE --
+    not Railway compromise, since the key itself lives in a Railway env var
+    and an attacker with Railway access already has the database. That is
+    the honest scope: B2 credentials and Railway credentials are separate
+    blast radii, and this closes only the former.
+
+    Fernet loads the whole payload into memory. A dump is ~390 KB, so that is
+    fine -- but if this database ever grows into the hundreds of megabytes,
+    switch to a streaming cipher rather than raising the memory ceiling.
+
+    Lazy import so an un-configured deploy never needs cryptography installed
+    to boot, matching how _s3_client() defers boto3."""
+    from cryptography.fernet import Fernet
+
+    with open(src_path, "rb") as f:
+        plaintext = f.read()
+    token = Fernet(BACKUP_ENCRYPTION_KEY.encode()).encrypt(plaintext)
+    with open(dst_path, "wb") as f:
+        f.write(token)
+
+
 def run():
     if not _using_postgres():
         logger.info("Backup skipped: not using PostgreSQL (local SQLite dev)")
@@ -310,18 +339,36 @@ def run():
         return
     try:
         stamp = datetime.datetime.now(pytz.timezone(TIMEZONE)).strftime("%Y%m%dT%H%M%S")
-        key = f"{BACKUP_PREFIX}{stamp}.dump"
+        encrypting = _is_encryption_configured()
+        if not encrypting:
+            logger.warning(
+                "BACKUP_ENCRYPTION_KEY unset — uploading an UNENCRYPTED dump. "
+                "Backups still run because a gap is unrecoverable, but the "
+                "dump is protected only by the bucket's own access control."
+            )
+        suffix = ".dump.enc" if encrypting else ".dump"
+        key = f"{BACKUP_PREFIX}{stamp}{suffix}"
         fd, tmp_path = tempfile.mkstemp(suffix=".dump")
         os.close(fd)
+        enc_path = tmp_path + ".enc"
         try:
             _dump_to_file(tmp_path)
+            # Plausibility is checked on the PLAINTEXT dump: MIN_DUMP_BYTES is
+            # calibrated against pg_dump's own header/TOC overhead, and
+            # ciphertext size would not carry that meaning.
             _assert_dump_is_plausible(tmp_path)
-            _upload(tmp_path, key)
+            if encrypting:
+                _encrypt_file(tmp_path, enc_path)
+                _upload(enc_path, key)
+            else:
+                _upload(tmp_path, key)
             if not _verify_uploaded(key):
                 raise BackupUnverifiedError(f"Uploaded key not found in post-upload listing: {key}")
             _prune_old_backups()
         finally:
             os.unlink(tmp_path)
+            if os.path.exists(enc_path):
+                os.unlink(enc_path)
         db.set_setting("backup_last_run", _now_iso())
         _set_status_and_alert("ok")
         logger.info("Backup uploaded: %s", key)

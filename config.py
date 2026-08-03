@@ -75,6 +75,15 @@ BACKUP_S3_ACCESS_KEY = os.getenv("BACKUP_S3_ACCESS_KEY", "")
 BACKUP_S3_SECRET_KEY = os.getenv("BACKUP_S3_SECRET_KEY", "")
 BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "4"))
 
+# Fernet key (44-char urlsafe base64) used to encrypt the pg_dump before it
+# leaves the machine. Generate with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Unset means backups still run, unencrypted, with a logged warning -- a
+# backup gap is unrecoverable (SimpleFIN keeps 90 days), an unencrypted
+# backup is not. Store the key somewhere OTHER than Railway as well, or a
+# Railway-side loss takes the backups with it.
+BACKUP_ENCRYPTION_KEY = os.getenv("BACKUP_ENCRYPTION_KEY", "")
+
 # Discrete PostgreSQL connection vars — Railway's Postgres plugin sets these
 # directly, already decoded (no percent-encoding to strip). jobs/backup_db.py
 # prefers them over parsing DATABASE_URL: urlparse() never percent-decodes

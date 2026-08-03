@@ -654,3 +654,69 @@ def test_alert_fires_when_backups_go_dark_from_ok(temp_db_path, monkeypatch):
 
     assert len(sent) == 1
     assert db.get_setting("backup_last_status") == "error: not configured"
+
+
+# ── Task 8: encrypt the dump before upload ────────────────────────────────
+
+def test_dump_is_encrypted_before_upload_when_a_key_is_set(temp_db_path, monkeypatch, tmp_path):
+    from cryptography.fernet import Fernet
+    from jobs import backup_db
+
+    key = Fernet.generate_key().decode()
+    monkeypatch.setattr(backup_db, "BACKUP_ENCRYPTION_KEY", key)
+
+    plaintext = tmp_path / "plain.dump"
+    plaintext.write_bytes(b"PGDMP-sentinel-payload")
+    ciphertext = tmp_path / "plain.dump.enc"
+
+    backup_db._encrypt_file(str(plaintext), str(ciphertext))
+
+    raw = ciphertext.read_bytes()
+    assert b"PGDMP-sentinel-payload" not in raw          # actually encrypted
+    assert Fernet(key.encode()).decrypt(raw) == b"PGDMP-sentinel-payload"  # and reversible
+
+
+def test_uploaded_key_ends_in_enc_when_encryption_is_on(temp_db_path, monkeypatch):
+    from cryptography.fernet import Fernet
+    from jobs import backup_db
+
+    monkeypatch.setattr(backup_db, "BACKUP_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", _write_plausible_dump)
+    monkeypatch.setattr(backup_db, "_verify_uploaded", lambda key: True)
+    monkeypatch.setattr(backup_db, "_prune_old_backups", lambda: None)
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: None)
+
+    uploaded = []
+    monkeypatch.setattr(backup_db, "_upload", lambda path, key: uploaded.append(key))
+
+    backup_db.run()
+
+    assert len(uploaded) == 1
+    assert uploaded[0].endswith(".dump.enc")
+
+
+def test_backup_still_runs_unencrypted_when_no_key_is_set(temp_db_path, monkeypatch):
+    """A missing key must not stop backups -- a gap is unrecoverable, an
+    unencrypted dump is not."""
+    from jobs import backup_db
+
+    monkeypatch.setattr(backup_db, "BACKUP_ENCRYPTION_KEY", "")
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", _write_plausible_dump)
+    monkeypatch.setattr(backup_db, "_verify_uploaded", lambda key: True)
+    monkeypatch.setattr(backup_db, "_prune_old_backups", lambda: None)
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: None)
+
+    uploaded = []
+    monkeypatch.setattr(backup_db, "_upload", lambda path, key: uploaded.append(key))
+
+    backup_db.run()
+
+    import database as db
+    assert len(uploaded) == 1
+    assert uploaded[0].endswith(".dump")
+    assert not uploaded[0].endswith(".enc")
+    assert db.get_setting("backup_last_status") == "ok"
