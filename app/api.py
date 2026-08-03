@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 import database as db
 from app.auth import create_session, has_valid_session, set_session_cookie, verify_password
+from app.limits import MAX_BODY_BYTES, BodySizeLimitMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,12 @@ class LoginBody(BaseModel):
 
 def create_app(lifespan=None) -> FastAPI:
     app = FastAPI(title="On Track", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+
+    # Registered BEFORE the security_headers decorator below, which means
+    # security_headers ends up OUTSIDE it in the middleware stack (Starlette
+    # makes the most recently added middleware outermost). That ordering is
+    # deliberate: a 413 still gets the standard security headers.
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_BODY_BYTES)
 
     @app.middleware("http")
     async def security_headers(request, call_next):

@@ -448,3 +448,20 @@ def test_abandoned_attack_heals_after_30_minutes_of_inactivity(temp_db_path, mon
 
     # The owner's very next correct-password attempt succeeds immediately.
     assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
+
+
+def test_oversized_login_body_is_rejected_with_413(temp_db_path):
+    client = _client(temp_db_path)
+    resp = client.post("/api/login", json={"password": "x" * 200_000})
+    assert resp.status_code == 413
+
+
+def test_oversized_body_still_carries_security_headers(temp_db_path):
+    client = _client(temp_db_path)
+    resp = client.post("/api/login", json={"password": "x" * 200_000})
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_normal_login_body_is_unaffected_by_the_cap(temp_db_path):
+    client = _client(temp_db_path)
+    assert client.post("/api/login", json={"password": "test-password"}).status_code == 200
