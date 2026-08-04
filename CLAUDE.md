@@ -1,5 +1,10 @@
 # On Track — Claude Code Guide
 
+> **Before running anything, read `MUST-DO-FIRST.md`.** The local environment
+> diverges from production in ways that make "tests pass locally" meaningless,
+> and several scripts in `scripts/` reach live production data even when you
+> think you've isolated them.
+
 A single-user web app that answers one question weekly: **are you doing the things you
 said you'd do?** Five scored metrics — delivery orders, gym sessions, social events,
 alcohol days, substances — tracked partly passively (Gmail receipts, Google Calendar)
@@ -298,6 +303,7 @@ adding it here *and* there in the same change.
 | `SESSION_MAX_DAYS` | Absolute session lifetime cap regardless of renewal — closes off an actively-used or stolen cookie renewing forever (default 60) |
 | `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` | Off-Railway S3-compatible destination for the weekly `pg_dump` backup (`jobs/backup_db.py`). All unset = backups no-op with a logged warning |
 | `BACKUP_HOUR` | Daily backup hour, local time (default 4) |
+| `BACKUP_ENCRYPTION_KEY` | Fernet key encrypting the `pg_dump` before it leaves the machine. Unset = backups still run, **unencrypted**, with a logged warning — deliberate, because a backup gap is unrecoverable (SimpleFIN keeps 90 days) and an unencrypted backup is not. Protects against compromise of the B2 bucket or its key *alone*, not Railway compromise (the key lives in Railway). Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **Store a copy outside Railway** — Fernet has no recovery path, so losing the key makes every encrypted backup permanently unreadable |
 | `SIMPLEFIN_ACCESS_URL` | SimpleFIN bearer credential — the URL *is* the secret. Unset = bank sync no-ops. Never logged or stored |
 | `SIMPLEFIN_SYNC_INTERVAL_HOURS` | Bank sync interval (default 12) |
 | `SIMPLEFIN_LOOKBACK_DAYS` | Bank sync lookback window (default 90 — SimpleFIN's hard cap) |
