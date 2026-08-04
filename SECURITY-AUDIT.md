@@ -253,6 +253,45 @@ relationship notes.
 
 ---
 
+## Known and accepted — do not re-report these
+
+Four findings surfaced during the hardening pass (2026-08-03) and were
+deliberately shipped as-is. They are recorded here so a future reviewer does
+not spend time rediscovering them, and so it is clear they were considered
+rather than missed. Each is still a legitimate thing to fix; none is urgent.
+
+**1. `app/limits.py` — the `except _BodyTooLarge` block is unreachable in
+production, and its comment implies otherwise.** `BodySizeLimitMiddleware`
+sits outside Starlette's `ExceptionMiddleware`, and since `_BodyTooLarge`
+subclasses `HTTPException`, `ExceptionMiddleware` answers first — so
+`_reject()` never runs for a real request. The response is byte-for-byte
+identical either way (verified), so this is a comment-accuracy gap, not a
+behavior bug. The block is still correct as a fallback for any reader that
+bypasses FastAPI's body machinery.
+
+**2. `app/routes.py` — `response.delete_cookie(COOKIE_NAME)` omits the
+`secure`/`httponly` attributes that `set_session_cookie` sets**, in both
+`post_logout` and `post_logout_all`. Inert: path and samesite match so the
+browser still clears the cookie, and revocation is enforced server-side by
+deleting the DB row regardless. Pre-existing in `post_logout`.
+
+**3. `frontend/src/api.ts` — `logoutAll()` swallows transport failures and the
+UI returns to the login screen regardless.** So a request that never reached
+the server leaves every session live while the UI implies they were revoked.
+This deliberately mirrors `logout()`'s existing design, on the reasoning that
+a sign-out appearing to fail is worse than one that already succeeded. Worth
+revisiting as a design decision, not a patch.
+
+**4. `jobs/backup_db.py` + `services/telegram_notify.py` — a failed alert is
+lost permanently.** Backup status is persisted *before* the Telegram send is
+attempted, and `notify_background` is fire-and-forget and swallows send
+failures. So if the HTTP POST fails right after a genuine `ok -> error`
+transition, the next run compares against the already-updated status, finds no
+diff, and stays silent. This is the one place in the alerting design where
+delivery reliability actually matters, and there is currently no retry.
+
+---
+
 ## Disclosure — what this audit did to the live system
 
 - Sent 8 wrong-password logins, which **triggered a real lockout**. It self-cleared in about 60
