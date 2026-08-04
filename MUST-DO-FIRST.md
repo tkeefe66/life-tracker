@@ -1,9 +1,47 @@
 # MUST DO FIRST
 
-**Read this before running anything in this repo.** Written 2026-08-03 after a
-security audit and a 14-task hardening pass, both of which hit traps documented
-here. Every warning below is something that actually went wrong, not a
-hypothetical.
+## ⛔ BLOCKING FIRST ACTION — verify an ENCRYPTED backup
+
+**Do this before any other work in this project. Do not start a feature, a fix,
+or an investigation until it is resolved.**
+
+Backup encryption was switched on 2026-08-03 at ~18:00 local. Every backup
+before that is plaintext. The first *encrypted* one was due at 22:00 that same
+night, and **as of the last session nobody had confirmed it could be
+decrypted.** The unencrypted pipeline is proven (401 KB dump, 24 tables,
+`pg_restore` parses it); the crypto is not.
+
+```bash
+cd "/Users/tomkeefe/Code Apps/life-tracker"
+venv/bin/python scripts/verify_backup.py
+```
+
+**What success looks like:** the reported key ends in `.dump.enc`, and the run
+finishes with `VERIFIED`.
+
+**Three failure modes, and what each means:**
+
+| What you see | What it means | Do this |
+|---|---|---|
+| Newest key still ends `.dump` (no `.enc`) | `BACKUP_ENCRYPTION_KEY` never reached the running process, or the backup job hasn't run since it was set | Check the var is set on the Railway **web** service and that the service restarted after |
+| "Backup is encrypted but BACKUP_ENCRYPTION_KEY is not set" | The key is in Railway but not in the local `.env` | Add it locally — same value |
+| `InvalidToken` / wrong key or corrupted download | **The Railway key and the local key differ**, or the upload is damaged | Stop and tell the owner immediately |
+
+That last row is the one this reminder exists for. A mismatched key produces
+backups that look healthy in every dashboard and are permanently unreadable.
+It is a five-minute fix on the day it happens and unrecoverable six months
+later — and nothing else in this repo will surface it, because the backup job
+reports success as long as the *upload* worked.
+
+If it passes, delete this section. If it fails, that is the most important
+thing happening in this project and everything else waits.
+
+---
+
+**Read the rest of this before running anything in this repo.** Written
+2026-08-03 after a security audit and a 14-task hardening pass, both of which
+hit traps documented here. Every warning below is something that actually went
+wrong, not a hypothetical.
 
 Read `CLAUDE.md` too — that's the project guide. This file is only the things
 that will bite you in the first ten minutes.
@@ -132,26 +170,27 @@ Any UI or CSP verification needs a deploy. Don't burn turns fighting it.
 
 ## 5. Outstanding work as of 2026-08-03
 
-The security hardening branch is merged to `main` but **not pushed** — nothing
-has reached Railway yet.
+Done on 2026-08-03:
 
-- [ ] **Push and watch the deploy.** The merge bumps fastapi to 0.136.3 and
-      starlette to 1.3.1 (seven advisories). That class of change passes every
-      test and then fails at boot. Healthcheck is `/api/health`, 120s timeout;
-      Railway keeps serving the previous deploy if the new one never goes healthy.
-- [ ] **Generate `BACKUP_ENCRYPTION_KEY` and set it in Railway.** Backups upload
-      unencrypted until you do — deliberately, since a backup gap is
-      irreversible (SimpleFIN keeps 90 days) and an unencrypted backup is not.
-      `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
-      **Store a copy outside Railway.** Fernet has no recovery path: lose the
-      key, lose every encrypted backup.
+- [x] **Pushed and deployed.** fastapi 0.136.3 / starlette 1.3.1 are live and
+      serving. Verified in production: body cap returns 413, full CSP present,
+      `Cache-Control: no-store, private` on `/api/*`, all data routes 401
+      without a session, `/docs` and `/openapi.json` 404.
+- [x] **`BACKUP_ENCRYPTION_KEY` set** on the Railway web service and added to
+      the local `.env`. A copy is in the owner's password manager.
+- [x] **Unencrypted backup verified** — 401 KB, 24 tables, `pg_restore` parses.
+      The *encrypted* path is still unverified: see the blocking section at the
+      top of this file.
+
+Still open:
+
+- [ ] **Verify an ENCRYPTED backup** — the blocking item at the top.
 - [ ] **Backblaze:** confirm the bucket is private, and decide on key scope. The
       current `BACKUP_S3_ACCESS_KEY` can **list and download** — confirmed
       accidentally — so a leak of it exposes every backup.
-- [ ] **Run `python scripts/verify_backup.py` against production once.** That
-      run is what turns "we have backups" into "we have verified backups."
 - [ ] **Browser-check the CSP on a deploy** — all five screens, Money especially
       (hand-rolled SVG charts). Look for `Refused to load` in the console.
+      Cannot be done locally: the `Secure` cookie blocks login over plain HTTP.
 - [ ] **`scripts/drop_v1_archive.py --export-only`**, read the JSON, then
       `--export-and-drop`. Eleven unused v1 tables including a rolodex of named
       people with relationship notes.
