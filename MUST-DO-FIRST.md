@@ -24,8 +24,9 @@ Three things let it hide for three days, all now closed:
 - Every cron job was firing on **UTC** wall-clock, not `TIMEZONE` — the 4 AM
   backup ran at 10 PM Denver. See "Cron jobs" below.
 - `tests/test_backup_db.py` read the ambient `BACKUP_ENCRYPTION_KEY` from
-  `.env`, so the same malformed value made four tests fail on `main` with
-  nothing pointing at the cause. An autouse fixture now neutralizes it.
+  `.env`, so the same malformed value made three tests fail on `main` with
+  nothing pointing at the cause — every test whose path reaches
+  `_encrypt_file`. An autouse fixture now neutralizes it.
 
 **Still owed by a human:** store the key somewhere other than Railway (a
 password manager). Fernet has no recovery path — a wiped or compromised Railway
@@ -111,7 +112,7 @@ environment.**
 |---|---|
 | `scripts/cleardb.py` | Wipes all data. |
 | `scripts/drop_v1_archive.py` | Drops eleven tables. The only `DROP` in the codebase. |
-| `scripts/verify_backup.py` | Hits the production bucket and downloads a real backup. |
+| `scripts/verify_backup.py` | Hits the production bucket and downloads a real backup. **Exception:** when the task *is* backup verification, this is the sanctioned tool and section 1 tells you to run it — see the `backup-verification` skill for the blast-radius split. Never run it incidentally, e.g. to exercise an error path. |
 | `scripts/simplefin_backfill.py` | Writes to the database. |
 
 `--help` is safe on all of them. Nothing else is. If a task needs one run, that

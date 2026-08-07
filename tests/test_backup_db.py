@@ -12,9 +12,10 @@ def no_ambient_encryption_key(monkeypatch):
     to hold, so these tests describe the code and not the local machine.
 
     Without this the suite reads the ambient key: on 2026-08-06 a malformed
-    value in .env made four unrelated tests fail inside Fernet, on main, for
-    three days, with nothing pointing at the real cause. The encryption tests
-    below set the key explicitly and are unaffected by this default."""
+    value in .env made three unrelated tests fail inside Fernet, on main, for
+    three days, with nothing pointing at the real cause -- every test whose
+    path reaches _encrypt_file. The encryption tests below set the key
+    explicitly and are unaffected by this default."""
     from jobs import backup_db
     monkeypatch.setattr(backup_db, "BACKUP_ENCRYPTION_KEY", "")
 
