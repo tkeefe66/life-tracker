@@ -205,7 +205,10 @@ signal:
 
 ```
 .
-├── main.py                # Entry point: FastAPI app + in-process APScheduler (lifespan)
+├── main.py                # Entry point: FastAPI app + in-process APScheduler.
+│                            #   build_scheduler() registers every job (split out of
+│                            #   lifespan() so tests can inspect triggers); _cron() pins
+│                            #   cron jobs to TIMEZONE — see Code Conventions
 ├── config.py               # All env vars — secrets and feature flags
 ├── database.py              # DB layer: PostgreSQL (prod) / SQLite (local dev)
 ├── metrics.py               # Pure metric math (week bounds, hit/miss, streaks)
@@ -245,7 +248,9 @@ signal:
 │   ├── gmail_service.py           # Gmail message fetch (includes Trash — see above)
 │   ├── simplefin_service.py        # SimpleFIN transport + normalization — the redaction
 │   │                            #   boundary for the bank-access-URL credential
-│   └── telegram_notify.py         # notify(text) — send-only, no inbound handling
+│   └── telegram_notify.py         # notify(text) / notify_background(text) — send-only,
+│                            #   no inbound handling; ignores the Settings toggle
+│                            #   (only weekly_push checks it) — see Code Conventions
 ├── frontend/                # React + Vite SPA, built to dist/
 │   └── src/
 │       ├── screens/          # Today (the "Day log"), Scorecard (Week), Money, Insights, Settings
@@ -303,7 +308,7 @@ adding it here *and* there in the same change.
 | `SESSION_MAX_DAYS` | Absolute session lifetime cap regardless of renewal — closes off an actively-used or stolen cookie renewing forever (default 60) |
 | `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` | Off-Railway S3-compatible destination for the weekly `pg_dump` backup (`jobs/backup_db.py`). All unset = backups no-op with a logged warning |
 | `BACKUP_HOUR` | Daily backup hour, local time (default 4) |
-| `BACKUP_ENCRYPTION_KEY` | Fernet key encrypting the `pg_dump` before it leaves the machine. Unset = backups still run, **unencrypted**, with a logged warning — deliberate, because a backup gap is unrecoverable (SimpleFIN keeps 90 days) and an unencrypted backup is not. Protects against compromise of the B2 bucket or its key *alone*, not Railway compromise (the key lives in Railway). Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **Store a copy outside Railway** — Fernet has no recovery path, so losing the key makes every encrypted backup permanently unreadable |
+| `BACKUP_ENCRYPTION_KEY` | Fernet key encrypting the `pg_dump` before it leaves the machine. Unset = backups still run, **unencrypted**, with a logged warning — deliberate, because a backup gap is unrecoverable (SimpleFIN keeps 90 days) and an unencrypted backup is not. Protects against compromise of the B2 bucket or its key *alone*, not Railway compromise (the key lives in Railway). Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and set the var to **what that prints**, not to the command — `_is_encryption_configured()` only checks truthiness, so a malformed value reads as "encryption on" and then raises inside `Fernet(...)` on every run. That exact mistake killed every backup for three days (2026-08-03 → 08-06) while the daily job kept reporting a status. **Store a copy outside Railway** — Fernet has no recovery path, so losing the key makes every encrypted backup permanently unreadable. `scripts/verify_backup.py` is the only thing that proves a backup is readable; a status of `ok` proves only that an upload happened |
 | `SIMPLEFIN_ACCESS_URL` | SimpleFIN bearer credential — the URL *is* the secret. Unset = bank sync no-ops. Never logged or stored |
 | `SIMPLEFIN_SYNC_INTERVAL_HOURS` | Bank sync interval (default 12) |
 | `SIMPLEFIN_LOOKBACK_DAYS` | Bank sync lookback window (default 90 — SimpleFIN's hard cap) |
@@ -379,6 +384,29 @@ is enough. Tests only exercise the SQLite path; Postgres DDL is verified by depl
 - **The redaction boundary.** Ingestion jobs (and `jobs/weekly_push.py`) never store `str(exception)` in `app_settings` — that value is read back by `/api/settings` and rendered in Settings. `except Exception as e:` blocks call `logger.exception(...)` for full server-side detail, then `db.set_setting(..., safe_status(e))` (`services/safe_status.py`), which maps the exception to one of `"ok"` / `"error: auth"` / `"error: unreachable"` / `"error: rate limited"` / `"error: see logs"` — never anything else. This exists because the SimpleFIN bank-access URL (`services/simplefin_service.py`) carries its credentials inside the URL itself, and HTTP libraries routinely put the request URL into exception messages (a Gmail URL already leaked this way once, and it's the same failure mode SimpleFIN would hit without this boundary). Rule: **prevent the credential-bearing string from being constructed; never scrub it afterwards.** Any new ingestion job follows the same pattern. The pre-flight "we never even tried" statuses (`services.safe_status.NOT_CONFIGURED`, `GOOGLE_NOT_CONFIGURED`) are also `CLOSED_SET` members — written outside the try/except, before `safe_status()` ever runs, but from the same named constants so the invariant holds everywhere, not just inside the exception path.
 - **HTTP client loggers are the third leak path, and the boundary above does not cover them.** `httpx` logs the full request URL at INFO — and since the SimpleFIN access URL *is* the credential, an INFO-level `httpx` logger writes the bearer token to the deploy logs on every sync. Nothing is raised and nothing is stored, so neither `safe_status()` nor `app_settings` ever sees it: the exception-based boundary is bypassed entirely rather than defeated. `main.py` pins `httpx` and `httpcore` to `WARNING` immediately after `logging.basicConfig`, and a test in `tests/test_simplefin_service.py` locks it. That test asserts an **explicit** level on those loggers, not the effective level — under pytest the root logger already has handlers, so `basicConfig` no-ops and an effective-level assertion passes while production still leaks. This happened for real on 2026-07-23, the first time the credential was set in Railway — the token reached the deploy logs and was knowingly left in place rather than rotated, so the logs from that date should be treated as sensitive. Never lower those levels, and treat any new logging config or HTTP client as subject to the same check.
 - **Bank payee/description may reach Claude in exactly one place: `ai_metrics.suggest_bank_flows`.** That's the triage-suggestion call — same footing as Gmail subjects (`classify_receipt`) and calendar titles (`classify_social_event`), and it goes through no other path. `/api/reflection` and `jobs/weekly_push.py`'s `format_scorecard_text` (Telegram) stay bank-free: both build their prompt from `METRICS`-derived cards and noticings, bank data is not in `METRICS` (see Metrics above), so neither outbound path ever sees a bank transaction description, counterparty, or `user_note` — this holds by construction, not by an explicit filter, so it keeps holding only as long as bank data stays out of `METRICS`. **`user_note` never reaches any AI, not even `suggest_bank_flows`** — the note is the user's own words, the most personal text in the database; the prompt builder excludes it by construction (simply not selected), pinned by a sentinel prompt-content test that fails if a note string ever appears in the built prompt.
+- **Telegram is two channels sharing one bot, and only one of them is opt-in.**
+  `services/telegram_notify.py` sends whenever `TELEGRAM_BOT_TOKEN` and
+  `TELEGRAM_CHAT_ID` are set — it does **not** consult the Settings toggle.
+  Only `jobs/weekly_push.py` checks `telegram_push`, so the Settings switch
+  governs the *weekly scorecard alone*. The two operational alerts —
+  login lockout (`app/api.py._record_login_failure`, on the exact threshold
+  crossing) and backup status (`jobs/backup_db.py._set_status_and_alert`) —
+  go out regardless, by design: a security or backup failure the user has
+  muted is a failure they never hear about. Consequence to remember when
+  reading the chat: with the toggle off, every message in it is an alert, and
+  the absence of scorecards is not a bug. Any new `notify()`/`notify_background()`
+  caller inherits this — decide explicitly which channel it belongs to, and
+  note that alert text is subject to the redaction boundary above (closed-set
+  status values only, never `str(exception)`).
+- **Cron jobs must use `main._cron(...)`, never a bare `CronTrigger`.**
+  `AsyncIOScheduler(timezone=...)` does not retag an already-constructed
+  trigger — `add_job()` applies the scheduler's timezone only when it builds
+  the trigger itself, so a standalone `CronTrigger` silently captures the
+  *container's* zone (UTC). Every cron job ran on UTC wall-clock until
+  2026-08-06: backup 4 AM → 10 PM Denver, calendar scan 6 AM → midnight,
+  Monday push 9 AM → Monday 3 AM. Interval jobs were never affected.
+  `tests/test_scheduler.py` locks it and forces `TZ=UTC` so a Denver laptop
+  can't make the assertion vacuous.
 - Google auth expiry surfaces as a visible banner on **every screen** (app shell,
   `lib.googleAuthBroken` — fires on `"error: auth"` only; transient errors stay
   Settings-only), never silent missing data
@@ -395,7 +423,7 @@ is enough. Tests only exercise the SQLite path; Postgres DDL is verified by depl
 2. **New AI task?** Add to `ai_metrics.py` only — keep the `_call_json()` pattern. If a user can disagree with the verdict, follow the Override + Learning Pattern above
 3. **New DB table/column?** Add to `database.py` schema + a migration (see Database); test local SQLite and prod Postgres
 4. **New env var?** Add to `config.py`, document above, add to `.env.example`
-5. **New scheduled job?** Add to `jobs/`, wire into the `lifespan()` scheduler in `main.py`
+5. **New scheduled job?** Add to `jobs/`, wire it into `build_scheduler()` in `main.py` — cron jobs via `_cron(...)`, never a bare `CronTrigger` (see Code Conventions)
 6. **New passive signal from email?** Extend `receipts.py`'s rules and the three-way route in `jobs/scan_gmail.py`. Assume one real-world event produces several emails — decide the cluster key before writing the ingest, and never key on a subject line
 7. **Anything with a dollar amount?** It belongs in the per-service spend breakdown, and work-excluded rides must stay excluded from every figure
 
