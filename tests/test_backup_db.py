@@ -1,4 +1,4 @@
-"""jobs/backup_db: weekly PostgreSQL backup to an off-Railway destination.
+"""jobs/backup_db: daily PostgreSQL backup to an off-Railway destination.
 
 Never exercises a real S3-compatible client or a real pg_dump — the upload and
 dump steps are isolated behind small functions the tests monkeypatch, per the

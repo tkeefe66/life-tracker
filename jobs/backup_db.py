@@ -1,4 +1,4 @@
-"""Scheduled job: weekly PostgreSQL backup to an off-Railway destination
+"""Scheduled job: daily PostgreSQL backup to an off-Railway destination
 (BACKUP_HOUR, default 4am, daily — see main.py's scheduler).
 
 Skips silently (with a logged warning) when the app isn't using PostgreSQL, or

@@ -306,7 +306,7 @@ adding it here *and* there in the same change.
 | `WEEKLY_PUSH_HOUR` | Monday scorecard push hour, local time (default 9) |
 | `SESSION_TTL_DAYS` | Session lifetime before expiry, with sliding renewal past the halfway point (default 14) |
 | `SESSION_MAX_DAYS` | Absolute session lifetime cap regardless of renewal — closes off an actively-used or stolen cookie renewing forever (default 60) |
-| `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` | Off-Railway S3-compatible destination for the weekly `pg_dump` backup (`jobs/backup_db.py`). All unset = backups no-op with a logged warning |
+| `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` | Off-Railway S3-compatible destination for the **daily** `pg_dump` backup (`jobs/backup_db.py`). All unset = backups no-op with a logged warning |
 | `BACKUP_HOUR` | Daily backup hour, local time (default 4) |
 | `BACKUP_ENCRYPTION_KEY` | Fernet key encrypting the `pg_dump` before it leaves the machine. Unset = backups still run, **unencrypted**, with a logged warning — deliberate, because a backup gap is unrecoverable (SimpleFIN keeps 90 days) and an unencrypted backup is not. Protects against compromise of the B2 bucket or its key *alone*, not Railway compromise (the key lives in Railway). Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and set the var to **what that prints**, not to the command — `_is_encryption_configured()` only checks truthiness, so a malformed value reads as "encryption on" and then raises inside `Fernet(...)` on every run. That exact mistake killed every backup for three days (2026-08-03 → 08-06) while the daily job kept reporting a status. **Store a copy outside Railway** — Fernet has no recovery path, so losing the key makes every encrypted backup permanently unreadable. `scripts/verify_backup.py` is the only thing that proves a backup is readable; a status of `ok` proves only that an upload happened |
 | `SIMPLEFIN_ACCESS_URL` | SimpleFIN bearer credential — the URL *is* the secret. Unset = bank sync no-ops. Never logged or stored |
@@ -370,7 +370,7 @@ is enough. Tests only exercise the SQLite path; Postgres DDL is verified by depl
 - [ ] Google OAuth vars set, refresh token carries both Calendar + Gmail scopes
 - [ ] `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` set if using the weekly push
 - [ ] `SESSION_TTL_DAYS` / `SESSION_MAX_DAYS` set if the defaults (14 / 60 days) aren't right for this deploy
-- [ ] `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` set if weekly backups should actually run (unset = silent no-op)
+- [ ] `BACKUP_S3_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` set if daily backups should actually run (unset = silent no-op)
 - [ ] `SIMPLEFIN_ACCESS_URL` set if bank sync should actually run — optional, unset means it no-ops cleanly
 
 ---
