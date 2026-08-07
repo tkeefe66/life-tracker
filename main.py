@@ -32,12 +32,26 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-@asynccontextmanager
-async def lifespan(app):
-    db.initialize_db()
-    db.seed_default_targets()
-    db.delete_expired_sessions(datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"))
+def _cron(**fields) -> CronTrigger:
+    """A CronTrigger explicitly pinned to TIMEZONE.
 
+    Never construct a bare CronTrigger here. Passing timezone= to
+    AsyncIOScheduler does NOT retag an already-built trigger — add_job()
+    applies the scheduler's timezone only when it constructs the trigger
+    itself. A standalone CronTrigger captures the *process's* local zone,
+    which in the Railway container is UTC, so every cron job ran on UTC
+    wall-clock: the 4 AM backup fired at 10 PM Denver, the 6 AM calendar scan
+    at midnight, the Monday 9 AM push at 3 AM. Found in production
+    2026-08-06; locked by tests/test_scheduler.py."""
+    return CronTrigger(timezone=pytz.timezone(TIMEZONE), **fields)
+
+
+def build_scheduler() -> AsyncIOScheduler:
+    """Registers every scheduled job and returns the scheduler, unstarted.
+
+    Split out of lifespan() so tests can inspect the registered triggers
+    without starting a scheduler or initializing a database — see
+    tests/test_scheduler.py, which locks the timezone of every cron trigger."""
     from jobs.backup_db import run as backup_db
     from jobs.scan_calendar import run as scan_calendar
     from jobs.scan_gmail import run as scan_gmail
@@ -69,20 +83,31 @@ async def lifespan(app):
     # and classification is skipped for already-classified events.
     scheduler.add_job(
         scan_calendar,
-        CronTrigger(hour=CALENDAR_SCAN_HOUR, minute=0),
+        _cron(hour=CALENDAR_SCAN_HOUR, minute=0),
         id="scan_calendar",
         next_run_time=datetime.datetime.now(pytz.timezone(TIMEZONE)),
     )
-    scheduler.add_job(weekly_push, CronTrigger(day_of_week="mon", hour=WEEKLY_PUSH_HOUR, minute=0), id="weekly_push")
+    scheduler.add_job(weekly_push, _cron(day_of_week="mon", hour=WEEKLY_PUSH_HOUR, minute=0), id="weekly_push")
     # Daily, not weekly: manual check-ins are hand-entered and reconstructable
     # from nothing, so a weekly cadence risked losing up to seven days of them.
     # A dump is ~390 KB — the cost of daily is noise.
-    scheduler.add_job(backup_db, CronTrigger(hour=BACKUP_HOUR, minute=0), id="backup_db")
+    scheduler.add_job(backup_db, _cron(hour=BACKUP_HOUR, minute=0), id="backup_db")
+    return scheduler
+
+
+@asynccontextmanager
+async def lifespan(app):
+    db.initialize_db()
+    db.seed_default_targets()
+    db.delete_expired_sessions(datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds"))
+
+    scheduler = build_scheduler()
     scheduler.start()
-    logger.info("On Track started — gmail every %dh, bank every %dh, calendar daily @%02d:00, "
-                "push Mon @%02d:00, backup daily @%02d:00",
+    logger.info("On Track started — gmail every %dh, bank every %dh, calendar daily @%02d:00 %s, "
+                "push Mon @%02d:00 %s, backup daily @%02d:00 %s",
                 GMAIL_SCAN_INTERVAL_HOURS, SIMPLEFIN_SYNC_INTERVAL_HOURS,
-                CALENDAR_SCAN_HOUR, WEEKLY_PUSH_HOUR, BACKUP_HOUR)
+                CALENDAR_SCAN_HOUR, TIMEZONE, WEEKLY_PUSH_HOUR, TIMEZONE,
+                BACKUP_HOUR, TIMEZONE)
     yield
     scheduler.shutdown(wait=False)
 
