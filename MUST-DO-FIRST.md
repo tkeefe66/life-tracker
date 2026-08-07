@@ -1,40 +1,40 @@
 # MUST DO FIRST
 
-## ⛔ BLOCKING FIRST ACTION — verify an ENCRYPTED backup
+## Backup encryption — resolved 2026-08-06, and what it cost
 
-**Do this before any other work in this project. Do not start a feature, a fix,
-or an investigation until it is resolved.**
+The blocking reminder that used to head this file has been discharged.
+`scripts/verify_backup.py` reports `VERIFIED` against
+`on-track-backups/20260806T185121.dump.enc` — 538 KB ciphertext, decrypts to a
+403 KB dump, `pg_restore` reads 24 tables. That is the first encrypted backup
+ever proven readable.
 
-Backup encryption was switched on 2026-08-03 at ~18:00 local. Every backup
-before that is plaintext. The first *encrypted* one was due at 22:00 that same
-night, and **as of the last session nobody had confirmed it could be
-decrypted.** The unencrypted pipeline is proven (401 KB dump, 24 tables,
-`pg_restore` parses it); the crypto is not.
+**It was worse than the reminder feared.** `BACKUP_ENCRYPTION_KEY` on the
+Railway web service held the literal text
+`python3 -c "from cryptography.fernet import Fernet; print(...)"` — the command
+that *prints* a key, pasted instead of its output. `_is_encryption_configured()`
+only checks truthiness, so encryption read as enabled while `Fernet(key)` raised
+on every run. **No backup of any kind existed between 2026-08-03 and
+2026-08-06.** The last good one before that was plaintext.
 
-```bash
-cd "/Users/tomkeefe/Code Apps/life-tracker"
-venv/bin/python scripts/verify_backup.py
-```
+Three things let it hide for three days, all now closed:
 
-**What success looks like:** the reported key ends in `.dump.enc`, and the run
-finishes with `VERIFIED`.
+- The failure alert fired once, on the status *transition*, then went quiet.
+  `jobs/backup_db.py` now re-alerts every `REALERT_AFTER_DAYS` (7) while a
+  failure is still live, and says how long it has been broken.
+- Every cron job was firing on **UTC** wall-clock, not `TIMEZONE` — the 4 AM
+  backup ran at 10 PM Denver. See "Cron jobs" below.
+- `tests/test_backup_db.py` read the ambient `BACKUP_ENCRYPTION_KEY` from
+  `.env`, so the same malformed value made four tests fail on `main` with
+  nothing pointing at the cause. An autouse fixture now neutralizes it.
 
-**Three failure modes, and what each means:**
+**Still owed by a human:** store the key somewhere other than Railway (a
+password manager). Fernet has no recovery path — a wiped or compromised Railway
+project takes every encrypted backup with it, at the moment backups matter most.
 
-| What you see | What it means | Do this |
-|---|---|---|
-| Newest key still ends `.dump` (no `.enc`) | `BACKUP_ENCRYPTION_KEY` never reached the running process, or the backup job hasn't run since it was set | Check the var is set on the Railway **web** service and that the service restarted after |
-| "Backup is encrypted but BACKUP_ENCRYPTION_KEY is not set" | The key is in Railway but not in the local `.env` | Add it locally — same value |
-| `InvalidToken` / wrong key or corrupted download | **The Railway key and the local key differ**, or the upload is damaged | Stop and tell the owner immediately |
-
-That last row is the one this reminder exists for. A mismatched key produces
-backups that look healthy in every dashboard and are permanently unreadable.
-It is a five-minute fix on the day it happens and unrecoverable six months
-later — and nothing else in this repo will surface it, because the backup job
-reports success as long as the *upload* worked.
-
-If it passes, delete this section. If it fails, that is the most important
-thing happening in this project and everything else waits.
+Re-run `venv/bin/python scripts/verify_backup.py` after anything touches the
+backup path. Success = newest key ends `.dump.enc` and the run prints
+`VERIFIED`. If it ever reports `InvalidToken`, the Railway key and the local
+`.env` key have diverged — stop and tell the owner.
 
 ---
 
@@ -165,6 +165,16 @@ Without this your mutation looks inert and you'll conclude the code is fine.
 **The local browser cannot log in.** The session cookie is `Secure`
 (`app/auth.py`), so a real browser won't send it over a plain-HTTP dev server.
 Any UI or CSP verification needs a deploy. Don't burn turns fighting it.
+
+**Cron jobs: never construct a bare `CronTrigger`.** Use `main._cron(...)`.
+`AsyncIOScheduler(timezone=...)` does **not** retag a trigger that already
+exists — `add_job()` applies the scheduler's timezone only when it builds the
+trigger itself. A standalone `CronTrigger` captures the *process's* local zone,
+which in the Railway container is UTC. From the first deploy until 2026-08-06
+every cron job silently ran on UTC wall-clock: backup 4 AM → 10 PM Denver,
+calendar scan 6 AM → midnight, Monday push 9 AM → Monday 3 AM. Interval jobs
+(gmail, bank) were never affected. Locked by `tests/test_scheduler.py`, which
+forces `TZ=UTC` so a Denver laptop can't make the assertion vacuous.
 
 ---
 

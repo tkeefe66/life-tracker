@@ -65,6 +65,17 @@ BACKUP_PREFIX = "on-track-backups/"
 # trigger pruning of the last-known-good backups.
 MIN_DUMP_BYTES = 512
 
+# How long a live failure stays quiet between reminders. Weekly is the point
+# where the alert is still a reminder rather than noise the user learns to
+# swipe away -- and a week is well inside SimpleFIN's 90-day window, so a
+# reminder always arrives while the gap is still recoverable.
+REALERT_AFTER_DAYS = 7
+
+# When the current unbroken failure streak started (the moment of its first
+# alert), and when the last alert about it went out. Both cleared on success.
+FAILING_SINCE_KEY = "backup_failing_since"
+LAST_ALERT_KEY = "backup_last_alert_at"
+
 
 class BackupDumpError(Exception):
     """Raised when pg_dump exits non-zero. Message is ours alone — never
@@ -90,8 +101,15 @@ class BackupUnverifiedError(Exception):
     listing — the upload can't be trusted, so pruning must not run."""
 
 
+def _now() -> datetime.datetime:
+    """Seam for tests — monkeypatch this, not the clock itself. The reminder
+    logic in _set_status_and_alert spans days, which is not testable against
+    a real clock."""
+    return datetime.datetime.now(pytz.timezone(TIMEZONE))
+
+
 def _now_iso() -> str:
-    return datetime.datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+    return _now().isoformat()
 
 
 def _using_postgres() -> bool:
@@ -267,12 +285,20 @@ def _prune_old_backups() -> None:
 
 
 def _set_status_and_alert(status: str) -> None:
-    """Writes backup_last_status and notifies only when it CHANGES.
+    """Writes backup_last_status and notifies on a CHANGE, plus a periodic
+    reminder while a failure is still live.
 
     The job runs daily, so alerting on every failing run would send a message
     every day for as long as the failure persists. Transitions are what carry
-    information: ok -> error means something just broke, error -> ok means it
-    just healed.
+    most of the information: ok -> error means something just broke, error ->
+    ok means it just healed.
+
+    But change-only alerting goes silent on a failure that never changes, and
+    silence is exactly what a healthy backup looks like. In production the
+    backup failed every day from 2026-08-04 to 2026-08-06 and sent exactly
+    one message -- three days with no backup at all were indistinguishable
+    from three days of health. So a live failure re-alerts every
+    REALERT_AFTER_DAYS, carrying the age of the streak.
 
     The message is built only from `status`, which is always a closed-set
     value from services/safe_status.py -- never str(exception). A pg_dump or
@@ -280,25 +306,76 @@ def _set_status_and_alert(status: str) -> None:
     and a Telegram push is an outbound path like any other."""
     previous = db.get_setting("backup_last_status")
     db.set_setting("backup_last_status", status)
-    if previous == status:
-        return
-    if previous is None and status in ("ok", NOT_CONFIGURED):
-        # First observation ever (fresh deploy, backup_last_status never
-        # written before). "ok" here is a first success, not a recovery from
-        # a failure that never happened -- there is nothing to announce.
-        # NOT_CONFIGURED here means the deploy never opted into backups,
-        # which CLAUDE.md documents as a clean no-op, not a fault. A first
-        # observation that IS a real error still falls through and alerts --
-        # that one the user does need to hear about. Do not collapse this
-        # back to a plain `previous == status` check.
-        return
+    now = _now()
+
     if status == "ok":
+        # Clear the streak clocks unconditionally, before deciding whether to
+        # announce -- a first-ever success writes no alert, but must still not
+        # leave a stale streak behind for a later failure to inherit.
+        db.set_setting(FAILING_SINCE_KEY, "")
+        db.set_setting(LAST_ALERT_KEY, "")
+        if previous is None or previous == "ok":
+            # First observation ever (fresh deploy, backup_last_status never
+            # written before) is a first success, not a recovery from a
+            # failure that never happened -- nothing to announce.
+            return
         notify_background("On Track: database backup recovered — latest run succeeded.")
-    else:
-        notify_background(
-            f"On Track: database backup FAILED (status: {status}). "
-            f"SimpleFIN only keeps 90 days, so a prolonged gap is unrecoverable."
-        )
+        return
+
+    if previous is None and status == NOT_CONFIGURED:
+        # A deploy that never opted into backups, which CLAUDE.md documents as
+        # a clean no-op, not a fault. It also never starts a streak clock, so
+        # it is never reminded about either. A first observation that IS a real
+        # error falls through and alerts -- that one the user needs to hear.
+        return
+
+    if previous == status and not _reminder_is_due(now):
+        return
+
+    failing_since = db.get_setting(FAILING_SINCE_KEY) or _iso(now)
+    db.set_setting(FAILING_SINCE_KEY, failing_since)
+    db.set_setting(LAST_ALERT_KEY, _iso(now))
+
+    days = _days_since(failing_since, now)
+    age = f" for {days} days" if days >= 1 else ""
+    notify_background(
+        f"On Track: database backup FAILED{age} (status: {status}). "
+        f"SimpleFIN only keeps 90 days, so a prolonged gap is unrecoverable."
+    )
+
+
+def _iso(moment: datetime.datetime) -> str:
+    return moment.isoformat()
+
+
+def _parse_stamp(raw: str):
+    """Parses a stamp written by _iso(). Returns None if it can't be read --
+    callers treat that as "no usable clock" and alert rather than stay silent,
+    since a corrupt timestamp must never be the reason a live failure goes
+    unreported."""
+    try:
+        return datetime.datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        logger.warning("Unparseable backup alert timestamp: %r", raw)
+        return None
+
+
+def _days_since(raw: str, now: datetime.datetime) -> int:
+    parsed = _parse_stamp(raw)
+    return 0 if parsed is None else max(0, (now - parsed).days)
+
+
+def _reminder_is_due(now: datetime.datetime) -> bool:
+    """True when the current failure streak has gone REALERT_AFTER_DAYS
+    without a message. False when nothing has ever been alerted about -- an
+    unconfigured deploy has no streak and must not be nagged."""
+    last_alert = db.get_setting(LAST_ALERT_KEY)
+    if not last_alert:
+        return False
+    parsed = _parse_stamp(last_alert)
+    if parsed is None:
+        return True
+    return (now - parsed) >= datetime.timedelta(days=REALERT_AFTER_DAYS)
 
 
 def _is_encryption_configured() -> bool:

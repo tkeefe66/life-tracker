@@ -6,6 +6,19 @@ plan's testing note ("do not test the actual upload")."""
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def no_ambient_encryption_key(monkeypatch):
+    """Neutralize whatever BACKUP_ENCRYPTION_KEY the developer's .env happens
+    to hold, so these tests describe the code and not the local machine.
+
+    Without this the suite reads the ambient key: on 2026-08-06 a malformed
+    value in .env made four unrelated tests fail inside Fernet, on main, for
+    three days, with nothing pointing at the real cause. The encryption tests
+    below set the key explicitly and are unaffected by this default."""
+    from jobs import backup_db
+    monkeypatch.setattr(backup_db, "BACKUP_ENCRYPTION_KEY", "")
+
+
 def _raise_dump_error(path):
     from jobs.backup_db import BackupDumpError
     raise BackupDumpError("pg_dump exited with status 1")
@@ -739,3 +752,137 @@ def test_backup_still_runs_unencrypted_when_no_key_is_set(temp_db_path, monkeypa
     assert uploaded[0].endswith(".dump")
     assert not uploaded[0].endswith(".enc")
     assert db.get_setting("backup_last_status") == "ok"
+
+
+# ── Sustained-failure reminder ────────────────────────────────────────────
+#
+# Alerting only on status CHANGE meant a failure that persisted went quiet
+# after one message. In production the backup failed every day from
+# 2026-08-04 to 2026-08-06 and exactly one Telegram alert was sent, so three
+# days with no backup looked indistinguishable from three days of health.
+# The change-only rule is still right for the common case; what was missing
+# is a periodic reminder while the failure is still live.
+
+def _failing_run(monkeypatch, sent):
+    from jobs import backup_db
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+    monkeypatch.setattr(backup_db, "_dump_to_file", _raise_dump_error)
+
+
+def _at(monkeypatch, day):
+    """Pin the job's clock to 2026-08-<day> 04:00 local."""
+    import datetime
+    import pytz
+    from jobs import backup_db
+    from config import TIMEZONE
+    moment = pytz.timezone(TIMEZONE).localize(datetime.datetime(2026, 8, day, 4, 0, 0))
+    monkeypatch.setattr(backup_db, "_now", lambda: moment)
+
+
+def test_persistent_failure_re_alerts_after_the_reminder_interval(temp_db_path, monkeypatch):
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "ok")
+    sent = []
+    _failing_run(monkeypatch, sent)
+
+    _at(monkeypatch, 1)
+    backup_db.run()
+    assert len(sent) == 1                      # the transition
+
+    for day in (2, 3, 5, 7):                   # still inside the interval
+        _at(monkeypatch, day)
+        backup_db.run()
+    assert len(sent) == 1, f"nagged early: {sent}"
+
+    _at(monkeypatch, 8)                        # 7 days after the first alert
+    backup_db.run()
+    assert len(sent) == 2, "no reminder after the interval elapsed"
+    assert "FAILED for 7 days" in sent[1], sent[1]
+
+    _at(monkeypatch, 9)
+    backup_db.run()
+    assert len(sent) == 2, "reminder repeated the very next day"
+
+    _at(monkeypatch, 15)                       # 7 days after the reminder
+    backup_db.run()
+    assert len(sent) == 3, "the reminder does not recur"
+    assert "FAILED for 14 days" in sent[2], sent[2]
+
+
+def test_reminder_text_carries_no_exception_detail(temp_db_path, monkeypatch):
+    """The redaction boundary applies to the reminder exactly as it does to
+    the first alert -- it is built from the closed-set status, nothing else."""
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "ok")
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: True)
+
+    def _raise_with_secret(path):
+        raise RuntimeError("postgres://user:SENTINELSECRET@host:5432/railway")
+
+    monkeypatch.setattr(backup_db, "_dump_to_file", _raise_with_secret)
+
+    _at(monkeypatch, 1)
+    backup_db.run()
+    _at(monkeypatch, 20)
+    backup_db.run()
+
+    assert len(sent) == 2
+    assert "SENTINELSECRET" not in " ".join(sent)
+
+
+def test_recovery_resets_the_reminder_clock(temp_db_path, monkeypatch):
+    """After a recovery, a later failure is a fresh transition -- it must not
+    inherit the previous streak's age or be suppressed by its alert clock."""
+    import database as db
+    from jobs import backup_db
+
+    db.set_setting("backup_last_status", "ok")
+    sent = []
+    _failing_run(monkeypatch, sent)
+    _at(monkeypatch, 1)
+    backup_db.run()
+    assert len(sent) == 1
+
+    monkeypatch.setattr(backup_db, "_dump_to_file", lambda path: _write_plausible_dump(path))
+    monkeypatch.setattr(backup_db, "_upload", lambda *a, **k: None)
+    monkeypatch.setattr(backup_db, "_verify_uploaded", lambda key: True)
+    monkeypatch.setattr(backup_db, "_prune_old_backups", lambda: None)
+    _at(monkeypatch, 2)
+    backup_db.run()
+    assert len(sent) == 2 and "recover" in sent[1].lower()
+
+    monkeypatch.setattr(backup_db, "_dump_to_file", _raise_dump_error)
+    _at(monkeypatch, 3)
+    backup_db.run()
+
+    assert len(sent) == 3
+    # "FAILED for N days", not the "90 days" boilerplate every message carries.
+    assert "FAILED for" not in sent[2], f"a fresh failure claimed a stale streak: {sent[2]}"
+
+
+def test_never_configured_deploy_is_never_nagged(temp_db_path, monkeypatch):
+    """Not opting into backups is a documented clean no-op (CLAUDE.md). It
+    alerts on neither the first observation nor any reminder afterwards."""
+    import database as db
+    from jobs import backup_db
+
+    assert db.get_setting("backup_last_status") is None
+    sent = []
+    monkeypatch.setattr(backup_db, "notify_background", lambda text: sent.append(text))
+    monkeypatch.setattr(backup_db, "_using_postgres", lambda: True)
+    monkeypatch.setattr(backup_db, "_is_configured", lambda: False)
+
+    for day in (1, 2, 10, 20, 28):
+        _at(monkeypatch, day)
+        backup_db.run()
+
+    assert sent == []
