@@ -6,11 +6,14 @@ import re
 
 import anthropic
 
-from config import ANTHROPIC_API_KEY
+from config import ANTHROPIC_API_KEY, COACH_USAGE_TOKEN, COACH_USAGE_URL
+from usage import report
 
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-haiku-4-5-20251001"
+
+APP_SLUG = "life-tracker"  # must match a `name` in app-builder-coach's apps.yaml
 
 _client = None
 
@@ -64,6 +67,10 @@ def _call_json(prompt: str, max_tokens: int = 300, default=None):
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
+        # Reported before parsing: the call is billed whether or not the
+        # response turns out to be readable JSON. Never raises, never blocks.
+        report(APP_SLUG, MODEL, getattr(msg, "usage", None),
+               url=COACH_USAGE_URL, token=COACH_USAGE_TOKEN)
         raw = msg.content[0].text.strip()
         return _extract_json_object(raw)
     except Exception as e:

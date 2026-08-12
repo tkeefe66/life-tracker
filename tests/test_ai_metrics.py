@@ -316,3 +316,54 @@ def test_classify_work_ride_prompt_omits_examples_block_when_absent(mock_anthrop
     ai_metrics.classify_work_ride("Uber", "Your trip", "", examples=[])
     prompt = mock_anthropic.messages.create.call_args.kwargs["messages"][0]["content"]
     assert "corrected past classifications" not in prompt
+
+
+def _capture_reports(monkeypatch):
+    import ai_metrics
+    calls = []
+    monkeypatch.setattr(ai_metrics, "report",
+                        lambda *args, **kwargs: calls.append((args, kwargs)))
+    return calls
+
+
+def test_every_call_reports_usage_to_coach_web(mock_anthropic, monkeypatch):
+    """Spend is only knowable if every Anthropic call reports its token counts."""
+    import ai_metrics
+    calls = _capture_reports(monkeypatch)
+    resp = MagicMock()
+    resp.content = [MagicMock(text='{"is_order": true}')]
+    resp.usage = MagicMock(input_tokens=11, output_tokens=7)
+    mock_anthropic.messages.create.return_value = resp
+
+    ai_metrics.classify_receipt("noreply@uber.com", "Your order")
+
+    assert len(calls) == 1
+    args, _ = calls[0]
+    assert args[0] == "life-tracker"     # must match a name in coach-web apps.yaml
+    assert args[1] == ai_metrics.MODEL
+    assert args[2] is resp.usage
+
+
+def test_unparseable_response_still_reports_usage(mock_anthropic, monkeypatch):
+    """A call that returns garbage was still billed — report before parsing."""
+    import ai_metrics
+    calls = _capture_reports(monkeypatch)
+    _set_response(mock_anthropic, "not json at all")
+
+    assert ai_metrics.classify_receipt("x@uber.com", "??") is False
+    assert len(calls) == 1
+
+
+def test_reporting_failure_never_propagates(mock_anthropic, monkeypatch):
+    """The reporter's contract is never-raise. If one ever did, _call_json's
+    boundary contains it — the caller gets the safe default, never an
+    exception. Pinned because the failure mode would otherwise be a crash in
+    every classification path at once."""
+    import ai_metrics
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("coach-web unreachable")
+
+    monkeypatch.setattr(ai_metrics, "report", boom)
+    _set_response(mock_anthropic, '{"is_order": true}')
+    assert ai_metrics.classify_receipt("noreply@uber.com", "Your order") is False

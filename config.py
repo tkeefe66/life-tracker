@@ -14,6 +14,16 @@ TELEGRAM_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "0") or "0")
 
 TIMEZONE = os.getenv("TIMEZONE", "America/Denver")
 
+# coach-web usage reporting. After each Anthropic call, ai_metrics.py POSTs the
+# token counts to the app-builder-coach dashboard, which prices them — that is
+# the only way this app's real API spend is knowable (Anthropic's Admin API is
+# unavailable on an individual org). Read here rather than inside usage.py so
+# config.py stays the only file touching os.environ; usage.py is a verbatim copy
+# of the canonical reporter and must not be edited. Both unset = reporting
+# no-ops, so local dev is unaffected.
+COACH_USAGE_URL = os.getenv("COACH_USAGE_URL", "")
+COACH_USAGE_TOKEN = os.getenv("COACH_USAGE_TOKEN", "")
+
 # Google OAuth2 (shared by Calendar + Gmail; refresh token must carry both scopes)
 GOOGLE_CALENDAR_CLIENT_ID = os.getenv("GOOGLE_CALENDAR_CLIENT_ID", "")
 GOOGLE_CALENDAR_CLIENT_SECRET = os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET", "")
